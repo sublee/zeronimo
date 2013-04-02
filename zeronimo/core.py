@@ -93,14 +93,21 @@ class Worker(Communicator):
             raise ValueError('{!r} is not acceptable'.format(socket_type_name))
 
     def run(self):
-        joinall([spawn(self._run_direct)])
+        joinall([spawn(self.serve, zmq.PULL, self.addr)])
+                 #spawn(self.serve, zmq.SUB, self.fanout_addr)])
+
+    def serve(self, sock_type, addr):
+        sock = self.context.socket(sock_type)
+        sock.bind(addr)
+        while self.running:
+            spawn(self.task_received, *sock.recv_pyobj())
 
     def task_received(self, customer_addr, task_id, fn, args, kwargs):
         func, plan = self.functions[fn]
         if plan.reply:
             sock = self.context.socket(zmq.PUSH)
             sock.connect(customer_addr)
-            sock.send_pyobj((task_id, ACK, None))
+            sock.send_pyobj((task_id, ACK, self.addr))
         else:
             sock = False
         try:
@@ -118,15 +125,6 @@ class Worker(Communicator):
                 sock and sock.send_pyobj((task_id, BREAK, None))
         else:
             sock and sock.send_pyobj((task_id, RETURN, val))
-
-    def _run_direct(self):
-        sock = self.context.socket(zmq.PULL)
-        sock.bind(self.addr)
-        while self.running:
-            spawn(self.task_received, *sock.recv_pyobj())
-
-    def _run_sub(self):
-        pass
 
 
 class Customer(Communicator):
@@ -179,18 +177,41 @@ class Tunnel(object):
     request of RPC through the customer's sockets.
 
     :param customer: the :class:`Customer` object.
-    :param worker: the :class:`Worker` object.
+    :param workers: the :class:`Worker` objects. All workers have to contain
+                    same remote functions.
     :param return_task: if set to ``True``, the remote functions return a
                         :class:`Task` object instead of received value.
     :type return_task: bool
     """
 
-    def __init__(self, customer, worker, return_task=False):
+    def __init__(self, customer, workers, return_task=False):
         self._znm_customer = customer
-        self._znm_worker = worker
+        self._znm_workers = self._znm_verify_workers(workers)
+        self._znm_worker = self._znm_workers[0]
         self._znm_return_task = return_task
         self._znm_sockets = {}
-        self._znm_reflect(worker)
+        self._znm_reflect(self._znm_worker)
+
+    def _znm_verify_workers(self, workers):
+        if isinstance(workers, Worker):
+            worker = workers
+            workers = [worker]
+        def get_plans(worker):
+            return [(fn, plan)
+                    for fn, (__, plan) in worker.functions.iteritems()]
+        std_plans = get_plans(workers[0])
+        for worker in workers[1:]:
+            if get_plans(worker) != std_plans:
+                raise ValueError('All workers have to contain '
+                                 'same remote functions')
+        return workers
+
+    def _znm_reflect(self, worker):
+        """Sets methods which follows remote functions with same name."""
+        for fn in worker.functions:
+            if hasattr(self, fn):
+                raise AttributeError('{!r} is already used'.format(fn))
+            setattr(self, fn, functools.partial(self._znm_invoke, fn))
 
     def _znm_invoke(self, fn, *args, **kwargs):
         plan = self._znm_worker.functions[fn][-1]
@@ -204,19 +225,13 @@ class Tunnel(object):
         task.prepare()
         return task if self._znm_return_task else task()
 
-    def _znm_reflect(self, worker):
-        """Sets methods which follows remote functions with same name."""
-        for fn in worker.functions:
-            if hasattr(self, fn):
-                raise AttributeError('{!r} is already used'.format(fn))
-            setattr(self, fn, functools.partial(self._znm_invoke, fn))
-
     def __enter__(self):
         self._znm_customer.register_tunnel(self)
         for send_type, recv_type in [PUSH_PULL, PUB_SUB]:
             sock = self._znm_customer.context.socket(send_type)
-            for addr in self._znm_worker.possible_addrs(recv_type):
-                sock.connect(addr)
+            for worker in self._znm_workers:
+                for addr in worker.possible_addrs(recv_type):
+                    sock.connect(addr)
             self._znm_sockets[send_type] = sock
         return self
 
@@ -239,6 +254,7 @@ class Task(object):
         self.customer.register_task(self)
         do, val = self.queue.get()
         assert do == ACK
+        self.worker_addr = val
 
     def put(self, do, val):
         self.queue.put((do, val))

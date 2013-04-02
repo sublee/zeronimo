@@ -6,13 +6,13 @@ from decorator import decorator
 import gevent
 from gevent import joinall, killall, spawn
 import pytest
-from pytest import raises
 import zmq.green as zmq
 
 import zeronimo
 
 
 zmq_context = zmq.Context()
+gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
 @decorator
@@ -117,6 +117,9 @@ class Application(object):
             yield word
 
 
+# fixtures
+
+
 @pytest.fixture
 def worker():
     app = Application()
@@ -124,8 +127,22 @@ def worker():
 
 
 @pytest.fixture
+def worker2():
+    app = Application()
+    return zeronimo.Worker(app, context=zmq_context)
+
+
+@pytest.fixture
 def customer():
     return zeronimo.Customer(context=zmq_context)
+
+
+@pytest.fixture
+def customer2():
+    return zeronimo.Customer(context=zmq_context)
+
+
+# tests
 
 
 def test_remote_method_collection():
@@ -159,7 +176,7 @@ def test_remote_method_collection():
     assert plans[App.baz].reply
 
 
-def test_default_addr(worker, customer):
+def test_default_addr(customer, worker):
     assert worker.addr.startswith('inproc://')
     assert customer.addr.startswith('inproc://')
 
@@ -176,21 +193,21 @@ def test_running():
 
 
 @green
-def test_tunnel(worker, customer):
+def test_tunnel(customer, worker):
     ensure_worker(worker)
     assert len(customer.tunnels) == 0
-    with customer.link(worker) as tunnel:
+    with customer.link([worker]) as tunnel:
         assert len(customer.tunnels) == 1
     assert len(customer.tunnels) == 0
-    with customer.link(worker) as tunnel1, customer.link(worker) as tunnel2:
+    with customer.link([worker]) as tunnel1, customer.link([worker]) as tunnel2:
         assert len(customer.tunnels) == 2
     assert len(customer.tunnels) == 0
 
 
 @green
-def test_direct_returning_worker(worker, customer):
+def test_return(customer, worker):
     ensure_worker(worker)
-    with customer.link(worker) as tunnel:
+    with customer.link([worker]) as tunnel:
         assert tunnel.add(1, 1) == 'cutie'
         assert tunnel.add(2, 2) == 'cutie'
         assert tunnel.add(3, 3) == 'cutie'
@@ -201,24 +218,54 @@ def test_direct_returning_worker(worker, customer):
 
 
 @green
-def test_direct_yielding_worker(worker, customer):
+def test_yield(customer, worker):
     ensure_worker(worker)
-    with customer.link(worker) as tunnel:
+    with customer.link([worker]) as tunnel:
         assert len(list(tunnel.jabberwocky())) == 4
         assert list(tunnel.xrange()) == [0, 1, 2, 3, 4]
-        assert list(tunnel.dict_view()) == [0, 1, 2, 3, 4]
+        view = tunnel.dict_view()
+        assert view.next() == 0
+        assert view.next() == 1
+        assert view.next() == 2
+        assert view.next() == 3
+        assert view.next() == 4
+        with pytest.raises(StopIteration):
+            view.next()
         assert list(tunnel.dont_yield()) == []
 
 
 @green
-def test_direct_raising_worker(worker, customer):
+def test_raise(customer, worker):
     ensure_worker(worker)
-    with customer.link(worker) as tunnel:
-        with raises(ZeroDivisionError):
+    with customer.link([worker]) as tunnel:
+        with pytest.raises(ZeroDivisionError):
             tunnel.divide_by_zero()
         rocket_launching = tunnel.launch_rocket()
         assert rocket_launching.next() == 3
         assert rocket_launching.next() == 2
         assert rocket_launching.next() == 1
-        with raises(RuntimeError):
+        with pytest.raises(RuntimeError):
             rocket_launching.next()
+
+
+@green
+def test_2to1(customer, customer2, worker):
+    ensure_worker(worker)
+    def test(tunnel):
+        assert tunnel.add(1, 1) == 'cutie'
+        assert len(list(tunnel.jabberwocky())) == 4
+        with pytest.raises(ZeroDivisionError):
+            tunnel.divide_by_zero()
+    with customer.link([worker]) as tunnel, customer2.link([worker]) as tunnel2:
+        joinall([spawn(test, tunnel), spawn(test, tunnel2)])
+
+
+@green
+def test_1to2(customer, worker, worker2):
+    joinall([spawn(ensure_worker, worker), spawn(ensure_worker, worker2)])
+    with customer.link([worker, worker2], return_task=True) as tunnel:
+        task1 = tunnel.add(1, 1)
+        task2 = tunnel.add(2, 2)
+        assert task1() == 'cutie'
+        assert task2() == 'cutie'
+        assert task1.worker_addr != task2.worker_addr

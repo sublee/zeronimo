@@ -30,7 +30,7 @@ A distributed RPC solution based on ZeroMQ_. Follow the features:
    worker = zeronimo.Worker(Application())
    customer = zeronimo.Customer()
 
-   with customer.link(worker) as tunnel:
+   with customer.link([worker]) as tunnel:
        for result in tunnel.whoami():
            print 'hostname=', result.next()
            print 'public address=', result.next()
