@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-ØRPC
-~~~~
+Zeronimo
+~~~~~~~~
 
-A distributed RPC solution based on ØMQ.
+A distributed RPC solution based on ZeroMQ_. Follow the features:
+
+- A worker can return a value to the remote customer.
+- A worker can yield a value to the remote customer.
+- A worker can raise an error to the remote customer.
+- A customer can invoke to any remote worker in the worker cluster.
+- A customer can invoke to all remote workers in the worker cluster.
 
 .. sourcecode:: python
 
@@ -12,15 +18,24 @@ A distributed RPC solution based on ØMQ.
 
    class Application(object):
 
-       @zeronimo.remote_method(fanout=True)
+       @zeronimo.register(fanout=True)
        def whoami(self):
-           return socket.gethostname()
+           # hostname
+           yield socket.gethostname()
+           # public address
+           sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+           sock.connect(('8.8.8.8', 53))
+           yield sock.getsockname()[0]
 
-   server = zeronimo.Server(Application())
-   client = zeronimo.Client()
+   worker = zeronimo.Worker(Application())
+   customer = zeronimo.Customer()
 
-   with client.link(server) as bridge:
-       all_hostnames = list(bridge.whoami())
+   with customer.link(worker) as tunnel:
+       for result in tunnel.whoami():
+           print 'hostname=', result.next()
+           print 'public address=', result.next()
+
+.. _ZeroMQ: http://www.zeromq.org/
 
 """
 from __future__ import with_statement
@@ -30,6 +45,8 @@ import re
 from setuptools import setup
 from setuptools.command.test import test
 import sys
+# prevent error in sys.exitfunc when testing
+if 'test' in sys.argv: import zmq
 
 
 # detect the current version
@@ -53,7 +70,7 @@ setup(
     author='Heungsub Lee',
     author_email=re.sub('((sub).)(.*)', r'\2@\1.\3', 'sublee'),
     url='http://github.com/sublee/zeronimo/',
-    description='A distributed RPC solution based on ØMQ',
+    description='A distributed RPC solution based on ZeroMQ',
     long_description=__doc__,
     platforms='any',
     packages=['zeronimo'],
@@ -68,5 +85,5 @@ setup(
                  'Topic :: Software Development'],
     install_requires=['distribute', 'gevent', 'pyzmq>=13'],
     test_suite='zeronimotests',
-    tests_require=['pytest'],
+    tests_require=['pytest', 'decorator'],
 )
