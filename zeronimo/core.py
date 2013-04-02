@@ -26,6 +26,7 @@ ACK = 1
 RETURN = 2
 RAISE = 3
 YIELD = 4
+BREAK = 5
 
 
 # socket type helpers
@@ -70,17 +71,15 @@ class Worker(Communicator):
 
     addr = None
     functions = None
-    plans = None
 
     def __init__(self, obj, addr=None, **kwargs):
         if addr is None:
             addr = 'inproc://{0}'.format(str(uuid.uuid4()))
         self.addr = addr
-        self.functions = {}
-        self.plans = {}
+        self.functions = {func.__name__: (func, plan)
+                          for func, plan in collect_remote_functions(obj)}
         for func, plan in collect_remote_functions(obj):
-            self.functions[func.__name__] = func
-            self.plans[func.__name__] = plan
+            self.functions[func.__name__] = (func, plan)
         super(Worker, self).__init__(**kwargs)
 
     def possible_addrs(self, socket_type):
@@ -97,21 +96,31 @@ class Worker(Communicator):
         joinall([spawn(self._run_direct)])
 
     def task_received(self, customer_addr, task_id, fn, args, kwargs):
-        func = self.functions[fn]
-        if not self.plans[fn].reply:
-            spawn(func, *args, **kwargs)
-            return
-        sock = self.context.socket(zmq.PUSH)
-        sock.connect(customer_addr)
-        sock.send_pyobj((task_id, ACK, None))
-        value = func(*args, **kwargs)
-        sock.send_pyobj((task_id, RETURN, value))
+        func, plan = self.functions[fn]
+        if plan.reply:
+            sock = self.context.socket(zmq.PUSH)
+            sock.connect(customer_addr)
+            sock.send_pyobj((task_id, ACK, None))
+        else:
+            sock = False
+        try:
+            value = func(*args, **kwargs)
+        except Exception, error:
+            sock and sock.send_pyobj((task_id, RAISE, error))
+            raise
+        if isinstance(value, types.GeneratorType):
+            # iterate the generator
+            for item in value:
+                sock and sock.send_pyobj((task_id, YIELD, item))
+            sock and sock.send_pyobj((task_id, BREAK, None))
+        else:
+            sock and sock.send_pyobj((task_id, RETURN, value))
 
     def _run_direct(self):
         sock = self.context.socket(zmq.PULL)
         sock.bind(self.addr)
         while self.running:
-            self.task_received(*sock.recv_pyobj())
+            spawn(self.task_received, *sock.recv_pyobj())
 
     def _run_sub(self):
         pass
@@ -140,8 +149,8 @@ class Customer(Communicator):
             sock = self.context.socket(zmq.PULL)
             sock.bind(self.addr)
             while self.running:
-                task_id, behavior, value = sock.recv_pyobj()
-                self.tasks[task_id].put(behavior, value)
+                task_id, do, value = sock.recv_pyobj()
+                self.tasks[task_id].put(do, value)
 
     def register_tunnel(self, tunnel):
         """Registers the :class:`Tunnel` object to run and ensures a socket
@@ -181,7 +190,7 @@ class Tunnel(object):
         self._znm_reflect(worker)
 
     def _znm_invoke(self, fn, *args, **kwargs):
-        plan = self._znm_worker.plans[fn]
+        plan = self._znm_worker.functions[fn][-1]
         task = Task(self)
         sock = self._znm_sockets[zmq.PUB if plan.fanout else zmq.PUSH]
         sock.send_pyobj((self._znm_customer.addr, task.id, fn, args, kwargs))
@@ -189,8 +198,8 @@ class Tunnel(object):
             return
         if not self._znm_customer.running:
             spawn(self._znm_customer.run)
-        task.ensure()
-        return task if self._znm_return_task else task.get()
+        task.prepare()
+        return task if self._znm_return_task else task()
 
     def _znm_reflect(self, worker):
         """Sets methods which follows remote functions with same name."""
@@ -224,25 +233,34 @@ class Task(object):
         self.id = str(uuid.uuid4()) if id is None else id
         self.queue = Queue()
 
-    def ensure(self):
+    def prepare(self):
         self.customer.register_task(self)
-        behavior, value = self.queue.get()
-        assert behavior == ACK
+        do, value = self.queue.get()
+        assert do == ACK
 
-    def put(self, behavior, value):
-        self.queue.put((behavior, value))
+    def put(self, do, value):
+        self.queue.put((do, value))
 
-    def get(self):
-        behavior, value = self.queue.get()
-        if behavior == (RETURN, RAISE):
+    def __call__(self):
+        do, value = self.queue.get()
+        if do in (RETURN, RAISE):
             self.customer.unregister_task(self)
-        if behavior == RETURN:
+        if do == RETURN:
             return value
+        elif do == RAISE:
+            raise value
+        elif do == YIELD:
+            return self.make_generator(value)
+        elif do == BREAK:
+            return iter([])
 
-    def generate(self):
+    def make_generator(self, first_value):
+        yield first_value
         while True:
-            behavior, value = self.customer.recv(self.id)
-            if behavior == YIELD:
+            do, value = self.queue.get()
+            if do == YIELD:
                 yield value
-            elif behavior == RAISE:
+            elif do == RAISE:
                 raise value
+            elif do == BREAK:
+                break

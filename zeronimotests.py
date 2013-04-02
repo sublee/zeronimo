@@ -37,6 +37,11 @@ def zmq_bound(addr, socket_type, context=zmq_context):
         return True
 
 
+def ensure_worker(worker):
+    spawn(worker.run)
+    busywait(lambda: zmq_bound(worker.addr, zmq.PUSH), until=True)
+
+
 '''
 FD_DIR = os.path.join(os.path.dirname(__file__), '_fds')
 def generate_endpoint(protocol, name=None, offset=None):
@@ -68,6 +73,18 @@ class Application(object):
             elif a == 6:
                 return 'xoxoxoxoxoxo cutie'
         return a + b
+
+    @zeronimo.register
+    def jabberwocky(self):
+        yield 'Twas brillig, and the slithy toves'
+        yield 'Did gyre and gimble in the wabe;'
+        yield 'All mimsy were the borogoves,'
+        yield 'And the mome raths outgrabe.'
+
+    @zeronimo.register(fanout=True)
+    def rycbar123(self):
+        for word in 'Run, you clever boy; and remember.'.split():
+            yield word
 
 
 @pytest.fixture
@@ -129,12 +146,21 @@ def test_running():
 
 
 @green
-def test_direct_worker(worker, customer):
-    spawn(worker.run)
-    busywait(lambda: zmq_bound(worker.addr, zmq.PUSH), until=True)
+def test_tunnel(worker, customer):
+    ensure_worker(worker)
     assert len(customer.tunnels) == 0
     with customer.link(worker) as tunnel:
         assert len(customer.tunnels) == 1
+    assert len(customer.tunnels) == 0
+    with customer.link(worker) as tunnel1, customer.link(worker) as tunnel2:
+        assert len(customer.tunnels) == 2
+    assert len(customer.tunnels) == 0
+
+
+@green
+def test_direct_returning_worker(worker, customer):
+    ensure_worker(worker)
+    with customer.link(worker) as tunnel:
         assert tunnel.add(1, 1) == 'cutie'
         assert tunnel.add(2, 2) == 'cutie'
         assert tunnel.add(3, 3) == 'cutie'
@@ -142,4 +168,10 @@ def test_direct_worker(worker, customer):
         assert tunnel.add(5, 5) == 'cutie'
         assert tunnel.add(6, 6) == 'xoxoxoxoxoxo cutie'
         assert tunnel.add(42, 12) == 54
-    assert len(customer.tunnels) == 0
+
+
+@green
+def test_direct_yielding_worker_(worker, customer):
+    ensure_worker(worker)
+    with customer.link(worker) as tunnel:
+        assert len(list(tunnel.jabberwocky())) == 4
