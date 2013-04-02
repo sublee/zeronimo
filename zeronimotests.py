@@ -6,6 +6,7 @@ from decorator import decorator
 import gevent
 from gevent import joinall, killall, spawn
 import pytest
+from pytest import raises
 import zmq.green as zmq
 
 import zeronimo
@@ -80,6 +81,35 @@ class Application(object):
         yield 'Did gyre and gimble in the wabe;'
         yield 'All mimsy were the borogoves,'
         yield 'And the mome raths outgrabe.'
+
+    @zeronimo.register
+    def xrange(self):
+        return xrange(5)
+
+    @zeronimo.register
+    def dict_view(self):
+        return dict(zip(xrange(5), xrange(5))).viewkeys()
+
+    @zeronimo.register
+    def dont_yield(self):
+        if False:
+            yield 'it should\'t be sent'
+            assert 0
+
+    @zeronimo.register
+    def divide_by_zero(self):
+        0/0      /0/0 /0/0    /0/0   /0/0/0/0   /0/0
+        0/0  /0  /0/0 /0/0    /0/0 /0/0    /0/0     /0
+        0/0/0/0/0/0/0 /0/0/0/0/0/0 /0/0    /0/0   /0
+        0/0/0/0/0/0/0 /0/0    /0/0 /0/0    /0/0
+        0/0  /0  /0/0 /0/0    /0/0   /0/0/0/0     /0
+
+    @zeronimo.register
+    def launch_rocket(self):
+        yield 3
+        yield 2
+        yield 1
+        raise RuntimeError('Launch!')
 
     @zeronimo.register(fanout=True)
     def rycbar123(self):
@@ -171,7 +201,24 @@ def test_direct_returning_worker(worker, customer):
 
 
 @green
-def test_direct_yielding_worker_(worker, customer):
+def test_direct_yielding_worker(worker, customer):
     ensure_worker(worker)
     with customer.link(worker) as tunnel:
         assert len(list(tunnel.jabberwocky())) == 4
+        assert list(tunnel.xrange()) == [0, 1, 2, 3, 4]
+        assert list(tunnel.dict_view()) == [0, 1, 2, 3, 4]
+        assert list(tunnel.dont_yield()) == []
+
+
+@green
+def test_direct_raising_worker(worker, customer):
+    ensure_worker(worker)
+    with customer.link(worker) as tunnel:
+        with raises(ZeroDivisionError):
+            tunnel.divide_by_zero()
+        rocket_launching = tunnel.launch_rocket()
+        assert rocket_launching.next() == 3
+        assert rocket_launching.next() == 2
+        assert rocket_launching.next() == 1
+        with raises(RuntimeError):
+            rocket_launching.next()

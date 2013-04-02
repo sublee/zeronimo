@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-    zeronimo.collect
-    ~~~~~~~~~~~~~~~~
+    zeronimo.functional
+    ~~~~~~~~~~~~~~~~~~~
 
-    The functions for collecting remote functions or methods.
+    Provides higher-order functions.
 
     :copyright: (c) 2013 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
-from collections import namedtuple
+from collections import Iterable, Sequence, Set, Mapping, namedtuple
 
 
 Plan = namedtuple('Plan', ['fanout', 'reply'])
@@ -34,3 +34,8 @@ def collect_remote_functions(obj):
         except AttributeError:
             continue
         yield func, plan
+
+
+def should_yield(val):
+    return (isinstance(val, Iterable) and
+            not isinstance(val, (Sequence, Set, Mapping)))
