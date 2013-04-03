@@ -145,7 +145,7 @@ def customer2():
 # tests
 
 
-def test_remote_method_collection():
+def test_blueprint_extraction():
     class App(object):
         @zeronimo.register
         def foo(self):
@@ -159,21 +159,34 @@ def test_remote_method_collection():
             yield 'baz-%s-end' % id(self)
     # collect from an object
     app = App()
-    plans = dict(zeronimo.collect_remote_functions(app))
-    assert not plans[app.foo].fanout
-    assert plans[app.foo].reply
-    assert plans[app.bar].fanout
-    assert plans[app.bar].reply
-    assert not plans[app.baz].fanout
-    assert plans[app.baz].reply
+    blueprint = dict(zeronimo.extract_blueprint(app))
+    assert not blueprint['foo'].fanout
+    assert blueprint['foo'].reply
+    assert blueprint['foo'].reply
+    assert blueprint['bar'].fanout
+    assert blueprint['bar'].reply
+    assert not blueprint['baz'].fanout
+    assert blueprint['baz'].reply
     # collect from a class
-    plans = dict(zeronimo.collect_remote_functions(App))
-    assert not plans[App.foo].fanout
-    assert plans[App.foo].reply
-    assert plans[App.bar].fanout
-    assert plans[App.bar].reply
-    assert not plans[App.baz].fanout
-    assert plans[App.baz].reply
+    blueprint = dict(zeronimo.extract_blueprint(App))
+    assert not blueprint['foo'].fanout
+    assert blueprint['foo'].reply
+    assert blueprint['bar'].fanout
+    assert blueprint['bar'].reply
+    assert not blueprint['baz'].fanout
+    assert blueprint['baz'].reply
+
+
+def test_signature():
+    class Nothing(object): pass
+    blueprint = dict(zeronimo.extract_blueprint(Application))
+    blueprint2 = dict(zeronimo.extract_blueprint(Application()))
+    blueprint3 = dict(zeronimo.extract_blueprint(Nothing))
+    signature = zeronimo.sign_blueprint(blueprint)
+    signature2 = zeronimo.sign_blueprint(blueprint2)
+    signature3 = zeronimo.sign_blueprint(blueprint3)
+    assert signature == signature2
+    assert signature != signature3
 
 
 def test_default_addr(customer, worker):

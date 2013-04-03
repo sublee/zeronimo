@@ -18,7 +18,7 @@ from gevent.event import AsyncResult
 from gevent.queue import Queue
 import zmq.green as zmq
 
-from .functional import collect_remote_functions, should_yield
+from .functional import extract_blueprint, sign_blueprint, should_yield
 
 
 # task message behaviors
@@ -70,16 +70,14 @@ class Communicator(object):
 class Worker(Communicator):
 
     addr = None
-    functions = None
+    blueprint = None
 
     def __init__(self, obj, addr=None, **kwargs):
         if addr is None:
             addr = 'inproc://{0}'.format(str(uuid4()))
         self.addr = addr
-        self.functions = {func.__name__: (func, plan)
-                          for func, plan in collect_remote_functions(obj)}
-        for func, plan in collect_remote_functions(obj):
-            self.functions[func.__name__] = (func, plan)
+        self.blueprint = extract_blueprint(obj)
+        self.signature = sign_blueprint(self.blueprint)
         super(Worker, self).__init__(**kwargs)
 
     def possible_addrs(self, socket_type):
@@ -103,15 +101,15 @@ class Worker(Communicator):
             spawn(self.task_received, *sock.recv_pyobj())
 
     def task_received(self, customer_addr, task_id, fn, args, kwargs):
-        func, plan = self.functions[fn]
-        if plan.reply:
+        spec = self.blueprint[fn]
+        if spec.reply:
             sock = self.context.socket(zmq.PUSH)
             sock.connect(customer_addr)
             sock.send_pyobj((task_id, ACK, self.addr))
         else:
             sock = False
         try:
-            val = func(*args, **kwargs)
+            val = spec.func(*args, **kwargs)
         except Exception, error:
             sock and sock.send_pyobj((task_id, RAISE, error))
             raise
@@ -177,8 +175,8 @@ class Tunnel(object):
     request of RPC through the customer's sockets.
 
     :param customer: the :class:`Customer` object.
-    :param workers: the :class:`Worker` objects. All workers have to contain
-                    same remote functions.
+    :param workers: the :class:`Worker` objects. All workers must have same
+                    signature.
     :param return_task: if set to ``True``, the remote functions return a
                         :class:`Task` object instead of received value.
     :type return_task: bool
@@ -186,39 +184,37 @@ class Tunnel(object):
 
     def __init__(self, customer, workers, return_task=False):
         self._znm_customer = customer
-        self._znm_workers = self._znm_verify_workers(workers)
-        self._znm_worker = self._znm_workers[0]
+        workers, blueprint = self._znm_verify_workers(workers)
+        self._znm_workers = workers
+        self._znm_blueprint = blueprint
         self._znm_return_task = return_task
         self._znm_sockets = {}
-        self._znm_reflect(self._znm_worker)
+        self._znm_reflect(blueprint)
 
     def _znm_verify_workers(self, workers):
         if isinstance(workers, Worker):
             worker = workers
             workers = [worker]
-        def get_plans(worker):
-            return [(fn, plan)
-                    for fn, (__, plan) in worker.functions.iteritems()]
-        std_plans = get_plans(workers[0])
-        for worker in workers[1:]:
-            if get_plans(worker) != std_plans:
-                raise ValueError('All workers have to contain '
-                                 'same remote functions')
-        return workers
+        worker = workers[0]
+        blueprint = worker.blueprint
+        for other_worker in workers[1:]:
+            if worker.signature != other_worker.signature:
+                raise ValueError('All workers must have same signature')
+        return workers, blueprint
 
-    def _znm_reflect(self, worker):
+    def _znm_reflect(self, blueprint):
         """Sets methods which follows remote functions with same name."""
-        for fn in worker.functions:
+        for fn in blueprint.viewkeys():
             if hasattr(self, fn):
                 raise AttributeError('{!r} is already used'.format(fn))
             setattr(self, fn, functools.partial(self._znm_invoke, fn))
 
     def _znm_invoke(self, fn, *args, **kwargs):
-        plan = self._znm_worker.functions[fn][-1]
+        spec = self._znm_blueprint[fn]
         task = Task(self)
-        sock = self._znm_sockets[zmq.PUB if plan.fanout else zmq.PUSH]
+        sock = self._znm_sockets[zmq.PUB if spec.fanout else zmq.PUSH]
         sock.send_pyobj((self._znm_customer.addr, task.id, fn, args, kwargs))
-        if not plan.reply:
+        if not spec.reply:
             return
         if not self._znm_customer.running:
             spawn(self._znm_customer.run)
@@ -236,7 +232,7 @@ class Tunnel(object):
         return self
 
     def __exit__(self, error, error_type, traceback):
-        for sock in self._znm_sockets.itervalues():
+        for sock in self._znm_sockets.viewvalues():
             sock.close()
         self._znm_sockets.clear()
         self._znm_customer.unregister_tunnel(self)

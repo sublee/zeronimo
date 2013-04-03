@@ -11,9 +11,9 @@
 from __future__ import absolute_import
 
 from .core import Worker, Customer, Tunnel, Task
-from .functional import register, collect_remote_functions
+from .functional import register, extract_blueprint, sign_blueprint
 
 
 __version__ = '0.0.dev'
 __all__ = ['Worker', 'Customer', 'Tunnel', 'Task',
-           'register', 'collect_remote_functions']
+           'register', 'extract_blueprint', 'sign_blueprint']
