@@ -19,7 +19,7 @@ from gevent.queue import Queue, Empty
 import zmq.green as zmq
 
 from .exceptions import ZeronimoError, NoWorkerError
-from .functional import extract_blueprint, make_fingerprint, should_yield
+from .functional import collect_remote_functions, should_yield
 
 
 # task message behaviors
@@ -95,8 +95,7 @@ class Worker(Communicator):
     addrs = None
     fanout_addrs = None
     fanout_filters = None
-    blueprint = None
-    fingerprint = None
+    functions = None
 
     def __init__(self, obj, addrs=None, fanout_addrs=None, fanout_filters='',
                  **kwargs):
@@ -107,8 +106,7 @@ class Worker(Communicator):
         self.addrs = addrs
         self.fanout_addrs = fanout_addrs
         self.fanout_filters = fanout_filters
-        self.blueprint = extract_blueprint(obj)
-        self.fingerprint = make_fingerprint(self.blueprint)
+        self.functions = collect_remote_functions(obj)
         super(Worker, self).__init__(**kwargs)
 
     def possible_addrs(self, socket_type):
@@ -132,7 +130,7 @@ class Worker(Communicator):
         else:
             sock = False
         try:
-            val = self.blueprint[fn].func(*args, **kwargs)
+            val = self.functions[fn](*args, **kwargs)
         except Exception, error:
             print 'worker %s %r to %s:%s' % \
                   (dt(RAISE), error, task_id, run_id)
@@ -268,8 +266,7 @@ class Tunnel(object):
     request of RPC through the customer's sockets.
 
     :param customer: the :class:`Customer` object.
-    :param workers: the :class:`Worker` objects. All workers must have same
-                    fingerprint.
+    :param workers: the :class:`Worker` objects.
     :param return_task: if set to ``True``, the remote functions return a
                         :class:`Task` object instead of received value.
     :type return_task: bool
@@ -284,31 +281,13 @@ class Tunnel(object):
         self._znm_wait = wait
         self._znm_fanout = fanout
         self._znm_as_task = as_task
-        #self._znm_verify_workers(workers)
-        #self._znm_blueprint = workers[0].blueprint
-        #self._znm_reflect(self._znm_blueprint)
 
     def _znm_is_alive(self):
         return self in self._znm_customer.tunnels
 
-    def _znm_verify_workers(self, workers):
-        worker = workers[0]
-        for other_worker in workers[1:]:
-            if worker.fingerprint != other_worker.fingerprint:
-                raise ValueError('All workers must have same fingerprint')
-        return workers
-
-    def _znm_reflect(self, blueprint):
-        """Sets methods which follows remote functions with same name."""
-        for fn in blueprint.viewkeys():
-            if hasattr(self, fn):
-                raise AttributeError('{!r} is already used'.format(fn))
-            setattr(self, fn, functools.partial(self._znm_invoke, fn))
-
     def _znm_invoke(self, fn, *args, **kwargs):
         """Invokes remote function."""
         task = Task(self)
-        #spec = self._znm_blueprint[fn]
         sock = self._znm_sockets[zmq.PUB if self._znm_fanout else zmq.PUSH]
         sock.send_pyobj((fn, args, kwargs,
                          self._znm_customer.addr, task.id, self._znm_wait))

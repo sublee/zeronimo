@@ -71,7 +71,7 @@ def generate_endpoint(protocol, name=None, offset=None):
 
 class Application(object):
 
-    @zeronimo.register
+    @zeronimo.remote
     def add(self, a, b):
         """Koreans' mathematical addition."""
         if a == b:
@@ -81,28 +81,28 @@ class Application(object):
                 return 'xoxoxoxoxoxo cutie'
         return a + b
 
-    @zeronimo.register
+    @zeronimo.remote
     def jabberwocky(self):
         yield 'Twas brillig, and the slithy toves'
         yield 'Did gyre and gimble in the wabe;'
         yield 'All mimsy were the borogoves,'
         yield 'And the mome raths outgrabe.'
 
-    @zeronimo.register
+    @zeronimo.remote
     def xrange(self):
         return xrange(5)
 
-    @zeronimo.register
+    @zeronimo.remote
     def dict_view(self):
         return dict(zip(xrange(5), xrange(5))).viewkeys()
 
-    @zeronimo.register
+    @zeronimo.remote
     def dont_yield(self):
         if False:
             yield 'it should\'t be sent'
             assert 0
 
-    @zeronimo.register
+    @zeronimo.remote
     def zero_div(self):
         0/0      /0/0 /0/0    /0/0   /0/0/0/0   /0/0
         0/0  /0  /0/0 /0/0    /0/0 /0/0    /0/0     /0
@@ -110,19 +110,19 @@ class Application(object):
         0/0/0/0/0/0/0 /0/0    /0/0 /0/0    /0/0
         0/0  /0  /0/0 /0/0    /0/0   /0/0/0/0     /0
 
-    @zeronimo.register
+    @zeronimo.remote
     def launch_rocket(self):
         yield 3
         yield 2
         yield 1
         raise RuntimeError('Launch!')
 
-    @zeronimo.register
+    @zeronimo.remote
     def rycbar123(self):
         for word in 'run, you clever boy; and remember.'.split():
             yield word
 
-    @zeronimo.register
+    @zeronimo.remote
     def sleep(self):
         gevent.sleep(0.1)
         return 'slept'
@@ -146,36 +146,25 @@ for x in xrange(4):
 # tests
 
 
-def _test_blueprint_extraction():
+def test_remote_function_collection():
     class App(object):
-        @zeronimo.register
+        @zeronimo.remote
         def foo(self):
             return 'foo-%s' % id(self)
-        @zeronimo.register(fanout=True)
+        @zeronimo.remote
         def bar(self):
             return 'bar-%s' % id(self)
-        @zeronimo.register
+        @zeronimo.remote
         def baz(self):
             yield 'baz-%s-begin' % id(self)
             yield 'baz-%s-end' % id(self)
     # collect from an object
     app = App()
-    blueprint = dict(zeronimo.functional.extract_blueprint(app))
-    assert not blueprint['foo'].fanout
-    assert blueprint['foo'].reply
-    assert blueprint['foo'].reply
-    assert blueprint['bar'].fanout
-    assert blueprint['bar'].reply
-    assert not blueprint['baz'].fanout
-    assert blueprint['baz'].reply
+    functions = dict(zeronimo.functional.collect_remote_functions(app))
+    assert set(functions.keys()) == set(['foo', 'bar', 'baz'])
     # collect from a class
-    blueprint = dict(zeronimo.functional.extract_blueprint(App))
-    assert not blueprint['foo'].fanout
-    assert blueprint['foo'].reply
-    assert blueprint['bar'].fanout
-    assert blueprint['bar'].reply
-    assert not blueprint['baz'].fanout
-    assert blueprint['baz'].reply
+    functions = dict(zeronimo.functional.collect_remote_functions(App))
+    assert set(functions.keys()) == set(['foo', 'bar', 'baz'])
 
 
 def _test_fingerprint():
@@ -307,7 +296,7 @@ def test_fanout(customer, worker1, worker2):
             assert rycbar123.next() == 'remember.'
         with pytest.raises(ZeroDivisionError):
             tunnel(fanout=True).zero_div()
-        failures = tunnel(as_task=True, fanout=True).zero_div()
+        failures = tunnel(fanout=True, as_task=True).zero_div()
         assert len(failures) == 2
         with pytest.raises(ZeroDivisionError):
             failures[0]()

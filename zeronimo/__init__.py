@@ -11,8 +11,8 @@
 from __future__ import absolute_import
 
 from .core import Worker, Customer, Tunnel, Task
-from .functional import register
+from .functional import remote
 
 
 __version__ = '0.0.dev'
-__all__ = ['Worker', 'Customer', 'Tunnel', 'Task', 'register']
+__all__ = ['Worker', 'Customer', 'Tunnel', 'Task', 'remote']

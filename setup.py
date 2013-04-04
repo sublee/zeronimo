@@ -18,7 +18,7 @@ A distributed RPC solution based on ZeroMQ_. Follow the features:
 
    class Application(object):
 
-       @zeronimo.register(fanout=True)
+       @zeronimo.remote
        def whoami(self):
            # hostname
            yield socket.gethostname()
@@ -31,7 +31,7 @@ A distributed RPC solution based on ZeroMQ_. Follow the features:
    customer = zeronimo.Customer()
 
    with customer.link([worker]) as tunnel:
-       for result in tunnel.whoami():
+       for result in tunnel(fanout=True).whoami():
            print 'hostname=', result.next()
            print 'public address=', result.next()
 
