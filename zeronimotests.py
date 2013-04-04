@@ -117,7 +117,7 @@ class Application(object):
         yield 1
         raise RuntimeError('Launch!')
 
-    @zeronimo.register(fanout=True)
+    @zeronimo.register
     def rycbar123(self):
         for word in 'run, you clever boy; and remember.'.split():
             yield word
@@ -146,7 +146,7 @@ for x in xrange(4):
 # tests
 
 
-def test_blueprint_extraction():
+def _test_blueprint_extraction():
     class App(object):
         @zeronimo.register
         def foo(self):
@@ -178,7 +178,7 @@ def test_blueprint_extraction():
     assert blueprint['baz'].reply
 
 
-def test_fingerprint():
+def _test_fingerprint():
     class Nothing(object): pass
     blueprint = dict(zeronimo.functional.extract_blueprint(Application))
     blueprint2 = dict(zeronimo.functional.extract_blueprint(Application()))
@@ -284,7 +284,7 @@ def test_2to1(customer1, customer2, worker):
 @green
 def test_1to2(customer, worker1, worker2):
     start_workers([worker1, worker2])
-    with customer.link([worker1, worker2], return_task=True) as tunnel:
+    with customer.link([worker1, worker2], task=True) as tunnel:
         task1 = tunnel.add(1, 1)
         task2 = tunnel.add(2, 2)
         assert task1() == 'cutie'
@@ -296,7 +296,7 @@ def test_1to2(customer, worker1, worker2):
 def test_fanout(customer, worker1, worker2):
     start_workers([worker1, worker2])
     with customer.link([worker1, worker2]) as tunnel:
-        for rycbar123 in tunnel.rycbar123():
+        for rycbar123 in tunnel(fanout=True).rycbar123():
             assert rycbar123.next() == 'run,'
             assert rycbar123.next() == 'you'
             assert rycbar123.next() == 'clever'
@@ -313,10 +313,3 @@ def test_slow(customer, worker):
             with Timeout(0.1):
                 tunnel.sleep()
         assert tunnel.sleep() == 'slept'
-
-
-@green
-def test_link_to_different_workers(customer, worker):
-    worker2 = zeronimo.Worker(2)
-    with pytest.raises(ValueError):
-        customer.link([worker, worker2])
