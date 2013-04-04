@@ -1,10 +1,11 @@
 import functools
 import os
+import textwrap
 import uuid
 
 from decorator import decorator
 import gevent
-from gevent import joinall, killall, spawn
+from gevent import joinall, killall, spawn, Timeout
 import pytest
 import zmq.green as zmq
 
@@ -12,11 +13,12 @@ import zeronimo
 
 
 zmq_context = zmq.Context()
-gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
+#gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
 @decorator
 def green(f, *args, **kwargs):
+    print
     return spawn(f, *args, **kwargs).get()
 
 
@@ -28,7 +30,7 @@ def busywait(while_, until=False, timeout=None):
             gevent.sleep(0.001)
 
 
-def zmq_bound(addr, socket_type, context=zmq_context):
+def is_connectable(addr, socket_type, context=zmq_context):
     """Checks that the address is connectable."""
     try:
         context.socket(socket_type).connect(addr)
@@ -38,9 +40,13 @@ def zmq_bound(addr, socket_type, context=zmq_context):
         return True
 
 
-def ensure_worker(worker):
-    spawn(worker.run)
-    busywait(lambda: zmq_bound(worker.addr, zmq.PUSH), until=True)
+def start_workers(workers):
+    waits = []
+    for worker in workers:
+        spawn(worker.run)
+        until = lambda: is_connectable(worker.addrs[0], zmq.PUSH)
+        waits.append(spawn(busywait, until, until=True, timeout=1))
+    joinall(waits)
 
 
 '''
@@ -113,33 +119,28 @@ class Application(object):
 
     @zeronimo.register(fanout=True)
     def rycbar123(self):
-        for word in 'Run, you clever boy; and remember.'.split():
+        for word in 'run, you clever boy; and remember.'.split():
             yield word
+
+    @zeronimo.register
+    def sleep(self):
+        gevent.sleep(0.1)
+        return 'slept'
 
 
 # fixtures
 
 
-@pytest.fixture
-def worker():
-    app = Application()
-    return zeronimo.Worker(app, context=zmq_context)
-
-
-@pytest.fixture
-def worker2():
-    app = Application()
-    return zeronimo.Worker(app, context=zmq_context)
-
-
-@pytest.fixture
-def customer():
-    return zeronimo.Customer(context=zmq_context)
-
-
-@pytest.fixture
-def customer2():
-    return zeronimo.Customer(context=zmq_context)
+for x in xrange(4):
+    exec(textwrap.dedent('''
+    @pytest.fixture
+    def worker{x}():
+        app = Application()
+        return zeronimo.Worker(app, context=zmq_context)
+    @pytest.fixture
+    def customer{x}():
+        return zeronimo.Customer(context=zmq_context)
+    ''').format(x=x if x else ''))
 
 
 # tests
@@ -190,7 +191,7 @@ def test_fingerprint():
 
 
 def test_default_addr(customer, worker):
-    assert worker.addr.startswith('inproc://')
+    assert worker.addrs[0].startswith('inproc://')
     assert customer.addr.startswith('inproc://')
 
 
@@ -207,19 +208,25 @@ def test_running():
 
 @green
 def test_tunnel(customer, worker):
-    ensure_worker(worker)
+    start_workers([worker])
     assert len(customer.tunnels) == 0
     with customer.link([worker]) as tunnel:
         assert len(customer.tunnels) == 1
     assert len(customer.tunnels) == 0
-    with customer.link([worker]) as tunnel1, customer.link([worker]) as tunnel2:
+    with customer.link([worker]) as tunnel1, \
+         customer.link([worker]) as tunnel2:
+        assert not customer.running
         assert len(customer.tunnels) == 2
+        tunnel1.add(0, 0)
+        assert customer.running
     assert len(customer.tunnels) == 0
+    busywait(lambda: customer.running, timeout=1)
+    assert not customer.running
 
 
 @green
 def test_return(customer, worker):
-    ensure_worker(worker)
+    start_workers([worker])
     with customer.link([worker]) as tunnel:
         assert tunnel.add(1, 1) == 'cutie'
         assert tunnel.add(2, 2) == 'cutie'
@@ -232,7 +239,7 @@ def test_return(customer, worker):
 
 @green
 def test_yield(customer, worker):
-    ensure_worker(worker)
+    start_workers([worker])
     with customer.link([worker]) as tunnel:
         assert len(list(tunnel.jabberwocky())) == 4
         assert list(tunnel.xrange()) == [0, 1, 2, 3, 4]
@@ -249,7 +256,7 @@ def test_yield(customer, worker):
 
 @green
 def test_raise(customer, worker):
-    ensure_worker(worker)
+    start_workers([worker])
     with customer.link([worker]) as tunnel:
         with pytest.raises(ZeroDivisionError):
             tunnel.divide_by_zero()
@@ -262,26 +269,50 @@ def test_raise(customer, worker):
 
 
 @green
-def test_2to1(customer, customer2, worker):
-    ensure_worker(worker)
+def test_2to1(customer1, customer2, worker):
+    start_workers([worker])
     def test(tunnel):
         assert tunnel.add(1, 1) == 'cutie'
         assert len(list(tunnel.jabberwocky())) == 4
         with pytest.raises(ZeroDivisionError):
             tunnel.divide_by_zero()
-    with customer.link([worker]) as tunnel, customer2.link([worker]) as tunnel2:
-        joinall([spawn(test, tunnel), spawn(test, tunnel2)])
+    with customer1.link([worker]) as tunnel1, \
+         customer2.link([worker]) as tunnel2:
+        joinall([spawn(test, tunnel1), spawn(test, tunnel2)])
 
 
 @green
-def test_1to2(customer, worker, worker2):
-    joinall([spawn(ensure_worker, worker), spawn(ensure_worker, worker2)])
-    with customer.link([worker, worker2], return_task=True) as tunnel:
+def test_1to2(customer, worker1, worker2):
+    start_workers([worker1, worker2])
+    with customer.link([worker1, worker2], return_task=True) as tunnel:
         task1 = tunnel.add(1, 1)
         task2 = tunnel.add(2, 2)
         assert task1() == 'cutie'
         assert task2() == 'cutie'
         assert task1.worker_addr != task2.worker_addr
+
+
+@green
+def test_fanout(customer, worker1, worker2):
+    start_workers([worker1, worker2])
+    with customer.link([worker1, worker2]) as tunnel:
+        for rycbar123 in tunnel.rycbar123():
+            assert rycbar123.next() == 'run,'
+            assert rycbar123.next() == 'you'
+            assert rycbar123.next() == 'clever'
+            assert rycbar123.next() == 'boy;'
+            assert rycbar123.next() == 'and'
+            assert rycbar123.next() == 'remember.'
+
+
+@green
+def test_slow(customer, worker):
+    start_workers([worker])
+    with customer.link([worker]) as tunnel:
+        with pytest.raises(Timeout):
+            with Timeout(0.1):
+                tunnel.sleep()
+        assert tunnel.sleep() == 'slept'
 
 
 @green

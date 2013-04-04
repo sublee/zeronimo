@@ -9,7 +9,10 @@
     :license: BSD, see LICENSE for more details.
 """
 from collections import Iterable, Sequence, Set, Mapping, namedtuple
+import functools
 import hashlib
+
+from gevent.coros import Semaphore
 
 
 Spec = namedtuple('Spec', ['func', 'fanout', 'reply'])
