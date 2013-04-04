@@ -275,17 +275,21 @@ class Tunnel(object):
     :type return_task: bool
     """
 
-    def __init__(self, customer, workers, task=False, fanout=False, wait=True):
+    def __init__(self, customer, workers,
+                 wait=True, fanout=False, as_task=False):
         self._znm_customer = customer
         self._znm_workers = workers
         self._znm_sockets = {}
         # options
-        self._znm_task = task
-        self._znm_fanout = fanout
         self._znm_wait = wait
+        self._znm_fanout = fanout
+        self._znm_as_task = as_task
         #self._znm_verify_workers(workers)
         #self._znm_blueprint = workers[0].blueprint
         #self._znm_reflect(self._znm_blueprint)
+
+    def _znm_is_alive(self):
+        return self in self._znm_customer.tunnels
 
     def _znm_verify_workers(self, workers):
         worker = workers[0]
@@ -315,17 +319,17 @@ class Tunnel(object):
             spawn(self._znm_customer.run)
         return task.collect()
 
-    def __call__(self, task=None, fanout=None, wait=None):
+    def __call__(self, wait=None, fanout=None, as_task=None):
         """Creates a :class:`Tunnel` object which follows same consumer and
         workers but replaced options.
         """
-        if task is None:
-            task = self._znm_task
-        if fanout is None:
-            fanout = self._znm_fanout
         if wait is None:
             wait = self._znm_wait
-        opts = (task, fanout, wait)
+        if fanout is None:
+            fanout = self._znm_fanout
+        if as_task is None:
+            as_task = self._znm_as_task
+        opts = (wait, fanout, as_task)
         tunnel = Tunnel(self._znm_customer, self._znm_workers, *opts)
         tunnel._znm_sockets = self._znm_sockets
         return tunnel
@@ -379,14 +383,14 @@ class Task(object):
                 each_task.worker_addr = worker_addr
                 tasks.append(each_task)
                 self.customer.register_task(each_task)
-            return tasks if self.tunnel._znm_task else (t() for t in tasks)
+            return tasks if self.tunnel._znm_as_task else [t() for t in tasks]
         else:
             do, val = msgs[0]
             assert len(msgs) == 1
             assert do == ACK
             self.worker_addr, self.run_id = val
             self.customer.register_task(self)
-            return self if self.tunnel._znm_task else self()
+            return self if self.tunnel._znm_as_task else self()
 
     def put(self, do, val):
         print 'task(%s:%s) recv %s %r' % \

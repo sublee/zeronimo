@@ -103,7 +103,7 @@ class Application(object):
             assert 0
 
     @zeronimo.register
-    def divide_by_zero(self):
+    def zero_div(self):
         0/0      /0/0 /0/0    /0/0   /0/0/0/0   /0/0
         0/0  /0  /0/0 /0/0    /0/0 /0/0    /0/0     /0
         0/0/0/0/0/0/0 /0/0/0/0/0/0 /0/0    /0/0   /0
@@ -259,7 +259,7 @@ def test_raise(customer, worker):
     start_workers([worker])
     with customer.link([worker]) as tunnel:
         with pytest.raises(ZeroDivisionError):
-            tunnel.divide_by_zero()
+            tunnel.zero_div()
         rocket_launching = tunnel.launch_rocket()
         assert rocket_launching.next() == 3
         assert rocket_launching.next() == 2
@@ -275,7 +275,7 @@ def test_2to1(customer1, customer2, worker):
         assert tunnel.add(1, 1) == 'cutie'
         assert len(list(tunnel.jabberwocky())) == 4
         with pytest.raises(ZeroDivisionError):
-            tunnel.divide_by_zero()
+            tunnel.zero_div()
     with customer1.link([worker]) as tunnel1, \
          customer2.link([worker]) as tunnel2:
         joinall([spawn(test, tunnel1), spawn(test, tunnel2)])
@@ -284,7 +284,7 @@ def test_2to1(customer1, customer2, worker):
 @green
 def test_1to2(customer, worker1, worker2):
     start_workers([worker1, worker2])
-    with customer.link([worker1, worker2], task=True) as tunnel:
+    with customer.link([worker1, worker2], as_task=True) as tunnel:
         task1 = tunnel.add(1, 1)
         task2 = tunnel.add(2, 2)
         assert task1() == 'cutie'
@@ -296,6 +296,8 @@ def test_1to2(customer, worker1, worker2):
 def test_fanout(customer, worker1, worker2):
     start_workers([worker1, worker2])
     with customer.link([worker1, worker2]) as tunnel:
+        assert list(tunnel.rycbar123()) == \
+               'run, you clever boy; and remember.'.split()
         for rycbar123 in tunnel(fanout=True).rycbar123():
             assert rycbar123.next() == 'run,'
             assert rycbar123.next() == 'you'
@@ -303,6 +305,14 @@ def test_fanout(customer, worker1, worker2):
             assert rycbar123.next() == 'boy;'
             assert rycbar123.next() == 'and'
             assert rycbar123.next() == 'remember.'
+        with pytest.raises(ZeroDivisionError):
+            tunnel(fanout=True).zero_div()
+        failures = tunnel(as_task=True, fanout=True).zero_div()
+        assert len(failures) == 2
+        with pytest.raises(ZeroDivisionError):
+            failures[0]()
+        with pytest.raises(ZeroDivisionError):
+            failures[1]()
 
 
 @green
