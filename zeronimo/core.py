@@ -18,7 +18,7 @@ from gevent.event import AsyncResult
 from gevent.queue import Queue
 import zmq.green as zmq
 
-from .functional import extract_blueprint, sign_blueprint, should_yield
+from .functional import extract_blueprint, make_fingerprint, should_yield
 
 
 # task message behaviors
@@ -77,7 +77,7 @@ class Worker(Communicator):
             addr = 'inproc://{0}'.format(str(uuid4()))
         self.addr = addr
         self.blueprint = extract_blueprint(obj)
-        self.signature = sign_blueprint(self.blueprint)
+        self.fingerprint = make_fingerprint(self.blueprint)
         super(Worker, self).__init__(**kwargs)
 
     def possible_addrs(self, socket_type):
@@ -176,7 +176,7 @@ class Tunnel(object):
 
     :param customer: the :class:`Customer` object.
     :param workers: the :class:`Worker` objects. All workers must have same
-                    signature.
+                    fingerprint.
     :param return_task: if set to ``True``, the remote functions return a
                         :class:`Task` object instead of received value.
     :type return_task: bool
@@ -184,23 +184,23 @@ class Tunnel(object):
 
     def __init__(self, customer, workers, return_task=False):
         self._znm_customer = customer
-        workers, blueprint = self._znm_verify_workers(workers)
+        workers = self._znm_verify_workers(workers)
         self._znm_workers = workers
-        self._znm_blueprint = blueprint
+        self._znm_blueprint = workers[0].blueprint
         self._znm_return_task = return_task
         self._znm_sockets = {}
-        self._znm_reflect(blueprint)
+        self._znm_reflect(self._znm_blueprint)
 
     def _znm_verify_workers(self, workers):
         if isinstance(workers, Worker):
             worker = workers
             workers = [worker]
-        worker = workers[0]
-        blueprint = worker.blueprint
+        else:
+            worker = workers[0]
         for other_worker in workers[1:]:
-            if worker.signature != other_worker.signature:
-                raise ValueError('All workers must have same signature')
-        return workers, blueprint
+            if worker.fingerprint != other_worker.fingerprint:
+                raise ValueError('All workers must have same fingerprint')
+        return workers
 
     def _znm_reflect(self, blueprint):
         """Sets methods which follows remote functions with same name."""

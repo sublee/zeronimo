@@ -10,11 +10,9 @@
 """
 from collections import Iterable, Sequence, Set, Mapping, namedtuple
 import hashlib
-import inspect
 
 
-Spec = namedtuple('Spec', [
-    'func', 'args', 'varargs', 'keywords', 'fanout', 'reply'])
+Spec = namedtuple('Spec', ['func', 'fanout', 'reply'])
 
 
 def register(f=None, fanout=False, reply=True):
@@ -37,19 +35,17 @@ def extract_blueprint(obj):
             fanout, reply = func._znm_fanout, func._znm_reply
         except AttributeError:
             continue
-        args, varargs, keywords = inspect.getargspec(func)[:3]
-        spec = Spec(func, args, varargs, keywords, fanout, reply)
-        blueprint[func.__name__] = spec
+        blueprint[func.__name__] = Spec(func, fanout, reply)
     return blueprint
 
 
-def sign_blueprint(blueprint):
+def make_fingerprint(blueprint):
     hexh = lambda x: hex(hash(x))
     md5, sha1 = hashlib.md5(), hashlib.sha1()
     for fn, spec in blueprint.viewitems():
-        fingerprint = ' '.join(map(repr, (fn,) + spec[1:])) + '\n'
-        md5.update(fingerprint)
-        sha1.update(fingerprint)
+        frag = ' '.join(map(repr, [fn, spec.fanout, spec.reply])) + '\n'
+        md5.update(frag)
+        sha1.update(frag)
     return '-'.join([md5.hexdigest(), sha1.hexdigest()])
 
 

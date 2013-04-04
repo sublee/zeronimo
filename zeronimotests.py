@@ -159,7 +159,7 @@ def test_blueprint_extraction():
             yield 'baz-%s-end' % id(self)
     # collect from an object
     app = App()
-    blueprint = dict(zeronimo.extract_blueprint(app))
+    blueprint = dict(zeronimo.functional.extract_blueprint(app))
     assert not blueprint['foo'].fanout
     assert blueprint['foo'].reply
     assert blueprint['foo'].reply
@@ -168,7 +168,7 @@ def test_blueprint_extraction():
     assert not blueprint['baz'].fanout
     assert blueprint['baz'].reply
     # collect from a class
-    blueprint = dict(zeronimo.extract_blueprint(App))
+    blueprint = dict(zeronimo.functional.extract_blueprint(App))
     assert not blueprint['foo'].fanout
     assert blueprint['foo'].reply
     assert blueprint['bar'].fanout
@@ -177,16 +177,16 @@ def test_blueprint_extraction():
     assert blueprint['baz'].reply
 
 
-def test_signature():
+def test_fingerprint():
     class Nothing(object): pass
-    blueprint = dict(zeronimo.extract_blueprint(Application))
-    blueprint2 = dict(zeronimo.extract_blueprint(Application()))
-    blueprint3 = dict(zeronimo.extract_blueprint(Nothing))
-    signature = zeronimo.sign_blueprint(blueprint)
-    signature2 = zeronimo.sign_blueprint(blueprint2)
-    signature3 = zeronimo.sign_blueprint(blueprint3)
-    assert signature == signature2
-    assert signature != signature3
+    blueprint = dict(zeronimo.functional.extract_blueprint(Application))
+    blueprint2 = dict(zeronimo.functional.extract_blueprint(Application()))
+    blueprint3 = dict(zeronimo.functional.extract_blueprint(Nothing))
+    fingerprint = zeronimo.functional.make_fingerprint(blueprint)
+    fingerprint2 = zeronimo.functional.make_fingerprint(blueprint2)
+    fingerprint3 = zeronimo.functional.make_fingerprint(blueprint3)
+    assert fingerprint == fingerprint2
+    assert fingerprint != fingerprint3
 
 
 def test_default_addr(customer, worker):
@@ -282,3 +282,10 @@ def test_1to2(customer, worker, worker2):
         assert task1() == 'cutie'
         assert task2() == 'cutie'
         assert task1.worker_addr != task2.worker_addr
+
+
+@green
+def test_link_to_different_workers(customer, worker):
+    worker2 = zeronimo.Worker(2)
+    with pytest.raises(ValueError):
+        customer.link([worker, worker2])
