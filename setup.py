@@ -11,6 +11,14 @@ A distributed RPC solution based on ZeroMQ_. Follow the features:
 - A customer can invoke to any remote worker in the worker cluster.
 - A customer can invoke to all remote workers in the worker cluster.
 
+.. _ZeroMQ: http://www.zeromq.org/
+
+Example
+=======
+
+Server-side
+-----------
+
 .. sourcecode:: python
 
    import socket
@@ -28,14 +36,25 @@ A distributed RPC solution based on ZeroMQ_. Follow the features:
            yield sock.getsockname()[0]
 
    worker = zeronimo.Worker(Application())
-   customer = zeronimo.Customer()
+   worker.bind('ipc://worker')
+   worker.bind_fanout('ipc://worker_fanout')
+   worker.subscribe('')
+   worker.run()
 
-   with customer.link([worker]) as tunnel:
+Client-side
+-----------
+
+.. sourcecode:: python
+
+   import zeronimo
+
+   customer = zeronimo.Customer()
+   customer.bind('ipc://customer')
+
+   with customer.link(['ipc://worker'], ['ipc://worker_fanout']) as tunnel:
        for result in tunnel(fanout=True).whoami():
            print 'hostname=', result.next()
            print 'public address=', result.next()
-
-.. _ZeroMQ: http://www.zeromq.org/
 
 """
 from __future__ import with_statement

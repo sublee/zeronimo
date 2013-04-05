@@ -1,4 +1,5 @@
 import functools
+from itertools import chain
 import os
 import textwrap
 import uuid
@@ -13,12 +14,11 @@ import zeronimo
 
 
 zmq_context = zmq.Context()
-#gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
+gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
 @decorator
 def green(f, *args, **kwargs):
-    print
     return spawn(f, *args, **kwargs).get()
 
 
@@ -40,33 +40,18 @@ def is_connectable(addr, socket_type, context=zmq_context):
         return True
 
 
+def inproc():
+    return 'inproc://{0}'.format(zeronimo.uuid_str())
+
+
 def start_workers(workers):
     waits = []
     for worker in workers:
         spawn(worker.run)
-        until = lambda: is_connectable(worker.addrs[0], zmq.PUSH)
-        waits.append(spawn(busywait, until, until=True, timeout=1))
+        for addr in chain(worker.addrs, worker.fanout_addrs):
+            until = lambda: is_connectable(addr, zmq.PUSH)
+            waits.append(spawn(busywait, until, until=True, timeout=1))
     joinall(waits)
-
-
-'''
-FD_DIR = os.path.join(os.path.dirname(__file__), '_fds')
-def generate_endpoint(protocol, name=None, offset=None):
-    if protocol in 'inproc':
-        if name is None:
-            name = str(uuid.uuid4())
-        endpoint = 'inproc://{}'.format(name)
-        if offset is not None:
-            endpoint = '-'.join([endpoint, str(offset)])
-        return endpoint
-    elif protocol == 'ipc':
-        if not os.isdir(FD_DIR):
-            os.makedir(FD_DIR)
-        fd = int(sorted(os.listdir(FD_DIR), reverse=True)[0]) + 1
-        return 'ipc://_fds/{}'.format(fd)
-    elif protocol == 'tcp':
-        return 'tcp://*:*'
-'''
 
 
 class Application(object):
@@ -136,10 +121,11 @@ for x in xrange(4):
     @pytest.fixture
     def worker{x}():
         app = Application()
-        return zeronimo.Worker(app, context=zmq_context)
+        return zeronimo.Worker(app, inproc(), inproc(), '',
+                               context=zmq_context)
     @pytest.fixture
     def customer{x}():
-        return zeronimo.Customer(context=zmq_context)
+        return zeronimo.Customer(inproc(), context=zmq_context)
     ''').format(x=x if x else ''))
 
 
@@ -160,39 +146,23 @@ def test_remote_function_collection():
             yield 'baz-%s-end' % id(self)
     # collect from an object
     app = App()
-    functions = dict(zeronimo.functional.collect_remote_functions(app))
+    functions = dict(zeronimo.collect_remote_functions(app))
     assert set(functions.keys()) == set(['foo', 'bar', 'baz'])
     # collect from a class
-    functions = dict(zeronimo.functional.collect_remote_functions(App))
+    functions = dict(zeronimo.collect_remote_functions(App))
     assert set(functions.keys()) == set(['foo', 'bar', 'baz'])
-
-
-def _test_fingerprint():
-    class Nothing(object): pass
-    blueprint = dict(zeronimo.functional.extract_blueprint(Application))
-    blueprint2 = dict(zeronimo.functional.extract_blueprint(Application()))
-    blueprint3 = dict(zeronimo.functional.extract_blueprint(Nothing))
-    fingerprint = zeronimo.functional.make_fingerprint(blueprint)
-    fingerprint2 = zeronimo.functional.make_fingerprint(blueprint2)
-    fingerprint3 = zeronimo.functional.make_fingerprint(blueprint3)
-    assert fingerprint == fingerprint2
-    assert fingerprint != fingerprint3
-
-
-def test_default_addr(customer, worker):
-    assert worker.addrs[0].startswith('inproc://')
-    assert customer.addr.startswith('inproc://')
 
 
 def test_running():
-    from zeronimo.core import Communicator
-    class TestingCommunicator(Communicator):
+    class Runner(zeronimo.Base):
+        def reset_sockets(self):
+            pass
         def run(self):
             assert self.running
-    comm = TestingCommunicator()
-    assert not comm.running
-    comm.run()
-    assert not comm.running
+    runner = Runner()
+    assert not runner.running
+    runner.run()
+    assert not runner.running
 
 
 @green
@@ -202,12 +172,14 @@ def test_tunnel(customer, worker):
     with customer.link([worker]) as tunnel:
         assert len(customer.tunnels) == 1
     assert len(customer.tunnels) == 0
+    '''
     with customer.link([worker]) as tunnel1, \
          customer.link([worker]) as tunnel2:
         assert not customer.running
         assert len(customer.tunnels) == 2
         tunnel1.add(0, 0)
         assert customer.running
+    '''
     assert len(customer.tunnels) == 0
     busywait(lambda: customer.running, timeout=1)
     assert not customer.running
@@ -312,3 +284,10 @@ def test_slow(customer, worker):
             with Timeout(0.1):
                 tunnel.sleep()
         assert tunnel.sleep() == 'slept'
+
+
+@green
+def _test_link_to_addrs(customer, worker):
+    start_workers([worker])
+    with customer.link(worker.addrs) as tunnel:
+        assert tunnel.add(1, 1) == 'cutie'
