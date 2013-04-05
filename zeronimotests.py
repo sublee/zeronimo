@@ -14,7 +14,7 @@ import zeronimo
 
 
 zmq_context = zmq.Context()
-#gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
+gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
 @decorator
@@ -55,6 +55,10 @@ def start_workers(workers):
 
 
 class Application(object):
+
+    @zeronimo.remote
+    def simple(self):
+        return 'ok'
 
     @zeronimo.remote
     def add(self, a, b):
@@ -291,3 +295,14 @@ def test_link_to_addrs(customer, worker):
     start_workers([worker])
     with customer.link([(worker.addrs, worker.fanout_addrs)]) as tunnel:
         assert tunnel.add(1, 1) == 'cutie'
+
+
+@green
+def _test_reject(customer, worker1, worker2):
+    start_workers([worker1, worker2])
+    with customer.link([worker1, worker2]) as tunnel:
+        assert len(list(tunnel(fanout=True).simple())) == 2
+        worker2.reject_all()
+        assert len(list(tunnel(fanout=True).simple())) == 1
+        worker2.accept_all()
+        assert len(list(tunnel(fanout=True).simple())) == 2

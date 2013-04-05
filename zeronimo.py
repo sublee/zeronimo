@@ -111,12 +111,19 @@ def ensure_list(val):
     return list(val) if isinstance(val, (Sequence, Set)) else [val]
 
 
-def send(sock, obj, flags=0, topic=''):
+# ZMQ messaging functions
+
+
+def send(sock, obj, flags=0, prefix=''):
+    """Same with :meth:`zmq.Socket.send_pyobj` but can append prefix for
+    filtering subscription.
+    """
     msg = pickle.dumps(obj)
-    return sock.send(topic + msg, flags)
+    return sock.send(prefix + msg, flags)
 
 
 def recv(sock, flags=0):
+    """Same with :meth:`zmq.Socket.recv_pyobj`."""
     msg = sock.recv(flags)
     return pickle.loads(msg)
 
@@ -386,7 +393,7 @@ class Tunnel(object):
         invocation = Invocation(name, args, kwargs, task.id, customer_addr)
         print 'tunnel send %r' % (invocation,)
         topic = self._znm_fanout_topic if self._znm_fanout else ''
-        send(sock, invocation, topic=topic)
+        send(sock, invocation, prefix=topic)
         if not self._znm_wait:
             # immediately if workers won't wait
             return
