@@ -51,7 +51,7 @@ Client-side
    customer = zeronimo.Customer()
    customer.bind('ipc://customer')
 
-   with customer.link(['ipc://worker'], ['ipc://worker_fanout']) as tunnel:
+   with customer.link('ipc://worker', 'ipc://worker_fanout') as tunnel:
        for result in tunnel(fanout=True).whoami():
            print 'hostname=', result.next()
            print 'public address=', result.next()

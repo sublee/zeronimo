@@ -14,7 +14,7 @@ import zeronimo
 
 
 zmq_context = zmq.Context()
-gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
+#gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
 @decorator
@@ -287,7 +287,7 @@ def test_slow(customer, worker):
 
 
 @green
-def _test_link_to_addrs(customer, worker):
+def test_link_to_addrs(customer, worker):
     start_workers([worker])
-    with customer.link(worker.addrs) as tunnel:
+    with customer.link([(worker.addrs, worker.fanout_addrs)]) as tunnel:
         assert tunnel.add(1, 1) == 'cutie'
