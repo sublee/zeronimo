@@ -68,15 +68,6 @@ YIELD = 12
 BREAK = 13
 
 
-def st(x):
-    return SOCKET_TYPE_NAMES[x]
-
-
-def dt(x):
-    return {1: 'ACCEPT', 0: 'REJECT',
-            10: 'RETURN', 11: 'RAISE', 12: 'YIELD', 13: 'BREAK'}[x]
-
-
 def uuid_str():
     return hashlib.md5(str(uuid.uuid4())).hexdigest()[:6]
 
@@ -105,10 +96,13 @@ def should_yield(val):
         not isinstance(val, (Sequence, Set, Mapping)))
 
 
-def ensure_list(val):
+def ensure_sequence(val, sequence=list):
     if val is None:
-        return []
-    return list(val) if isinstance(val, (Sequence, Set)) else [val]
+        return sequence()
+    elif isinstance(val, (Sequence, Set)):
+        return sequence(val)
+    else:
+        return sequence([val])
 
 
 # ZMQ messaging functions
@@ -180,7 +174,7 @@ class Base(object):
 
 class Worker(Base):
 
-    functions = None
+    obj = None
     fanout_sock = None
     fanout_addrs = None
     fanout_topic = None
@@ -188,7 +182,7 @@ class Worker(Base):
     def __init__(self, obj, bind=None, bind_fanout=None, fanout_topic='',
                  **kwargs):
         super(Worker, self).__init__(**kwargs)
-        self.functions = collect_remote_functions(obj)
+        self.obj = obj
         bind and self.bind(bind)
         bind_fanout and self.bind_fanout(bind_fanout)
         self.fanout_topic = fanout_topic
@@ -229,7 +223,7 @@ class Worker(Base):
             sock.connect(invocation.customer_addr)
             send(sock, Reply(ACCEPT, None, *meta))
         try:
-            val = self.functions[name](*args, **kwargs)
+            val = getattr(self.obj, name)(*args, **kwargs)
         except Exception, error:
             print 'worker send %r' % (Reply(RAISE, error, *meta),)
             sock and send(sock, Reply(RAISE, error, *meta))
@@ -270,6 +264,22 @@ class Customer(Base):
 
     def link(self, *args, **kwargs):
         return Tunnel(self, *args, **kwargs)
+
+    def link_workers(self, workers, *args, **kwargs):
+        """Merges addresses from the workers then creates a :class:`Tunnel`
+        object. All workers should subscribe same topic.
+        """
+        addrs = set()
+        fanout_addrs = set()
+        fanout_topic = None
+        for worker in workers:
+            addrs.update(worker.addrs)
+            fanout_addrs.update(worker.fanout_addrs)
+            if fanout_topic is None:
+                fanout_topic = worker.fanout_topic
+            elif fanout_topic != worker.fanout_topic:
+                raise ValueError('All workers should subscribe same topic')
+        return Tunnel(self, addrs, fanout_addrs, fanout_topic, *args, **kwargs)
 
     def register_tunnel(self, tunnel):
         """Registers the :class:`Tunnel` object to run and ensures a socket
@@ -353,33 +363,17 @@ class Tunnel(object):
     :type dests: array of :class:`Worker` or address
     """
 
-    def __init__(self, customer, dests, fanout_topic='',
-                 wait=True, fanout=False, as_task=False):
+    def __init__(self, customer, addrs=None, fanout_addrs=None,
+                 fanout_topic='', wait=True, fanout=False, as_task=False):
         self._znm_customer = customer
-        self._znm_addrs, self._znm_fanout_addrs = self._znm_merge_dests(dests)
+        self._znm_addrs = ensure_sequence(addrs, set)
+        self._znm_fanout_addrs = ensure_sequence(fanout_addrs, set)
         self._znm_fanout_topic = fanout_topic
         self._znm_sockets = {}
         # options
         self._znm_wait = wait
         self._znm_fanout = fanout
         self._znm_as_task = as_task
-
-    def _znm_merge_dests(self, dests):
-        dests = ensure_list(dests)
-        merged_addrs = set()
-        merged_fanout_addrs = set()
-        for dest in dests:
-            if isinstance(dest, Worker):
-                addrs = dest.addrs
-                fanout_addrs = dest.fanout_addrs
-            elif isinstance(dest, tuple):
-                addrs, fanout_addrs = dest
-            else:
-                raise TypeError('{!r} is not allowed destination '
-                                'type'.format(dest))
-            merged_addrs.update(addrs)
-            merged_fanout_addrs.update(fanout_addrs)
-        return merged_addrs, merged_fanout_addrs
 
     def _znm_is_alive(self):
         return self in self._znm_customer.tunnels
@@ -430,8 +424,8 @@ class Tunnel(object):
             fanout = self._znm_fanout
         if as_task is None:
             as_task = self._znm_as_task
-        opts = (wait, fanout, as_task)
-        tunnel = Tunnel(self._znm_customer, [], self._znm_fanout_topic, *opts)
+        opts = {'wait': wait, 'fanout': fanout, 'as_task': as_task}
+        tunnel = Tunnel(self._znm_customer, **opts)
         tunnel._znm_addrs = self._znm_addrs
         tunnel._znm_fanout_addrs = self._znm_fanout_addrs
         tunnel._znm_sockets = self._znm_sockets
@@ -490,11 +484,11 @@ class Task(object):
         elif reply.method == RAISE:
             raise reply.data
         elif reply.method == YIELD:
-            return self.make_generator(reply)
+            return self.remote_iterator(reply)
         elif reply.method == BREAK:
             return iter([])
 
-    def make_generator(self, first_reply):
+    def remote_iterator(self, first_reply):
         yield first_reply.data
         while True:
             reply = self.queue.get()

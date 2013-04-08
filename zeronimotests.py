@@ -14,7 +14,7 @@ import zeronimo
 
 
 zmq_context = zmq.Context()
-gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
+#gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
 @decorator
@@ -56,11 +56,9 @@ def start_workers(workers):
 
 class Application(object):
 
-    @zeronimo.remote
     def simple(self):
         return 'ok'
 
-    @zeronimo.remote
     def add(self, a, b):
         """Koreans' mathematical addition."""
         if a == b:
@@ -70,28 +68,23 @@ class Application(object):
                 return 'xoxoxoxoxoxo cutie'
         return a + b
 
-    @zeronimo.remote
     def jabberwocky(self):
         yield 'Twas brillig, and the slithy toves'
         yield 'Did gyre and gimble in the wabe;'
         yield 'All mimsy were the borogoves,'
         yield 'And the mome raths outgrabe.'
 
-    @zeronimo.remote
     def xrange(self):
         return xrange(5)
 
-    @zeronimo.remote
     def dict_view(self):
         return dict(zip(xrange(5), xrange(5))).viewkeys()
 
-    @zeronimo.remote
     def dont_yield(self):
         if False:
             yield 'it should\'t be sent'
             assert 0
 
-    @zeronimo.remote
     def zero_div(self):
         0/0      /0/0 /0/0    /0/0   /0/0/0/0   /0/0
         0/0  /0  /0/0 /0/0    /0/0 /0/0    /0/0     /0
@@ -99,19 +92,16 @@ class Application(object):
         0/0/0/0/0/0/0 /0/0    /0/0 /0/0    /0/0
         0/0  /0  /0/0 /0/0    /0/0   /0/0/0/0     /0
 
-    @zeronimo.remote
     def launch_rocket(self):
         yield 3
         yield 2
         yield 1
         raise RuntimeError('Launch!')
 
-    @zeronimo.remote
     def rycbar123(self):
         for word in 'run, you clever boy; and remember.'.split():
             yield word
 
-    @zeronimo.remote
     def sleep(self):
         gevent.sleep(0.1)
         return 'slept'
@@ -173,12 +163,12 @@ def test_running():
 def test_tunnel(customer, worker):
     start_workers([worker])
     assert len(customer.tunnels) == 0
-    with customer.link([worker]) as tunnel:
+    with customer.link_workers([worker]) as tunnel:
         assert len(customer.tunnels) == 1
     assert len(customer.tunnels) == 0
     '''
-    with customer.link([worker]) as tunnel1, \
-         customer.link([worker]) as tunnel2:
+    with customer.link_workers([worker]) as tunnel1, \
+         customer.link_workers([worker]) as tunnel2:
         assert not customer.running
         assert len(customer.tunnels) == 2
         tunnel1.add(0, 0)
@@ -192,7 +182,7 @@ def test_tunnel(customer, worker):
 @green
 def test_return(customer, worker):
     start_workers([worker])
-    with customer.link([worker]) as tunnel:
+    with customer.link_workers([worker]) as tunnel:
         assert tunnel.add(1, 1) == 'cutie'
         assert tunnel.add(2, 2) == 'cutie'
         assert tunnel.add(3, 3) == 'cutie'
@@ -205,7 +195,7 @@ def test_return(customer, worker):
 @green
 def test_yield(customer, worker):
     start_workers([worker])
-    with customer.link([worker]) as tunnel:
+    with customer.link_workers([worker]) as tunnel:
         assert len(list(tunnel.jabberwocky())) == 4
         assert list(tunnel.xrange()) == [0, 1, 2, 3, 4]
         view = tunnel.dict_view()
@@ -222,7 +212,7 @@ def test_yield(customer, worker):
 @green
 def test_raise(customer, worker):
     start_workers([worker])
-    with customer.link([worker]) as tunnel:
+    with customer.link_workers([worker]) as tunnel:
         with pytest.raises(ZeroDivisionError):
             tunnel.zero_div()
         rocket_launching = tunnel.launch_rocket()
@@ -241,15 +231,15 @@ def test_2to1(customer1, customer2, worker):
         assert len(list(tunnel.jabberwocky())) == 4
         with pytest.raises(ZeroDivisionError):
             tunnel.zero_div()
-    with customer1.link([worker]) as tunnel1, \
-         customer2.link([worker]) as tunnel2:
+    with customer1.link_workers([worker]) as tunnel1, \
+         customer2.link_workers([worker]) as tunnel2:
         joinall([spawn(test, tunnel1), spawn(test, tunnel2)])
 
 
 @green
 def test_1to2(customer, worker1, worker2):
     start_workers([worker1, worker2])
-    with customer.link([worker1, worker2], as_task=True) as tunnel:
+    with customer.link_workers([worker1, worker2], as_task=True) as tunnel:
         task1 = tunnel.add(1, 1)
         task2 = tunnel.add(2, 2)
         assert task1() == 'cutie'
@@ -260,9 +250,10 @@ def test_1to2(customer, worker1, worker2):
 @green
 def test_fanout(customer, worker1, worker2):
     start_workers([worker1, worker2])
-    with customer.link([worker1, worker2]) as tunnel:
+    with customer.link_workers([worker1, worker2]) as tunnel:
         assert list(tunnel.rycbar123()) == \
                'run, you clever boy; and remember.'.split()
+        print tunnel(fanout=True)._znm_fanout
         for rycbar123 in tunnel(fanout=True).rycbar123():
             assert rycbar123.next() == 'run,'
             assert rycbar123.next() == 'you'
@@ -283,7 +274,7 @@ def test_fanout(customer, worker1, worker2):
 @green
 def test_slow(customer, worker):
     start_workers([worker])
-    with customer.link([worker]) as tunnel:
+    with customer.link_workers([worker]) as tunnel:
         with pytest.raises(Timeout):
             with Timeout(0.1):
                 tunnel.sleep()
@@ -293,14 +284,14 @@ def test_slow(customer, worker):
 @green
 def test_link_to_addrs(customer, worker):
     start_workers([worker])
-    with customer.link([(worker.addrs, worker.fanout_addrs)]) as tunnel:
+    with customer.link(worker.addrs, worker.fanout_addrs) as tunnel:
         assert tunnel.add(1, 1) == 'cutie'
 
 
 @green
 def _test_reject(customer, worker1, worker2):
     start_workers([worker1, worker2])
-    with customer.link([worker1, worker2]) as tunnel:
+    with customer.link_workers([worker1, worker2]) as tunnel:
         assert len(list(tunnel(fanout=True).simple())) == 2
         worker2.reject_all()
         assert len(list(tunnel(fanout=True).simple())) == 1
