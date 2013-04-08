@@ -34,7 +34,6 @@ __all__ = []
 
 class ZeronimoError(RuntimeError): pass
 class ZeronimoWarning(RuntimeWarning): pass
-class AcceptanceError(ZeronimoError): pass
 
 
 # message frames
@@ -98,10 +97,11 @@ def send(sock, obj, flags=0, prefix=''):
     return sock.send(prefix + msg, flags)
 
 
-def recv(sock, flags=0):
+def recv(sock, flags=0, prefix=''):
     """Same with :meth:`zmq.Socket.recv_pyobj`."""
     msg = sock.recv(flags)
-    return pickle.loads(msg)
+    assert msg.startswith(prefix)
+    return pickle.loads(msg[len(prefix):])
 
 
 class Base(object):
@@ -169,7 +169,7 @@ class Base(object):
         raise NotImplementedError
 
     def stop(self):
-        print type(self).__name__, id(self), 'stop'
+        #print type(self).__name__, id(self), 'stop'
         if not self.running:
             raise RuntimeError('This isn\'t running')
         self.close_sockets()
@@ -242,52 +242,57 @@ class Worker(Base):
         name = invocation.name
         args = invocation.args
         kwargs = invocation.kwargs
-        print 'worker recv %r (run_id=%s)' % (invocation, run_id)
+        #print 'worker recv %r (run_id=%s)' % (invocation, run_id)
         if invocation.customer_addr is None:
             sock = False
         else:
             sock = self.context.socket(zmq.PUSH)
             sock.connect(invocation.customer_addr)
             method = ACCEPT if self.accepting else REJECT
-            print 'worker send %r' % (Reply(method, None, *meta),)
+            #print 'worker send %r' % (Reply(method, None, *meta),)
             send(sock, Reply(method, None, *meta))
         if not self.accepting:
-            print 'task rejected'
+            #print 'task rejected'
             return
         try:
             val = getattr(self.obj, name)(*args, **kwargs)
         except Exception, error:
-            print 'worker send %r' % (Reply(RAISE, error, *meta),)
+            #print 'worker send %r' % (Reply(RAISE, error, *meta),)
             sock and send(sock, Reply(RAISE, error, *meta))
             raise
         if should_yield(val):
             try:
                 for item in val:
-                    print 'worker send %r' % (Reply(YIELD, item, *meta),)
+                    #print 'worker send %r' % (Reply(YIELD, item, *meta),)
                     sock and send(sock, Reply(YIELD, item, *meta))
             except Exception, error:
-                print 'worker send %r' % (Reply(RAISE, error, *meta),)
+                #print 'worker send %r' % (Reply(RAISE, error, *meta),)
                 sock and send(sock, Reply(RAISE, error, *meta))
             else:
-                print 'worker send %r' % (Reply(BREAK, None, *meta),)
+                #print 'worker send %r' % (Reply(BREAK, None, *meta),)
                 sock and send(sock, Reply(BREAK, None, *meta))
         else:
-            print 'worker send %r' % (Reply(RETURN, val, *meta),)
+            #print 'worker send %r' % (Reply(RETURN, val, *meta),)
             sock and send(sock, Reply(RETURN, val, *meta))
 
     def run(self):
-        print 'Worker', id(self), 'run'
-        def serve(sock):
+        #print 'Worker', id(self), 'run', self.fanout_topic
+        def serve(sock, prefix=''):
             while self.running:
                 try:
-                    spawn(self.run_task, recv(sock))
+                    spawn(self.run_task, recv(sock, prefix=prefix))
                 except zmq.ZMQError:
                     continue
         self.open_sockets()
         try:
-            joinall([spawn(serve, self.sock), spawn(serve, self.fanout_sock)])
+            joinall([spawn(serve, self.sock),
+                     spawn(serve, self.fanout_sock, self.fanout_topic)])
         finally:
             self.close_sockets()
+
+    def __repr__(self):
+        return '{0}({1}, {2}, {3})'.format(type(self).__name__, self.addrs,
+                                           self.fanout_addrs, self.fanout_topic)
 
 
 class Customer(Base):
@@ -319,13 +324,14 @@ class Customer(Base):
                 fanout_topic = worker.fanout_topic
             elif fanout_topic != worker.fanout_topic:
                 raise ValueError('All workers should subscribe same topic')
+        #print 'LINK WORKERS',addrs, fanout_addrs, fanout_topic 
         return Tunnel(self, addrs, fanout_addrs, fanout_topic, *args, **kwargs)
 
     def register_tunnel(self, tunnel):
         """Registers the :class:`Tunnel` object to run and ensures a socket
         which pulls replies.
         """
-        print 'regi tunnel'
+        #print 'regi tunnel'
         if tunnel in self.tunnels:
             raise ValueError('Already registered tunnel')
         self.tunnels.add(tunnel)
@@ -333,7 +339,7 @@ class Customer(Base):
 
     def unregister_tunnel(self, tunnel):
         """Unregisters the :class:`Tunnel` object."""
-        print 'unregi tunnel'
+        #print 'unregi tunnel'
         self.tunnels.remove(tunnel)
         if self.running and not self.tunnels:
             self.stop()
@@ -366,7 +372,7 @@ class Customer(Base):
             pass
 
     def run(self):
-        print 'Customer', id(self), 'run'
+        #print 'Customer', id(self), 'run'
         while self.tunnels:
             try:
                 reply = recv(self.sock)
@@ -393,8 +399,11 @@ class Customer(Base):
                         self._missing_tasks[task_id] = {run_id: task}
                     elif run_id not in self._missing_tasks[task_id]:
                         self._missing_tasks[task_id][run_id] = task
-            print 'customer recv %r' % (reply,)
+            #print 'customer recv %r' % (reply,)
             task.queue.put(reply)
+
+    def __repr__(self):
+        return '{0}({1})'.format(type(self).__name__, self.addrs)
 
 
 class Tunnel(object):
@@ -428,6 +437,9 @@ class Tunnel(object):
         self._znm_wait = wait
         self._znm_fanout = fanout
         self._znm_as_task = as_task
+        if list(fanout_addrs)[0].startswith('pgm') and not fanout_topic:
+            assert 0
+        #print 'init tunnel', id(self), fanout_addrs, `self._znm_fanout_topic`
 
     def _znm_is_alive(self):
         return self in self._znm_customer.tunnels
@@ -440,9 +452,13 @@ class Tunnel(object):
         task = Task(self)
         sock = self._znm_sockets[zmq.PUB if self._znm_fanout else zmq.PUSH]
         invocation = Invocation(name, args, kwargs, task.id, customer_addr)
-        print 'tunnel send %r' % (invocation,)
-        topic = self._znm_fanout_topic if self._znm_fanout else ''
-        send(sock, invocation, prefix=topic)
+        is_fanout = self._znm_fanout
+        aaa = self._znm_fanout_topic
+        fanout_topic = self._znm_fanout_topic if self._znm_fanout else ''
+        #print 'send topic', id(self), `self._znm_fanout_topic`,
+        #self._znm_fanout, self._znm_fanout_addrs
+        #print 'tunnel send %r upon %r' % (invocation, fanout_topic)
+        send(sock, invocation, prefix=fanout_topic)
         if not self._znm_wait:
             # immediately if workers won't wait
             return
@@ -478,9 +494,9 @@ class Tunnel(object):
         if as_task is None:
             as_task = self._znm_as_task
         opts = {'wait': wait, 'fanout': fanout, 'as_task': as_task}
-        tunnel = Tunnel(self._znm_customer, **opts)
-        tunnel._znm_addrs = self._znm_addrs
-        tunnel._znm_fanout_addrs = self._znm_fanout_addrs
+        tunnel = Tunnel(self._znm_customer, self._znm_addrs,
+                        self._znm_fanout_addrs, self._znm_fanout_topic,
+                        **opts)
         tunnel._znm_sockets = self._znm_sockets
         return tunnel
 
@@ -523,7 +539,7 @@ class Task(object):
                     break
         self.customer.unregister_task(self)
         if not replies:
-            raise AcceptanceError('Failed to find workers that accepted')
+            raise ZeronimoError('Failed to find workers that accepted')
         if self.tunnel._znm_fanout:
             tasks = []
             for reply in replies:
@@ -544,7 +560,7 @@ class Task(object):
 
     def __call__(self):
         reply = self.queue.get()
-        print 'task recv %r' % (reply,)
+        #print 'task recv %r' % (reply,)
         assert reply.method not in (ACCEPT, REJECT)
         if reply.method in (RETURN, RAISE):
             self.customer.unregister_task(self)
@@ -561,7 +577,7 @@ class Task(object):
         yield first_reply.data
         while True:
             reply = self.queue.get()
-            print 'task recv %r' % (reply,)
+            #print 'task recv %r' % (reply,)
             assert reply.method not in (ACCEPT, REJECT, RETURN)
             if reply.method == YIELD:
                 yield reply.data
