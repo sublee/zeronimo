@@ -297,3 +297,20 @@ def test_reject(customer, worker1, worker2):
         assert len(list(tunnel(fanout=True).simple())) == 1
         worker2.accept_all()
         assert len(list(tunnel(fanout=True).simple())) == 2
+
+
+@green
+def test_topic(customer, worker1, worker2):
+    start_workers([worker1, worker2])
+    fanout_addrs = list(worker1.fanout_addrs) + list(worker2.fanout_addrs)
+    with customer.link(fanout_addrs=fanout_addrs) as tunnel:
+        assert len(list(tunnel(fanout=True).simple())) == 2
+        worker2.subscribe('stop')
+        assert len(list(tunnel(fanout=True).simple())) == 1
+        worker1.subscribe('stop')
+        with pytest.raises(zeronimo.AcceptanceError):
+            tunnel(fanout=True).simple()
+        worker1.subscribe('')
+        assert len(list(tunnel(fanout=True).simple())) == 1
+        worker2.subscribe('')
+        assert len(list(tunnel(fanout=True).simple())) == 2
