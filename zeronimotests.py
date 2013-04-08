@@ -289,7 +289,7 @@ def test_link_to_addrs(customer, worker):
 
 
 @green
-def _test_reject(customer, worker1, worker2):
+def test_reject(customer, worker1, worker2):
     start_workers([worker1, worker2])
     with customer.link_workers([worker1, worker2]) as tunnel:
         assert len(list(tunnel(fanout=True).simple())) == 2

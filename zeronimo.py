@@ -178,6 +178,7 @@ class Worker(Base):
     fanout_sock = None
     fanout_addrs = None
     fanout_topic = None
+    accepting = True
 
     def __init__(self, obj, bind=None, bind_fanout=None, fanout_topic='',
                  **kwargs):
@@ -185,10 +186,10 @@ class Worker(Base):
         self.obj = obj
         bind and self.bind(bind)
         bind_fanout and self.bind_fanout(bind_fanout)
-        self.fanout_topic = fanout_topic
         self.subscribe(fanout_topic)
 
     def reset_sockets(self):
+        """Resets PULL and SUB sockets."""
         super(Worker, self).reset_sockets()
         if self.fanout_sock is not None:
             self.fanout_sock.close()
@@ -196,10 +197,12 @@ class Worker(Base):
         self.fanout_addrs = set()
 
     def bind_fanout(self, addr):
+        """Binds the address to SUB socket."""
         self.fanout_sock.bind(addr)
         self.fanout_addrs.add(addr)
 
     def unbind_fanout(self, addr):
+        """Unbinds the address to SUB socket."""
         self.fanout_sock.unbind(addr)
         self.fanout_addrs.remove(addr)
 
@@ -208,6 +211,12 @@ class Worker(Base):
             self.fanout_sock.setsockopt(zmq.UNSUBSCRIBE, self.fanout_topic)
         self.fanout_sock.setsockopt(zmq.SUBSCRIBE, fanout_topic)
         self.fanout_topic = fanout_topic
+
+    def accept_all(self):
+        self.accepting = True
+
+    def reject_all(self):
+        self.accepting = False
 
     def run_task(self, invocation):
         run_id = uuid_str()
@@ -221,7 +230,11 @@ class Worker(Base):
         else:
             sock = self.context.socket(zmq.PUSH)
             sock.connect(invocation.customer_addr)
-            send(sock, Reply(ACCEPT, None, *meta))
+            method = ACCEPT if self.accepting else REJECT
+            send(sock, Reply(method, None, *meta))
+        if not self.accepting:
+            print 'task rejected'
+            return
         try:
             val = getattr(self.obj, name)(*args, **kwargs)
         except Exception, error:
@@ -357,10 +370,19 @@ class Tunnel(object):
     request of RPC through the customer's sockets.
 
     :param customer: the :class:`Customer` object.
-    :param dests: the destinations.
+    :param addrs: the destination worker addresses bound at PULL sockets.
+    :param fanout_addrs: the destination worker addresses bound at SUB sockets.
     :param fanout_topic: the filter the workers are subscribing.
 
-    :type dests: array of :class:`Worker` or address
+    :param wait: if it's set to ``True``, the workers will reply. Otherwise,
+                 the workers just invoke a function without reply. Defaults to
+                 ``True``.
+    :param fanout: if it's set to ``True``, all workers will receive an
+                   invocation request. Defaults to ``False``.
+    :param as_task: actually, every remote function calls have own
+                    :class:`Task` object. if it's set to ``True``, remote
+                    functions return a :class:`Task` object instead of result
+                    value. Defaults to ``False``.
     """
 
     def __init__(self, customer, addrs=None, fanout_addrs=None,
@@ -458,6 +480,9 @@ class Task(object):
         if self.tunnel._znm_fanout:
             tasks = []
             for reply in replies:
+                if reply.method == REJECT:
+                    # a worker rejected the task
+                    continue
                 assert reply.method == ACCEPT
                 each_task = Task(self.tunnel, self.id, reply.run_id)
                 each_task.worker_addr = reply.worker_addr
