@@ -53,8 +53,8 @@ class Reply(namedtuple('Reply', [
 
     def __repr__(self):
         method = {1: 'ACCEPT', 0: 'REJECT',
-                  10: 'RETURN', 11: 'RAISE',
-                  12: 'YIELD', 13: 'BREAK'}[self.method]
+                  100: 'RETURN', 101: 'RAISE',
+                  102: 'YIELD', 103: 'BREAK'}[self.method]
         args = (type(self).__name__, method) + self[1:]
         return '{}({}, {!r}, {!r}, {!r}, {!r})'.format(*args)
 
@@ -62,32 +62,14 @@ class Reply(namedtuple('Reply', [
 # reply methods
 ACCEPT = 1
 REJECT = 0
-RETURN = 10
-RAISE = 11
-YIELD = 12
-BREAK = 13
+RETURN = 100
+RAISE = 101
+YIELD = 102
+BREAK = 103
 
 
 def uuid_str():
     return hashlib.md5(str(uuid.uuid4())).hexdigest()[:6]
-
-
-def remote(func):
-    """This decorator makes a function to be collected by
-    :func:`collect_remote_functions` for being invokable by remote clients.
-    """
-    func._znm = True
-    return func
-
-
-def collect_remote_functions(obj):
-    """Collects remote functions from the object."""
-    functions = {}
-    for attr in dir(obj):
-        func = getattr(obj, attr)
-        if hasattr(func, '_znm') and func._znm:
-            functions[attr] = func
-    return functions
 
 
 def should_yield(val):
@@ -125,7 +107,7 @@ def recv(sock, flags=0):
 class Base(object):
     """Manages ZeroMQ sockets."""
 
-    running = 0
+    running = False
     context = None
     sock = None
     addrs = None
@@ -138,38 +120,61 @@ class Base(object):
                 return
             try:
                 with self._running_lock:
-                    obj.running += 1
+                    if obj.running is False:
+                        obj.running = 1
+                    else:
+                        obj.running += 1
                     rv = obj._run()
             finally:
-                obj.running -= 1
-                assert obj.running >= 0
+                if obj.running is not False:
+                    obj.running -= 1
+                    assert obj.running >= 0
             return rv
         obj.run, obj._run = MethodType(run, obj), obj.run
         return obj
 
     def __init__(self, context=None):
+        if context is None:
+            context = zmq.Context()
         self.context = context
-        self.reset_sockets()
-
-    def __del__(self):
-        self.running = 0
-
-    def reset_sockets(self):
-        if self.sock is not None:
-            self.sock.close()
-        self.sock = self.context.socket(zmq.PULL)
         self.addrs = set()
 
+    def __del__(self):
+        self.stop()
+
+    def open_sockets(self):
+        if self.sock is not None:
+            return
+        self.sock = self.context.socket(zmq.PULL)
+        for addr in self.addrs:
+            self.bind(addr)
+
+    def close_sockets(self):
+        if self.sock is None:
+            return
+        self.sock.close()
+        self.sock = None
+
     def bind(self, addr):
-        self.sock.bind(addr)
+        if self.sock is not None:
+            self.sock.bind(addr)
         self.addrs.add(addr)
 
     def unbind(self, addr):
-        self.sock.unbind(addr)
+        if self.sock is not None:
+            self.sock.unbind(addr)
         self.addrs.remove(addr)
 
     def run(self):
         raise NotImplementedError
+
+    def stop(self):
+        print type(self).__name__, id(self), 'stop'
+        if not self.running:
+            raise RuntimeError('This isn\'t running')
+        self.close_sockets()
+        self.running = False
+        self._running_lock.wait()
 
 
 class Worker(Base):
@@ -184,32 +189,45 @@ class Worker(Base):
                  **kwargs):
         super(Worker, self).__init__(**kwargs)
         self.obj = obj
+        self.fanout_addrs = set()
         bind and self.bind(bind)
         bind_fanout and self.bind_fanout(bind_fanout)
         self.subscribe(fanout_topic)
 
-    def reset_sockets(self):
-        """Resets PULL and SUB sockets."""
-        super(Worker, self).reset_sockets()
+    def open_sockets(self):
+        super(Worker, self).open_sockets()
         if self.fanout_sock is not None:
-            self.fanout_sock.close()
+            return
         self.fanout_sock = self.context.socket(zmq.SUB)
-        self.fanout_addrs = set()
+        for addr in self.fanout_addrs:
+            self.bind_fanout(addr)
+        if self.fanout_topic is not None:
+            self.subscribe(self.fanout_topic)
+
+    def close_sockets(self):
+        super(Worker, self).close_sockets()
+        if self.fanout_sock is None:
+            return
+        self.fanout_sock.close()
+        self.fanout_sock = None
 
     def bind_fanout(self, addr):
         """Binds the address to SUB socket."""
-        self.fanout_sock.bind(addr)
+        if self.fanout_sock is not None:
+            self.fanout_sock.bind(addr)
         self.fanout_addrs.add(addr)
 
     def unbind_fanout(self, addr):
         """Unbinds the address to SUB socket."""
-        self.fanout_sock.unbind(addr)
+        if self.fanout_sock is not None:
+            self.fanout_sock.unbind(addr)
         self.fanout_addrs.remove(addr)
 
     def subscribe(self, fanout_topic):
-        if self.fanout_topic is not None:
-            self.fanout_sock.setsockopt(zmq.UNSUBSCRIBE, self.fanout_topic)
-        self.fanout_sock.setsockopt(zmq.SUBSCRIBE, fanout_topic)
+        if self.fanout_sock:
+            if self.fanout_topic is not None:
+                self.fanout_sock.setsockopt(zmq.UNSUBSCRIBE, self.fanout_topic)
+            self.fanout_sock.setsockopt(zmq.SUBSCRIBE, fanout_topic)
         self.fanout_topic = fanout_topic
 
     def accept_all(self):
@@ -231,6 +249,7 @@ class Worker(Base):
             sock = self.context.socket(zmq.PUSH)
             sock.connect(invocation.customer_addr)
             method = ACCEPT if self.accepting else REJECT
+            print 'worker send %r' % (Reply(method, None, *meta),)
             send(sock, Reply(method, None, *meta))
         if not self.accepting:
             print 'task rejected'
@@ -257,10 +276,18 @@ class Worker(Base):
             sock and send(sock, Reply(RETURN, val, *meta))
 
     def run(self):
+        print 'Worker', id(self), 'run'
         def serve(sock):
             while self.running:
-                spawn(self.run_task, recv(sock))
-        joinall([spawn(serve, self.sock), spawn(serve, self.fanout_sock)])
+                try:
+                    spawn(self.run_task, recv(sock))
+                except zmq.ZMQError:
+                    continue
+        self.open_sockets()
+        try:
+            joinall([spawn(serve, self.sock), spawn(serve, self.fanout_sock)])
+        finally:
+            self.close_sockets()
 
 
 class Customer(Base):
@@ -298,15 +325,18 @@ class Customer(Base):
         """Registers the :class:`Tunnel` object to run and ensures a socket
         which pulls replies.
         """
+        print 'regi tunnel'
         if tunnel in self.tunnels:
             raise ValueError('Already registered tunnel')
         self.tunnels.add(tunnel)
+        self.open_sockets()
 
     def unregister_tunnel(self, tunnel):
         """Unregisters the :class:`Tunnel` object."""
+        print 'unregi tunnel'
         self.tunnels.remove(tunnel)
-        if self.sock is not None and not self.tunnels:
-            self.sock.close()
+        if self.running and not self.tunnels:
+            self.stop()
 
     def register_task(self, task):
         try:
@@ -314,6 +344,8 @@ class Customer(Base):
         except KeyError:
             self.tasks[task.id] = {task.run_id: task}
         self._restore_missing_messages(task)
+        if not self.running:
+            spawn(self.run)
 
     def unregister_task(self, task):
         assert self.tasks[task.id].pop(task.run_id) is task
@@ -334,6 +366,7 @@ class Customer(Base):
             pass
 
     def run(self):
+        print 'Customer', id(self), 'run'
         while self.tunnels:
             try:
                 reply = recv(self.sock)
@@ -362,7 +395,6 @@ class Customer(Base):
                         self._missing_tasks[task_id][run_id] = task
             print 'customer recv %r' % (reply,)
             task.queue.put(reply)
-        self.sock = None
 
 
 class Tunnel(object):
@@ -402,8 +434,9 @@ class Tunnel(object):
 
     def _znm_invoke(self, name, *args, **kwargs):
         """Invokes remote function."""
-        customer_addr = list(self._znm_customer.addrs)[0] \
-                        if self._znm_wait else None
+        #TODO: addr negotiation
+        customer_addr = (list(self._znm_customer.addrs)[0]
+                         if self._znm_wait else None)
         task = Task(self)
         sock = self._znm_sockets[zmq.PUB if self._znm_fanout else zmq.PUSH]
         invocation = Invocation(name, args, kwargs, task.id, customer_addr)
@@ -413,8 +446,6 @@ class Tunnel(object):
         if not self._znm_wait:
             # immediately if workers won't wait
             return
-        if not self._znm_customer.running:
-            spawn(self._znm_customer.run)
         return task.collect()
 
     def __getattr__(self, attr):
@@ -463,16 +494,32 @@ class Task(object):
         self.run_id = run_id
         self.queue = Queue()
 
-    def collect(self, timeout=0.01):
+    def collect(self, timeout=0.1):
         assert self.tunnel._znm_wait
+        # count workers if it is possible
+        if self.tunnel._znm_fanout:
+            len_workers = 0
+            for addr in self.tunnel._znm_fanout_addrs:
+                if addr.startswith('pgm://') or addr.startswith('epgm://'):
+                    len_workers = None
+                    break
+                len_workers += 1
+        # ensure the customer to run
         self.customer.register_task(self)
         replies = []
         with Timeout(timeout, False):
             while True:
                 reply = self.queue.get()
                 assert isinstance(reply, Reply)
+                if reply.method == REJECT:
+                    # a worker rejected the task
+                    continue
                 replies.append(reply)
                 if not self.tunnel._znm_fanout:
+                    break
+                elif len_workers is None:
+                    continue
+                elif len(replies) >= len_workers:
                     break
         self.customer.unregister_task(self)
         if not replies:
@@ -480,9 +527,6 @@ class Task(object):
         if self.tunnel._znm_fanout:
             tasks = []
             for reply in replies:
-                if reply.method == REJECT:
-                    # a worker rejected the task
-                    continue
                 assert reply.method == ACCEPT
                 each_task = Task(self.tunnel, self.id, reply.run_id)
                 each_task.worker_addr = reply.worker_addr
