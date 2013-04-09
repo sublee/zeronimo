@@ -118,8 +118,14 @@ class Runner(object):
 
     def __new__(cls, *args, **kwargs):
         obj = super(Runner, cls).__new__(cls)
-        obj.running_lock = Semaphore()
         stopper = Event()
+        cls._patch_run(obj, stopper)
+        cls._patch_stop(obj, stopper)
+        return obj
+
+    @classmethod
+    def _patch_run(cls, obj, stopper):
+        obj.running_lock = Semaphore()
         def run(self):
             if self.is_running():
                 return
@@ -129,14 +135,16 @@ class Runner(object):
             finally:
                 stopper.clear()
             return rv
+        obj.run, obj._run = MethodType(run, obj), obj.run
+
+    @classmethod
+    def _patch_stop(cls, obj, stopper):
         def stop(self):
             if not self.is_running():
                 raise RuntimeError('{0} not running'.format(cls.__name__))
             stopper.set()
             return obj._stop()
-        obj.run, obj._run = MethodType(run, obj), obj.run
         obj.stop, obj._stop = MethodType(stop, obj), obj.stop
-        return obj
 
     def is_running(self):
         return self.running_lock.locked()
@@ -162,6 +170,7 @@ class ZMQSocketManager(object):
         self.addrs = set()
 
     def open_sockets(self):
+        """Opens all sockets if not opened."""
         if self.sock is not None:
             return
         self.sock = self.context.socket(zmq.PULL)
@@ -169,17 +178,20 @@ class ZMQSocketManager(object):
             self.bind(addr)
 
     def close_sockets(self):
+        """Closes all sockets if not closed."""
         if self.sock is None:
             return
         self.sock.close()
         self.sock = None
 
     def bind(self, addr):
+        """Binds an address to the socket."""
         if self.sock is not None:
             self.sock.bind(addr)
         self.addrs.add(addr)
 
     def unbind(self, addr):
+        """Unbinds an address to the socket."""
         if self.sock is not None:
             self.sock.unbind(addr)
         self.addrs.remove(addr)
@@ -246,7 +258,7 @@ class Worker(Runner, ZMQSocketManager):
 
     def run_task(self, invocation):
         run_id = alloc_id()
-        print 'worker recv', invocation
+        #print 'worker recv', invocation
         meta = (invocation.task_id, run_id, list(self.addrs)[0])
         name = invocation.name
         args = invocation.args
@@ -257,30 +269,30 @@ class Worker(Runner, ZMQSocketManager):
             sock = self.context.socket(zmq.PUSH)
             sock.connect(invocation.customer_addr)
             method = ACCEPT if self.accepting else REJECT
-            print 'worker send %r' % (Reply(method, None, *meta),)
+            #print 'worker send %r' % (Reply(method, None, *meta),)
             zmq_send(sock, Reply(method, None, *meta))
         if not self.accepting:
-            print 'task rejected'
+            #print 'task rejected'
             return
         try:
             val = getattr(self.obj, name)(*args, **kwargs)
         except Exception as error:
-            print 'worker send %r' % (Reply(RAISE, error, *meta),)
+            #print 'worker send %r' % (Reply(RAISE, error, *meta),)
             sock and zmq_send(sock, Reply(RAISE, error, *meta))
             raise
         if should_yield(val):
             try:
                 for item in val:
-                    print 'worker send %r' % (Reply(YIELD, item, *meta),)
+                    #print 'worker send %r' % (Reply(YIELD, item, *meta),)
                     sock and zmq_send(sock, Reply(YIELD, item, *meta))
             except Exception as error:
-                print 'worker send %r' % (Reply(RAISE, error, *meta),)
+                #print 'worker send %r' % (Reply(RAISE, error, *meta),)
                 sock and zmq_send(sock, Reply(RAISE, error, *meta))
             else:
-                print 'worker send %r' % (Reply(BREAK, None, *meta),)
+                #print 'worker send %r' % (Reply(BREAK, None, *meta),)
                 sock and zmq_send(sock, Reply(BREAK, None, *meta))
         else:
-            print 'worker send %r' % (Reply(RETURN, val, *meta),)
+            #print 'worker send %r' % (Reply(RETURN, val, *meta),)
             sock and zmq_send(sock, Reply(RETURN, val, *meta))
 
     def run(self, should_run):
@@ -311,12 +323,13 @@ class Customer(Runner, ZMQSocketManager):
     tunnels = None
     tasks = None
 
-    def __init__(self, bind=None, **kwargs):
+    def __init__(self, bind=None, reuse=False, **kwargs):
         super(Customer, self).__init__(**kwargs)
         self.tunnels = set()
         self.tasks = {}
         self._missing_tasks = {}
         bind and self.bind(bind)
+        self.reuse = reuse
 
     def link(self, *args, **kwargs):
         return Tunnel(self, *args, **kwargs)
@@ -349,7 +362,7 @@ class Customer(Runner, ZMQSocketManager):
     def unregister_tunnel(self, tunnel):
         """Unregisters the :class:`Tunnel` object."""
         self.tunnels.remove(tunnel)
-        if self.is_running() and not self.tunnels:
+        if not self.reuse and self.is_running() and not self.tunnels:
             self.stop()
 
     def register_task(self, task):
@@ -406,7 +419,7 @@ class Customer(Runner, ZMQSocketManager):
                         self._missing_tasks[task_id] = {run_id: task}
                     elif run_id not in self._missing_tasks[task_id]:
                         self._missing_tasks[task_id][run_id] = task
-            print 'customer recv %r' % (reply,)
+            #print 'customer recv %r' % (reply,)
             task.queue.put(reply)
 
     def stop(self):
@@ -510,7 +523,7 @@ class Task(object):
         self.run_id = run_id
         self.queue = Queue()
 
-    def invoke(self, name, args, kwargs, timeout=0.1):
+    def invoke(self, name, args, kwargs, timeout=0.01):
         wait = self.tunnel._znm_opts['wait']
         fanout = self.tunnel._znm_opts['fanout']
         if wait:
@@ -569,7 +582,7 @@ class Task(object):
 
     def __call__(self):
         reply = self.queue.get()
-        print 'task recv %r' % (reply,)
+        #print 'task recv %r' % (reply,)
         assert reply.method not in (ACCEPT, REJECT)
         if reply.method in (RETURN, RAISE):
             self.customer.unregister_task(self)
@@ -586,7 +599,7 @@ class Task(object):
         yield first_reply.data
         while True:
             reply = self.queue.get()
-            print 'task recv %r' % (reply,)
+            #print 'task recv %r' % (reply,)
             assert reply.method not in (ACCEPT, REJECT, RETURN)
             if reply.method == YIELD:
                 yield reply.data
