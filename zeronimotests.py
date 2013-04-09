@@ -4,20 +4,20 @@ import os
 from gevent import joinall, spawn, Timeout
 import pytest
 
-from conftest import autowork, Application, inproc, ipc, tcp, pgm, epgm
+from conftest import autowork, inproc, ipc, tcp, pgm, epgm, Application
 import zeronimo
 
 
 def test_running():
-    class Runner(zeronimo.Base):
+    class MockRunner(zeronimo.Runner):
         def reset_sockets(self):
             pass
         def run(self):
-            assert self.running
-    runner = Runner()
-    assert not runner.running
-    runner.run()
-    assert not runner.running
+            return self.running
+    mock_runner = MockRunner()
+    assert not mock_runner.running
+    assert mock_runner.run()
+    assert not mock_runner.running
 
 
 @autowork

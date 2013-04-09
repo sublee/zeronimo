@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import random
 import socket
 import sys
 
@@ -20,13 +21,14 @@ def pytest_generate_tests(metafunc):
     argnames = []
     argvalues = []
     ids = []
+    fanout_topic = zeronimo.alloc_id()
     for protocol in protocols.keys():
         curargvalues = []
         curids = []
         for param in metafunc.fixturenames:
             if param.startswith('worker') or param.startswith('customer'):
                 if param.startswith('worker'):
-                    curargvalues.append(make_worker(protocol))
+                    curargvalues.append(make_worker(protocol, fanout_topic))
                 else:
                     curargvalues.append(make_customer(protocol))
                 if not ids:
@@ -40,7 +42,7 @@ def pytest_generate_tests(metafunc):
 
 def inproc():
     """Generates random in-process address."""
-    return 'inproc://{0}'.format(zeronimo.uuid_str())
+    return 'inproc://{0}'.format(zeronimo.alloc_id())
 
 
 def ipc():
@@ -50,17 +52,17 @@ def ipc():
         os.mkdir(feed_dir)
     pipe = None
     while pipe is None or os.path.exists(pipe):
-        pipe = os.path.join(feed_dir, zeronimo.uuid_str())
+        pipe = os.path.join(feed_dir, zeronimo.alloc_id())
     return 'ipc://{0}'.format(pipe)
 
 
 def tcp():
     """Generates available TCP address."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(('', 0))
-    port = sock.getsockname()[1]
+    sock = gevent.socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(('127.0.0.1', 0))
+    addr = 'tcp://{0}:{1}'.format(*sock.getsockname())
     sock.close()
-    return 'tcp://127.0.0.1:{0}'.format(port)
+    return addr
 
 
 def pgm():
@@ -73,17 +75,17 @@ def epgm():
     return 'epgm://10.7.0.30;224.1.1.1:5555'
 
 
-fanout_topic = zeronimo.uuid_str()
-protocols = {'inproc': (inproc, inproc, '', zmq_context),
-             'ipc': (ipc, ipc, '', None),
-             'tcp': (tcp, tcp, '', None),
-             'pgm': (tcp, pgm, fanout_topic, None),
-             'epgm': (tcp, epgm, fanout_topic, None)}
+protocols = {'inproc': (inproc, inproc, zmq_context),
+             'ipc': (ipc, ipc, None),
+             'tcp': (tcp, tcp, None),
+             'pgm': (tcp, pgm, None),
+             'epgm': (tcp, epgm, None),
+             }
 
 
-def make_worker(protocol):
+def make_worker(protocol, fanout_topic):
     """Creates a :class:`zeronimo.Worker` by the given protocol."""
-    make_addr, make_fanout_addr, fanout_topic, context = protocols[protocol]
+    make_addr, make_fanout_addr, context = protocols[protocol]
     app = Application()
     return zeronimo.Worker(
         app, make_addr(), make_fanout_addr(), fanout_topic, context=context)
@@ -91,7 +93,7 @@ def make_worker(protocol):
 
 def make_customer(protocol):
     """Creates a :class:`zeronimo.Customer` by the given protocol."""
-    make_addr, __, __, context = protocols[protocol]
+    make_addr, __, context = protocols[protocol]
     return zeronimo.Customer(make_addr(), context=context)
 
 
@@ -176,23 +178,20 @@ def busywait(func, equal=True):
         gevent.sleep(0.001)
 
 
-def is_connectable(worker):
+def test_worker(worker):
     """Checks that the address is connectable."""
-    worker.obj._znm_test = lambda: True
+    assert hasattr(worker.obj, '_znm_test')
     try:
         customer = zeronimo.Customer(tcp(), context=worker.context)
         tunnel = customer.link_workers([worker])
         tunnel.__enter__()
     except zmq.ZMQError, e:
-        if str(e) == 'Connection refused':
+        if e.errno == 111:
             return False
         raise
     else:
         try:
-            if worker.addrs:
-                tunnel._znm_test()
-            else:
-                tunnel(fanout=True)._znm_test()
+            tunnel._znm_test()
         except zeronimo.ZeronimoError:
             return False
         else:
@@ -203,16 +202,16 @@ def is_connectable(worker):
         except AttributeError:
             pass
         tunnel.__exit__(*sys.exc_info())
-        customer._running_lock.wait()
+        customer.running_lock.wait()
 
 
 def wait_workers(workers, for_binding):
     waits = []
     for worker in workers:
-        check = lambda: is_connectable(worker)
+        worker.obj._znm_test = lambda: True
+        check = lambda: test_worker(worker)
         waits.append(gevent.spawn(busywait, check, equal=not for_binding))
-    with gevent.Timeout(1):
-        gevent.joinall(waits)
+    gevent.joinall(waits)
 
 
 def start_workers(workers):

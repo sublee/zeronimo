@@ -6,21 +6,16 @@
     :copyright: (c) 2013 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
-from collections import (
-    defaultdict, namedtuple, Iterable, Sequence, Set, Mapping)
-from contextlib import contextmanager, nested
+from collections import namedtuple, Iterable, Sequence, Set, Mapping
 import functools
-import hashlib
 try:
     import cPickle as pickle
 except ImportError:
     import pickle
 from types import MethodType
-import uuid
 
 from gevent import joinall, spawn, Timeout
 from gevent.coros import Semaphore
-from gevent.event import AsyncResult
 from gevent.queue import Queue, Empty
 import zmq.green as zmq
 
@@ -32,8 +27,7 @@ __all__ = []
 # exceptions
 
 
-class ZeronimoError(RuntimeError): pass
-class ZeronimoWarning(RuntimeWarning): pass
+class ZeronimoError(Exception): pass
 
 
 # message frames
@@ -59,6 +53,8 @@ class Reply(namedtuple('Reply', [
 
 
 # reply methods
+
+
 ACCEPT = 1
 REJECT = 0
 RETURN = 100
@@ -67,7 +63,12 @@ YIELD = 102
 BREAK = 103
 
 
-def uuid_str():
+# utility functions
+
+
+def alloc_id():
+    import hashlib
+    import uuid
     return hashlib.md5(str(uuid.uuid4())).hexdigest()[:6]
 
 
@@ -86,25 +87,28 @@ def ensure_sequence(val, sequence=list):
         return sequence([val])
 
 
-# ZMQ messaging functions
+# wrapped ZMQ functions
 
 
-def send(sock, obj, flags=0, prefix=''):
+def zmq_send(sock, obj, flags=0, prefix='', dump=pickle.dumps):
     """Same with :meth:`zmq.Socket.send_pyobj` but can append prefix for
     filtering subscription.
     """
-    msg = pickle.dumps(obj)
+    msg = dump(obj)
     return sock.send(prefix + msg, flags)
 
 
-def recv(sock, flags=0, prefix=''):
+def zmq_recv(sock, flags=0, prefix='', load=pickle.loads):
     """Same with :meth:`zmq.Socket.recv_pyobj`."""
     msg = sock.recv(flags)
     assert msg.startswith(prefix)
-    return pickle.loads(msg[len(prefix):])
+    return load(msg[len(prefix):])
 
 
-class Base(object):
+# models
+
+
+class Runner(object):
     """Manages ZeroMQ sockets."""
 
     running = False
@@ -113,13 +117,13 @@ class Base(object):
     addrs = None
 
     def __new__(cls, *args, **kwargs):
-        obj = super(Base, cls).__new__(cls)
-        obj._running_lock = Semaphore()
+        obj = super(Runner, cls).__new__(cls)
+        obj.running_lock = Semaphore()
         def run(self):
-            if self._running_lock.locked():
+            if self.running_lock.locked():
                 return
             try:
-                with self._running_lock:
+                with self.running_lock:
                     if obj.running is False:
                         obj.running = 1
                     else:
@@ -169,15 +173,14 @@ class Base(object):
         raise NotImplementedError
 
     def stop(self):
-        #print type(self).__name__, id(self), 'stop'
         if not self.running:
-            raise RuntimeError('This isn\'t running')
+            raise RuntimeError('{0} not running'.format(type(self).__name__))
         self.close_sockets()
         self.running = False
-        self._running_lock.wait()
+        self.running_lock.wait()
 
 
-class Worker(Base):
+class Worker(Runner):
 
     obj = None
     fanout_sock = None
@@ -237,12 +240,11 @@ class Worker(Base):
         self.accepting = False
 
     def run_task(self, invocation):
-        run_id = uuid_str()
+        run_id = alloc_id()
         meta = (invocation.task_id, run_id, list(self.addrs)[0])
         name = invocation.name
         args = invocation.args
         kwargs = invocation.kwargs
-        #print 'worker recv %r (run_id=%s)' % (invocation, run_id)
         if invocation.customer_addr is None:
             sock = False
         else:
@@ -250,37 +252,36 @@ class Worker(Base):
             sock.connect(invocation.customer_addr)
             method = ACCEPT if self.accepting else REJECT
             #print 'worker send %r' % (Reply(method, None, *meta),)
-            send(sock, Reply(method, None, *meta))
+            zmq_send(sock, Reply(method, None, *meta))
         if not self.accepting:
             #print 'task rejected'
             return
         try:
             val = getattr(self.obj, name)(*args, **kwargs)
-        except Exception, error:
+        except Exception as error:
             #print 'worker send %r' % (Reply(RAISE, error, *meta),)
-            sock and send(sock, Reply(RAISE, error, *meta))
+            sock and zmq_send(sock, Reply(RAISE, error, *meta))
             raise
         if should_yield(val):
             try:
                 for item in val:
                     #print 'worker send %r' % (Reply(YIELD, item, *meta),)
-                    sock and send(sock, Reply(YIELD, item, *meta))
-            except Exception, error:
+                    sock and zmq_send(sock, Reply(YIELD, item, *meta))
+            except Exception as error:
                 #print 'worker send %r' % (Reply(RAISE, error, *meta),)
-                sock and send(sock, Reply(RAISE, error, *meta))
+                sock and zmq_send(sock, Reply(RAISE, error, *meta))
             else:
                 #print 'worker send %r' % (Reply(BREAK, None, *meta),)
-                sock and send(sock, Reply(BREAK, None, *meta))
+                sock and zmq_send(sock, Reply(BREAK, None, *meta))
         else:
             #print 'worker send %r' % (Reply(RETURN, val, *meta),)
-            sock and send(sock, Reply(RETURN, val, *meta))
+            sock and zmq_send(sock, Reply(RETURN, val, *meta))
 
     def run(self):
-        #print 'Worker', id(self), 'run', self.fanout_topic
         def serve(sock, prefix=''):
             while self.running:
                 try:
-                    spawn(self.run_task, recv(sock, prefix=prefix))
+                    spawn(self.run_task, zmq_recv(sock, prefix=prefix))
                 except zmq.ZMQError:
                     continue
         self.open_sockets()
@@ -295,7 +296,7 @@ class Worker(Base):
                                            self.fanout_addrs, self.fanout_topic)
 
 
-class Customer(Base):
+class Customer(Runner):
 
     tunnels = None
     tasks = None
@@ -324,14 +325,12 @@ class Customer(Base):
                 fanout_topic = worker.fanout_topic
             elif fanout_topic != worker.fanout_topic:
                 raise ValueError('All workers should subscribe same topic')
-        #print 'LINK WORKERS',addrs, fanout_addrs, fanout_topic 
         return Tunnel(self, addrs, fanout_addrs, fanout_topic, *args, **kwargs)
 
     def register_tunnel(self, tunnel):
         """Registers the :class:`Tunnel` object to run and ensures a socket
         which pulls replies.
         """
-        #print 'regi tunnel'
         if tunnel in self.tunnels:
             raise ValueError('Already registered tunnel')
         self.tunnels.add(tunnel)
@@ -339,7 +338,6 @@ class Customer(Base):
 
     def unregister_tunnel(self, tunnel):
         """Unregisters the :class:`Tunnel` object."""
-        #print 'unregi tunnel'
         self.tunnels.remove(tunnel)
         if self.running and not self.tunnels:
             self.stop()
@@ -372,10 +370,9 @@ class Customer(Base):
             pass
 
     def run(self):
-        #print 'Customer', id(self), 'run'
         while self.tunnels:
             try:
-                reply = recv(self.sock)
+                reply = zmq_recv(self.sock)
             except zmq.ZMQError:
                 continue
             task_id = reply.task_id
@@ -407,8 +404,8 @@ class Customer(Base):
 
 
 class Tunnel(object):
-    """A session from the customer to the distributed workers. It can send a
-    request of RPC through the customer's sockets.
+    """A session between the customer and the distributed workers. It can send
+    a request of RPC through sockets on the customer's context.
 
     :param customer: the :class:`Customer` object.
     :param addrs: the destination worker addresses bound at PULL sockets.
@@ -439,10 +436,6 @@ class Tunnel(object):
         self._znm_as_task = as_task
         if list(fanout_addrs)[0].startswith('pgm') and not fanout_topic:
             assert 0
-        #print 'init tunnel', id(self), fanout_addrs, `self._znm_fanout_topic`
-
-    def _znm_is_alive(self):
-        return self in self._znm_customer.tunnels
 
     def _znm_invoke(self, name, *args, **kwargs):
         """Invokes remote function."""
@@ -455,10 +448,8 @@ class Tunnel(object):
         is_fanout = self._znm_fanout
         aaa = self._znm_fanout_topic
         fanout_topic = self._znm_fanout_topic if self._znm_fanout else ''
-        #print 'send topic', id(self), `self._znm_fanout_topic`,
-        #self._znm_fanout, self._znm_fanout_addrs
         #print 'tunnel send %r upon %r' % (invocation, fanout_topic)
-        send(sock, invocation, prefix=fanout_topic)
+        zmq_send(sock, invocation, prefix=fanout_topic)
         if not self._znm_wait:
             # immediately if workers won't wait
             return
@@ -506,7 +497,7 @@ class Task(object):
     def __init__(self, tunnel, id=None, run_id=None):
         self.tunnel = tunnel
         self.customer = tunnel._znm_customer if tunnel is not None else None
-        self.id = uuid_str() if id is None else id
+        self.id = alloc_id() if id is None else id
         self.run_id = run_id
         self.queue = Queue()
 
