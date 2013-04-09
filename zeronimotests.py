@@ -8,7 +8,6 @@ from conftest import autowork, inproc, ipc, tcp, pgm, epgm, Application
 import zeronimo
 
 
-'''
 def test_running():
     class MockRunner(zeronimo.Runner):
         def reset_sockets(self):
@@ -139,28 +138,19 @@ def test_slow(customer, worker):
             with Timeout(0.1):
                 tunnel.sleep()
         assert tunnel.sleep() == 'slept'
-'''
 
 
 @autowork
 def test_reject(customer, worker1, worker2):
     yield [worker1, worker2]
     with customer.link_workers([worker1, worker2]) as tunnel:
-        print 1
         assert len(list(tunnel(fanout=True).simple())) == 2
         worker2.reject_all()
-        print 2
-        assert tunnel(as_task=True).simple().worker_addr in worker1.addrs
-        print 3
-        assert tunnel(as_task=True).simple().worker_addr in worker1.addrs
-        print 4
-        assert tunnel(as_task=True).simple().worker_addr in worker1.addrs
         assert tunnel(as_task=True).simple().worker_addr in worker1.addrs
         assert tunnel(as_task=True).simple().worker_addr in worker1.addrs
         assert len(list(tunnel(fanout=True).simple())) == 1
         worker2.accept_all()
         assert len(list(tunnel(fanout=True).simple())) == 2
-'''
 
 
 @autowork
@@ -287,4 +277,3 @@ def test_epgm():
         assert tunnel2.simple() == 'ok'
         assert list(tunnel1(fanout=True).simple()) == ['ok', 'ok']
         assert list(tunnel2(fanout=True).simple()) == ['ok', 'ok']
-'''
