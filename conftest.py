@@ -16,13 +16,34 @@ zmq_context = zmq.Context()
 gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
+def pytest_addoption(parser):
+    parser.addoption('--no-inproc', action='store_true',
+                     help='don\'t use inproc sockets')
+    parser.addoption('--no-ipc', action='store_true',
+                     help='don\'t use ipc sockets')
+    parser.addoption('--tcp', action='store_true', help='use tcp sockets')
+    parser.addoption('--pgm', action='store_true', help='use pgm sockets')
+    parser.addoption('--epgm', action='store_true', help='use epgm sockets')
+
+
 def pytest_generate_tests(metafunc):
     """Generates worker and customer fixtures."""
     argnames = []
     argvalues = []
     ids = []
     fanout_topic = zeronimo.alloc_id()
-    for protocol in protocols.keys():
+    testing_protocols = []
+    if not metafunc.config.option.no_inproc:
+        testing_protocols.append('inproc')
+    if not metafunc.config.option.no_ipc:
+        testing_protocols.append('ipc')
+    if metafunc.config.option.tcp:
+        testing_protocols.append('tcp')
+    if metafunc.config.option.pgm:
+        testing_protocols.append('pgm')
+    if metafunc.config.option.epgm:
+        testing_protocols.append('epgm')
+    for protocol in testing_protocols:
         curargvalues = []
         for param in metafunc.fixturenames:
             if param.startswith('worker') or param.startswith('customer'):
@@ -36,19 +57,6 @@ def pytest_generate_tests(metafunc):
         ids.append(protocol)
     if argnames:
         metafunc.parametrize(argnames, argvalues, ids=ids)
-    #metafunc.function = retry_on_err98(metafunc.function)
-
-
-@decorator
-def retry_on_err98(f, *args, **kwargs):
-    while True:
-        try:
-            return f(*args, **kwargs)
-        except zmq.ZMQError as error:
-            if error.errno == 98:
-                print 'retry'
-                continue
-            raise
 
 
 def inproc():
@@ -78,20 +86,21 @@ def tcp():
 
 def pgm():
     """Generates available PGM address."""
-    return 'pgm://10.7.0.30;224.1.1.1:5555'
+    return 'pgm://127.0.0.1;224.1.1.1:5555'
 
 
 def epgm():
     """Generates available Encapsulated PGM address."""
-    return 'epgm://10.7.0.30;224.1.1.1:5555'
+    return 'epgm://127.0.0.1;224.1.1.1:5555'
 
 
-protocols = {'inproc': (inproc, inproc, zmq_context),
-             'ipc': (ipc, ipc, None),
-             'tcp': (tcp, tcp, None),
-             'pgm': (tcp, pgm, None),
-             'epgm': (tcp, epgm, None),
-             }
+protocols = {
+    'inproc': (inproc, inproc, zmq_context),
+    'ipc': (ipc, ipc, None),
+    'tcp': (tcp, tcp, None),
+    'pgm': (tcp, pgm, None),
+    'epgm': (tcp, epgm, None),
+}
 
 
 def make_worker(protocol, fanout_topic):
