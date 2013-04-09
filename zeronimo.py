@@ -16,6 +16,7 @@ from types import MethodType
 
 from gevent import joinall, spawn, Timeout
 from gevent.coros import Semaphore
+from gevent.event import Event
 from gevent.queue import Queue, Empty
 import zmq.green as zmq
 
@@ -109,42 +110,56 @@ def zmq_recv(sock, flags=0, prefix='', load=pickle.loads):
 
 
 class Runner(object):
-    """Manages ZeroMQ sockets."""
+    """A runner should implement :meth:`run`. :attr:`running` is ensured to be
+    ``True`` while :meth:`run` is runnig.
+    """
 
-    running = False
-    context = None
-    sock = None
-    addrs = None
+    running_lock = None
 
     def __new__(cls, *args, **kwargs):
         obj = super(Runner, cls).__new__(cls)
         obj.running_lock = Semaphore()
+        stopper = Event()
         def run(self):
-            if self.running_lock.locked():
+            if self.is_running():
                 return
             try:
                 with self.running_lock:
-                    if obj.running is False:
-                        obj.running = 1
-                    else:
-                        obj.running += 1
-                    rv = obj._run()
+                    rv = obj._run(lambda: not stopper.is_set())
             finally:
-                if obj.running is not False:
-                    obj.running -= 1
-                    assert obj.running >= 0
+                stopper.clear()
             return rv
+        def stop(self):
+            if not self.is_running():
+                raise RuntimeError('{0} not running'.format(cls.__name__))
+            stopper.set()
+            return obj._stop()
         obj.run, obj._run = MethodType(run, obj), obj.run
+        obj.stop, obj._stop = MethodType(stop, obj), obj.stop
         return obj
+
+    def is_running(self):
+        return self.running_lock.locked()
+
+    def run(self, should_run):
+        raise NotImplementedError
+
+    def stop(self):
+        self.running_lock.wait()
+
+
+class ZMQSocketManager(object):
+    """Manages ZeroMQ sockets."""
+
+    context = None
+    sock = None
+    addrs = None
 
     def __init__(self, context=None):
         if context is None:
             context = zmq.Context()
         self.context = context
         self.addrs = set()
-
-    def __del__(self):
-        self.stop()
 
     def open_sockets(self):
         if self.sock is not None:
@@ -169,18 +184,8 @@ class Runner(object):
             self.sock.unbind(addr)
         self.addrs.remove(addr)
 
-    def run(self):
-        raise NotImplementedError
 
-    def stop(self):
-        if not self.running:
-            raise RuntimeError('{0} not running'.format(type(self).__name__))
-        self.close_sockets()
-        self.running = False
-        self.running_lock.wait()
-
-
-class Worker(Runner):
+class Worker(Runner, ZMQSocketManager):
 
     obj = None
     fanout_sock = None
@@ -241,6 +246,7 @@ class Worker(Runner):
 
     def run_task(self, invocation):
         run_id = alloc_id()
+        print 'worker recv', invocation
         meta = (invocation.task_id, run_id, list(self.addrs)[0])
         name = invocation.name
         args = invocation.args
@@ -251,35 +257,35 @@ class Worker(Runner):
             sock = self.context.socket(zmq.PUSH)
             sock.connect(invocation.customer_addr)
             method = ACCEPT if self.accepting else REJECT
-            #print 'worker send %r' % (Reply(method, None, *meta),)
+            print 'worker send %r' % (Reply(method, None, *meta),)
             zmq_send(sock, Reply(method, None, *meta))
         if not self.accepting:
-            #print 'task rejected'
+            print 'task rejected'
             return
         try:
             val = getattr(self.obj, name)(*args, **kwargs)
         except Exception as error:
-            #print 'worker send %r' % (Reply(RAISE, error, *meta),)
+            print 'worker send %r' % (Reply(RAISE, error, *meta),)
             sock and zmq_send(sock, Reply(RAISE, error, *meta))
             raise
         if should_yield(val):
             try:
                 for item in val:
-                    #print 'worker send %r' % (Reply(YIELD, item, *meta),)
+                    print 'worker send %r' % (Reply(YIELD, item, *meta),)
                     sock and zmq_send(sock, Reply(YIELD, item, *meta))
             except Exception as error:
-                #print 'worker send %r' % (Reply(RAISE, error, *meta),)
+                print 'worker send %r' % (Reply(RAISE, error, *meta),)
                 sock and zmq_send(sock, Reply(RAISE, error, *meta))
             else:
-                #print 'worker send %r' % (Reply(BREAK, None, *meta),)
+                print 'worker send %r' % (Reply(BREAK, None, *meta),)
                 sock and zmq_send(sock, Reply(BREAK, None, *meta))
         else:
-            #print 'worker send %r' % (Reply(RETURN, val, *meta),)
+            print 'worker send %r' % (Reply(RETURN, val, *meta),)
             sock and zmq_send(sock, Reply(RETURN, val, *meta))
 
-    def run(self):
+    def run(self, should_run):
         def serve(sock, prefix=''):
-            while self.running:
+            while should_run():
                 try:
                     spawn(self.run_task, zmq_recv(sock, prefix=prefix))
                 except zmq.ZMQError:
@@ -291,12 +297,16 @@ class Worker(Runner):
         finally:
             self.close_sockets()
 
+    def stop(self):
+        self.close_sockets()
+        super(Worker, self).stop()
+
     def __repr__(self):
         return '{0}({1}, {2}, {3})'.format(type(self).__name__, self.addrs,
                                            self.fanout_addrs, self.fanout_topic)
 
 
-class Customer(Runner):
+class Customer(Runner, ZMQSocketManager):
 
     tunnels = None
     tasks = None
@@ -339,7 +349,7 @@ class Customer(Runner):
     def unregister_tunnel(self, tunnel):
         """Unregisters the :class:`Tunnel` object."""
         self.tunnels.remove(tunnel)
-        if self.running and not self.tunnels:
+        if self.is_running() and not self.tunnels:
             self.stop()
 
     def register_task(self, task):
@@ -348,7 +358,7 @@ class Customer(Runner):
         except KeyError:
             self.tasks[task.id] = {task.run_id: task}
         self._restore_missing_messages(task)
-        if not self.running:
+        if not self.is_running():
             spawn(self.run)
 
     def unregister_task(self, task):
@@ -369,8 +379,8 @@ class Customer(Runner):
         except Empty:
             pass
 
-    def run(self):
-        while self.tunnels:
+    def run(self, should_run):
+        while should_run():
             try:
                 reply = zmq_recv(self.sock)
             except zmq.ZMQError:
@@ -396,8 +406,12 @@ class Customer(Runner):
                         self._missing_tasks[task_id] = {run_id: task}
                     elif run_id not in self._missing_tasks[task_id]:
                         self._missing_tasks[task_id][run_id] = task
-            #print 'customer recv %r' % (reply,)
+            print 'customer recv %r' % (reply,)
             task.queue.put(reply)
+
+    def stop(self):
+        self.close_sockets()
+        super(Customer, self).stop()
 
     def __repr__(self):
         return '{0}({1})'.format(type(self).__name__, self.addrs)
@@ -421,39 +435,38 @@ class Tunnel(object):
                     :class:`Task` object. if it's set to ``True``, remote
                     functions return a :class:`Task` object instead of result
                     value. Defaults to ``False``.
+    :param timeout: the seconds to timeout for collecting workers which
+                    accepted a task. Defaults to 0.01 seconds.
     """
 
+    __opts__ = {'wait': True, 'fanout': False, 'as_task': False}
+
     def __init__(self, customer, addrs=None, fanout_addrs=None,
-                 fanout_topic='', wait=True, fanout=False, as_task=False):
+                 fanout_topic='', **opts):
         self._znm_customer = customer
         self._znm_addrs = ensure_sequence(addrs, set)
         self._znm_fanout_addrs = ensure_sequence(fanout_addrs, set)
         self._znm_fanout_topic = fanout_topic
         self._znm_sockets = {}
         # options
-        self._znm_wait = wait
-        self._znm_fanout = fanout
-        self._znm_as_task = as_task
-        if list(fanout_addrs)[0].startswith('pgm') and not fanout_topic:
-            assert 0
+        self._znm_opts = {}
+        self._znm_opts.update(self.__opts__)
+        self._znm_opts.update(opts)
 
     def _znm_invoke(self, name, *args, **kwargs):
         """Invokes remote function."""
-        #TODO: addr negotiation
-        customer_addr = (list(self._znm_customer.addrs)[0]
-                         if self._znm_wait else None)
+        opts = self._znm_opts
         task = Task(self)
-        sock = self._znm_sockets[zmq.PUB if self._znm_fanout else zmq.PUSH]
+        sock = self._znm_sockets[zmq.PUB if opts['fanout'] else zmq.PUSH]
+        if opts['wait']:
+            #TODO: addr negotiation
+            customer_addr = list(self._znm_customer.addrs)[0]
+        else:
+            customer_addr = None
         invocation = Invocation(name, args, kwargs, task.id, customer_addr)
-        is_fanout = self._znm_fanout
-        aaa = self._znm_fanout_topic
-        fanout_topic = self._znm_fanout_topic if self._znm_fanout else ''
+        fanout_topic = self._znm_fanout_topic if opts['fanout'] else ''
         #print 'tunnel send %r upon %r' % (invocation, fanout_topic)
-        zmq_send(sock, invocation, prefix=fanout_topic)
-        if not self._znm_wait:
-            # immediately if workers won't wait
-            return
-        return task.collect()
+        return task.invoke(name, args, kwargs)
 
     def __getattr__(self, attr):
         return functools.partial(self._znm_invoke, attr)
@@ -474,17 +487,13 @@ class Tunnel(object):
         self._znm_sockets.clear()
         self._znm_customer.unregister_tunnel(self)
 
-    def __call__(self, wait=None, fanout=None, as_task=None):
+    def __call__(self, **replacing_opts):
         """Creates a :class:`Tunnel` object which follows same consumer and
         workers but replaced options.
         """
-        if wait is None:
-            wait = self._znm_wait
-        if fanout is None:
-            fanout = self._znm_fanout
-        if as_task is None:
-            as_task = self._znm_as_task
-        opts = {'wait': wait, 'fanout': fanout, 'as_task': as_task}
+        opts = {}
+        opts.update(self._znm_opts)
+        opts.update(replacing_opts)
         tunnel = Tunnel(self._znm_customer, self._znm_addrs,
                         self._znm_fanout_addrs, self._znm_fanout_topic,
                         **opts)
@@ -501,57 +510,66 @@ class Task(object):
         self.run_id = run_id
         self.queue = Queue()
 
-    def collect(self, timeout=0.1):
-        assert self.tunnel._znm_wait
-        # count workers if it is possible
-        if self.tunnel._znm_fanout:
-            len_workers = 0
-            for addr in self.tunnel._znm_fanout_addrs:
-                if addr.startswith('pgm://') or addr.startswith('epgm://'):
-                    len_workers = None
-                    break
-                len_workers += 1
-        # ensure the customer to run
+    def invoke(self, name, args, kwargs, timeout=0.1):
+        wait = self.tunnel._znm_opts['wait']
+        fanout = self.tunnel._znm_opts['fanout']
+        if wait:
+            #TODO: addr negotiation
+            customer_addr = list(self.tunnel._znm_customer.addrs)[0]
+        else:
+            customer_addr = None
+        invocation = Invocation(name, args, kwargs, self.id, customer_addr)
+        sock = self.tunnel._znm_sockets[zmq.PUB if fanout else zmq.PUSH]
+        # send the invocation
+        if fanout:
+            zmq_send(sock, invocation, prefix=self.tunnel._znm_fanout_topic)
+        else:
+            zmq_send(sock, invocation)
+        if not wait:
+            return  # don't wait for results
+        acceptances = []
         self.customer.register_task(self)
-        replies = []
         with Timeout(timeout, False):
             while True:
                 reply = self.queue.get()
                 assert isinstance(reply, Reply)
                 if reply.method == REJECT:
-                    # a worker rejected the task
+                    if not fanout:
+                        zmq_send(sock, invocation)  # re-send
                     continue
-                replies.append(reply)
-                if not self.tunnel._znm_fanout:
-                    break
-                elif len_workers is None:
-                    continue
-                elif len(replies) >= len_workers:
+                assert reply.method == ACCEPT
+                acceptances.append(reply)
+                if not fanout:
                     break
         self.customer.unregister_task(self)
-        if not replies:
+        if not acceptances:
             raise ZeronimoError('Failed to find workers that accepted')
-        if self.tunnel._znm_fanout:
-            tasks = []
-            for reply in replies:
-                assert reply.method == ACCEPT
-                each_task = Task(self.tunnel, self.id, reply.run_id)
-                each_task.worker_addr = reply.worker_addr
-                tasks.append(each_task)
-                self.customer.register_task(each_task)
-            return tasks if self.tunnel._znm_as_task else [t() for t in tasks]
+        if fanout:
+            return self.spawn_fanout_tasks(acceptances)
         else:
-            reply = replies[0]
-            assert len(replies) == 1
-            assert reply.method == ACCEPT
-            self.worker_addr = reply.worker_addr
-            self.run_id = reply.run_id
-            self.customer.register_task(self)
-            return self if self.tunnel._znm_as_task else self()
+            assert len(acceptances) == 1
+            return self.spawn_task(acceptances[0])
+
+    def spawn_task(self, acceptance):
+        as_task = self.tunnel._znm_opts['as_task']
+        self.worker_addr = acceptance.worker_addr
+        self.run_id = acceptance.run_id
+        self.customer.register_task(self)
+        return self if as_task else self()
+
+    def spawn_fanout_tasks(self, acceptances):
+        as_task = self.tunnel._znm_opts['as_task']
+        tasks = []
+        for acceptance in acceptances:
+            task = type(self)(self.tunnel, self.id, acceptance.run_id)
+            task.worker_addr = acceptance.worker_addr
+            tasks.append(task)
+            self.customer.register_task(task)
+        return tasks if as_task else [t() for t in tasks]
 
     def __call__(self):
         reply = self.queue.get()
-        #print 'task recv %r' % (reply,)
+        print 'task recv %r' % (reply,)
         assert reply.method not in (ACCEPT, REJECT)
         if reply.method in (RETURN, RAISE):
             self.customer.unregister_task(self)
@@ -568,7 +586,7 @@ class Task(object):
         yield first_reply.data
         while True:
             reply = self.queue.get()
-            #print 'task recv %r' % (reply,)
+            print 'task recv %r' % (reply,)
             assert reply.method not in (ACCEPT, REJECT, RETURN)
             if reply.method == YIELD:
                 yield reply.data

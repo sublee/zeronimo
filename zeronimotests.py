@@ -8,16 +8,18 @@ from conftest import autowork, inproc, ipc, tcp, pgm, epgm, Application
 import zeronimo
 
 
+'''
 def test_running():
     class MockRunner(zeronimo.Runner):
         def reset_sockets(self):
             pass
-        def run(self):
-            return self.running
+        def run(self, should_run):
+            assert should_run()
+            assert self.is_running()
     mock_runner = MockRunner()
-    assert not mock_runner.running
-    assert mock_runner.run()
-    assert not mock_runner.running
+    assert not mock_runner.is_running()
+    mock_runner.run()
+    assert not mock_runner.is_running()
 
 
 @autowork
@@ -29,12 +31,12 @@ def test_tunnel(customer, worker):
     assert len(customer.tunnels) == 0
     with customer.link_workers([worker]) as tunnel1, \
          customer.link_workers([worker]) as tunnel2:
-        assert not customer.running
+        assert not customer.is_running()
         assert len(customer.tunnels) == 2
         tunnel1.add(0, 0)
-        assert customer.running
+        assert customer.is_running()
     # should clean up
-    assert not customer.running
+    assert not customer.is_running()
     assert len(customer.tunnels) == 0
 
 
@@ -137,17 +139,28 @@ def test_slow(customer, worker):
             with Timeout(0.1):
                 tunnel.sleep()
         assert tunnel.sleep() == 'slept'
+'''
 
 
 @autowork
 def test_reject(customer, worker1, worker2):
     yield [worker1, worker2]
     with customer.link_workers([worker1, worker2]) as tunnel:
+        print 1
         assert len(list(tunnel(fanout=True).simple())) == 2
         worker2.reject_all()
+        print 2
+        assert tunnel(as_task=True).simple().worker_addr in worker1.addrs
+        print 3
+        assert tunnel(as_task=True).simple().worker_addr in worker1.addrs
+        print 4
+        assert tunnel(as_task=True).simple().worker_addr in worker1.addrs
+        assert tunnel(as_task=True).simple().worker_addr in worker1.addrs
+        assert tunnel(as_task=True).simple().worker_addr in worker1.addrs
         assert len(list(tunnel(fanout=True).simple())) == 1
         worker2.accept_all()
         assert len(list(tunnel(fanout=True).simple())) == 2
+'''
 
 
 @autowork
@@ -274,3 +287,4 @@ def test_epgm():
         assert tunnel2.simple() == 'ok'
         assert list(tunnel1(fanout=True).simple()) == ['ok', 'ok']
         assert list(tunnel2(fanout=True).simple()) == ['ok', 'ok']
+'''

@@ -13,7 +13,7 @@ import zeronimo
 
 
 zmq_context = zmq.Context()
-#gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
+gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
 def pytest_generate_tests(metafunc):
@@ -24,7 +24,6 @@ def pytest_generate_tests(metafunc):
     fanout_topic = zeronimo.alloc_id()
     for protocol in protocols.keys():
         curargvalues = []
-        curids = []
         for param in metafunc.fixturenames:
             if param.startswith('worker') or param.startswith('customer'):
                 if param.startswith('worker'):
@@ -33,11 +32,23 @@ def pytest_generate_tests(metafunc):
                     curargvalues.append(make_customer(protocol))
                 if not ids:
                     argnames.append(param)
-                curids.append('{0}-{1}'.format(param, protocol))
         argvalues.append(curargvalues)
-        ids.append(', '.join(curids))
+        ids.append(protocol)
     if argnames:
         metafunc.parametrize(argnames, argvalues, ids=ids)
+    #metafunc.function = retry_on_err98(metafunc.function)
+
+
+@decorator
+def retry_on_err98(f, *args, **kwargs):
+    while True:
+        try:
+            return f(*args, **kwargs)
+        except zmq.ZMQError as error:
+            if error.errno == 98:
+                print 'retry'
+                continue
+            raise
 
 
 def inproc():
@@ -164,12 +175,20 @@ def autowork(f, *args, **kwargs):
     """
     f = green(f)
     all_workers = []
-    try:
-        for workers in f(*args, **kwargs):
-            all_workers.extend(workers)
-            start_workers(workers)
-    finally:
-        stop_workers(all_workers)
+    while True:
+        try:
+            for workers in f(*args, **kwargs):
+                all_workers.extend(workers)
+                start_workers(workers)
+        except zmq.ZMQError as error:
+            if error.errno == 98:
+                print 'retry'
+                continue
+            raise
+        else:
+            return
+        finally:
+            stop_workers(all_workers)
 
 
 def busywait(func, equal=True):
@@ -197,10 +216,6 @@ def test_worker(worker):
         else:
             return True
     finally:
-        try:
-            del worker.obj._znm_test
-        except AttributeError:
-            pass
         tunnel.__exit__(*sys.exc_info())
         customer.running_lock.wait()
 
