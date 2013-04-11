@@ -505,36 +505,22 @@ class Tunnel(object):
                     accepted a task. Defaults to 0.01 seconds.
     """
 
-    __opts__ = {'wait': True, 'fanout': False, 'as_task': False}
-
     def __init__(self, customer, addrs=None, fanout_addrs=None,
-                 fanout_topic='', **opts):
+                 fanout_topic='', **invoker_opts):
         self._znm_customer = customer
         self._znm_worker_addrs = ensure_sequence(addrs, set)
         self._znm_worker_fanout_addrs = ensure_sequence(fanout_addrs, set)
         self._znm_fanout_topic = fanout_topic
+        self._znm_invoker_opts = invoker_opts
         self._znm_sockets = {}
-        # options
-        self._znm_opts = {}
-        self._znm_opts.update(self.__opts__)
-        self._znm_opts.update(opts)
 
     def __getattr__(self, attr):
         return functools.partial(self._znm_invoke, attr)
 
     def _znm_invoke(self, function_name, *args, **kwargs):
         """Invokes remote function."""
-        wait = self._znm_opts['wait']
-        fanout = self._znm_opts['fanout']
-        as_task = self._znm_opts['as_task']
         invoker = Invoker(function_name, args, kwargs, self)
-        print 'invoke', function_name, args, kwargs, wait, fanout
-        if not wait:
-            return invoker.invoke_nowait(fanout)
-        if fanout:
-            return invoker.invoke_fanout()
-        else:
-            return invoker.invoke()
+        return invoker.invoke(**self._znm_invoker_opts)
 
     def __enter__(self):
         self._znm_customer.register_tunnel(self)
@@ -552,16 +538,16 @@ class Tunnel(object):
         self._znm_sockets.clear()
         self._znm_customer.unregister_tunnel(self)
 
-    def __call__(self, **replacing_opts):
+    def __call__(self, **replacing_invoker_opts):
         """Creates a :class:`Tunnel` object which follows same consumer and
-        workers but replaced options.
+        workers but replaced invoker options.
         """
-        opts = {}
-        opts.update(self._znm_opts)
-        opts.update(replacing_opts)
+        invoker_opts = {}
+        invoker_opts.update(self._znm_invoker_opts)
+        invoker_opts.update(replacing_invoker_opts)
         tunnel = Tunnel(self._znm_customer, self._znm_worker_addrs,
                         self._znm_worker_fanout_addrs, self._znm_fanout_topic,
-                        **opts)
+                        **invoker_opts)
         tunnel._znm_sockets = self._znm_sockets
         return tunnel
 
@@ -584,7 +570,16 @@ class Invoker(object):
             self.customer.addrs,
             self.worker_fanout_addrs if fanout else self.worker_addrs)
 
-    def invoke_nowait(self, fanout=False):
+    def invoke(self, wait=True, fanout=False, as_task=False,
+               finding_timeout=0.01):
+        if not wait:
+            return self._invoke_nowait(fanout)
+        if fanout:
+            return self._invoke_fanout(as_task, finding_timeout)
+        else:
+            return self._invoke(as_task, finding_timeout)
+
+    def _invoke_nowait(self, fanout=False):
         sock = self.sockets[zmq.PUB if fanout else zmq.PUSH]
         prefix = self.fanout_topic if fanout else ''
         invocation = Invocation(
@@ -592,7 +587,7 @@ class Invoker(object):
         print 'invoker.invoke_nowait send', invocation
         zmq_send(sock, invocation, prefix=prefix)
 
-    def invoke(self, timeout=0.01):
+    def _invoke(self, as_task=False, finding_timeout=0.01):
         sock = self.sockets[zmq.PUSH]
         invocation = Invocation(
             self.function_name, self.args, self.kwargs,
@@ -601,7 +596,7 @@ class Invoker(object):
         self.customer.register_invoker(self)
         rejected = 0
         try:
-            with Timeout(timeout, False):
+            with Timeout(finding_timeout, False):
                 while True:
                     print 'invoker.invoke send', invocation
                     zmq_send(sock, invocation)
@@ -621,14 +616,14 @@ class Invoker(object):
                 errmsg += ', {0} worker{1} rejected'.format(
                     rejected, '' if rejected == 1 else 's')
             raise ZeronimoError(errmsg)
-        return self.spawn_task(reply)
+        return self._spawn_task(reply, as_task)
 
-    def spawn_task(self, reply):
+    def _spawn_task(self, reply, as_task=False):
         assert reply.method == ACCEPT
         task = Task(self.customer, reply.task_id, self.id, reply.worker_addr)
-        return task if self.opts['as_task'] else task()
+        return task if as_task else task()
 
-    def invoke_fanout(self, timeout=0.01):
+    def _invoke_fanout(self, as_task=False, finding_timeout=0.01):
         sock = self.sockets[zmq.PUB]
         invocation = Invocation(
             self.function_name, self.args, self.kwargs,
@@ -639,7 +634,7 @@ class Invoker(object):
         rejected = 0
         print 'invoker.invoke_fanout send', invocation
         zmq_send(sock, invocation, prefix=self.fanout_topic)
-        with Timeout(timeout, False):
+        with Timeout(finding_timeout, False):
             while True:
                 reply = self.queue.get()
                 if reply.method == REJECT:
@@ -654,9 +649,9 @@ class Invoker(object):
                 errmsg += ', {0} worker{1} rejected'.format(
                     rejected, '' if rejected == 1 else 's')
             raise ZeronimoError(errmsg)
-        return self.spawn_fanout_tasks(replies)
+        return self._spawn_fanout_tasks(replies, as_task)
 
-    def spawn_fanout_tasks(self, replies):
+    def _spawn_fanout_tasks(self, replies, as_task=False):
         tasks = []
         iter_replies = iter(replies)
         def collect_tasks(getter):
@@ -666,7 +661,7 @@ class Invoker(object):
                 assert reply.method == ACCEPT
                 task = Task(self.customer, reply.task_id, self.id,
                             reply.worker_addr)
-                tasks.append(task if self.opts['as_task'] else task())
+                tasks.append(task if as_task else task())
         collect_tasks(iter_replies.next)
         spawn(collect_tasks, self.queue.get)
         return tasks

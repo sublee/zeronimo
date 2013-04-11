@@ -296,3 +296,6 @@ def test_offbeat(customer, worker1, worker2):
         assert len(tasks) == 1
         list(tasks[0]())
         assert len(tasks) == 2
+        generous_tunnel = tunnel(fanout=True, as_task=True,
+                                 finding_timeout=0.05)
+        assert len(generous_tunnel.simple()) == 2
