@@ -26,45 +26,6 @@ __version__ = '0.0.dev'
 __all__ = []
 
 
-# exceptions
-
-
-class ZeronimoError(Exception): pass
-
-
-# message frames
-
-
-class Invocation(namedtuple('Invocation', [
-    'function_name', 'args', 'kwargs', 'invoker_id', 'customer_addr'])):
-
-    def __repr__(self):
-        args = (type(self).__name__,) + self
-        return '{}({!r}, {}, {}, {!r}, {!r})'.format(*args)
-
-
-class Reply(namedtuple('Reply', [
-    'method', 'data', 'invoker_id', 'task_id', 'worker_addr'])):
-
-    def __repr__(self):
-        method = {1: 'ACCEPT', 0: 'REJECT',
-                  100: 'RETURN', 101: 'RAISE',
-                  102: 'YIELD', 103: 'BREAK'}[self.method]
-        args = (type(self).__name__, method) + self[1:]
-        return '{}({}, {!r}, {!r}, {!r}, {!r})'.format(*args)
-
-
-# reply methods
-
-
-ACCEPT = 1
-REJECT = 0
-RETURN = 100
-RAISE = 101
-YIELD = 102
-BREAK = 103
-
-
 # utility functions
 
 
@@ -111,13 +72,16 @@ def ensure_sequence(val, sequence=list):
         return sequence([val])
 
 
-def make_repr(obj, params=[], keywords=[]):
+def make_repr(obj, params=[], keywords=[], data={}):
+    get = lambda attr: data.get(attr, getattr(obj, attr))
     c = type(obj)
-    args = ', '.join([
-        ', '.join([repr(getattr(obj, attr)) for attr in params]),
-        ', '.join(['{0}={1!r}'.format(attr, getattr(obj, attr))
-                   for attr in keywords])])
-    return '{0}({1})'.format(c.__name__, args)
+    opts = []
+    if params:
+        opts.append(', '.join([repr(get(attr)) for attr in params]))
+    if keywords:
+        opts.append(', '.join(
+            ['{0}={1!r}'.format(attr, get(attr)) for attr in keywords]))
+    return '{0}({1})'.format(c.__name__, ', '.join(opts))
 
 
 # wrapped ZMQ functions
@@ -136,6 +100,54 @@ def zmq_recv(sock, flags=0, prefix='', load=pickle.loads):
     msg = sock.recv(flags)
     assert msg.startswith(prefix)
     return load(msg[len(prefix):])
+
+
+# exceptions
+
+
+class ZeronimoError(Exception):
+
+    pass
+
+
+# message frames
+
+
+_Invocation = namedtuple(
+    'Invocation',
+    ['function_name', 'args', 'kwargs', 'invoker_id', 'customer_addr'])
+_Reply = namedtuple(
+    'Reply',
+    ['method', 'data', 'invoker_id', 'task_id', 'worker_addr'])
+
+
+class Invocation(_Invocation):
+
+    def __repr__(self):
+        return make_repr(self, keywords=self._fields)
+
+
+class Reply(_Reply):
+
+    def __repr__(self):
+        method = {1: 'ACCEPT', 0: 'REJECT',
+                  100: 'RETURN', 101: 'RAISE',
+                  102: 'YIELD', 103: 'BREAK'}[self.method]
+        class M(object):
+            def __repr__(self):
+                return method
+        return make_repr(self, keywords=self._fields, data={'method': M()})
+
+
+# reply methods
+
+
+ACCEPT = 1
+REJECT = 0
+RETURN = 100
+RAISE = 101
+YIELD = 102
+BREAK = 103
 
 
 # models
@@ -348,8 +360,7 @@ class Worker(Runner, ZMQSocketManager):
         super(Worker, self).stop()
 
     def __repr__(self):
-        return '{0}({1}, {2}, {3})'.format(type(self).__name__, self.addrs,
-                                           self.fanout_addrs, self.fanout_topic)
+        return make_repr(self, ['addrs', 'fanout_addrs', 'fanout_topic'])
 
 
 class Customer(Runner, ZMQSocketManager):
@@ -479,7 +490,7 @@ class Customer(Runner, ZMQSocketManager):
         super(Customer, self).stop()
 
     def __repr__(self):
-        return '{0}({1})'.format(type(self).__name__, self.addrs)
+        return make_repr(self, ['addrs'])
 
 
 class Tunnel(object):
