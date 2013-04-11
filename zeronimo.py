@@ -416,8 +416,15 @@ class Customer(Runner, ZMQSocketManager):
 
     def unregister_task(self, task):
         assert self.tasks[task.invoker_id].pop(task.id) is task
-        if not self.tasks[task.invoker_id]:
-            del self.tasks[task.invoker_id]
+        if self.tasks[task.invoker_id]:
+            return
+        try:
+            invoker = self.invokers.pop(task.invoker_id)
+        except KeyError:
+            pass
+        else:
+            invoker.queue.put(StopIteration)
+        del self.tasks[task.invoker_id]
 
     def _restore_missing_messages(self, task):
         try:
@@ -447,7 +454,8 @@ class Customer(Runner, ZMQSocketManager):
                     # drop message
                     continue
                 # prepare collections for task messages
-                self.tasks[invoker_id] = {}
+                if invoker_id not in self.tasks:
+                    self.tasks[invoker_id] = {}
                 try:
                     self._missings[invoker_id][task_id] = Queue()
                 except KeyError:

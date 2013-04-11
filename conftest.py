@@ -13,7 +13,7 @@ import zeronimo
 
 
 zmq_context = zmq.Context()
-gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
+#gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
 def pytest_addoption(parser):
@@ -103,20 +103,6 @@ protocols = {
 }
 
 
-def make_worker(protocol, fanout_topic):
-    """Creates a :class:`zeronimo.Worker` by the given protocol."""
-    make_addr, make_fanout_addr, context = protocols[protocol]
-    app = Application()
-    return zeronimo.Worker(
-        app, make_addr(), make_fanout_addr(), fanout_topic, context=context)
-
-
-def make_customer(protocol):
-    """Creates a :class:`zeronimo.Customer` by the given protocol."""
-    make_addr, __, context = protocols[protocol]
-    return zeronimo.Customer(make_addr(), context=context)
-
-
 class Application(object):
     """The sample application."""
 
@@ -169,6 +155,31 @@ class Application(object):
     def sleep(self):
         gevent.sleep(0.1)
         return 'slept'
+
+    def sleep_range(self, sleep, start, stop=None, step=1):
+        if stop is None:
+            start, stop = 0, start
+        sequence = range(start, stop, step)
+        for x, val in enumerate(sequence):
+            yield val
+            if x < len(sequence) - 1:
+                gevent.sleep(sleep)
+
+
+app = Application()
+
+
+def make_worker(protocol, fanout_topic):
+    """Creates a :class:`zeronimo.Worker` by the given protocol."""
+    make_addr, make_fanout_addr, context = protocols[protocol]
+    return zeronimo.Worker(
+        app, make_addr(), make_fanout_addr(), fanout_topic, context=context)
+
+
+def make_customer(protocol):
+    """Creates a :class:`zeronimo.Customer` by the given protocol."""
+    make_addr, __, context = protocols[protocol]
+    return zeronimo.Customer(make_addr(), context=context)
 
 
 @decorator

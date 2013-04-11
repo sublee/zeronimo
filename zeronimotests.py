@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
+import functools
 import os
 
+import gevent
 from gevent import joinall, spawn, Timeout
 import pytest
 
-from conftest import autowork, inproc, ipc, tcp, pgm, epgm, Application
+from conftest import app, autowork, inproc, ipc, tcp, pgm, epgm, zmq_context
 import zeronimo
 
 
@@ -181,7 +183,6 @@ def test_link_to_addrs(customer, worker):
 
 @autowork
 def test_ipc():
-    app = Application()
     worker1 = zeronimo.Worker(app)
     worker2 = zeronimo.Worker(app)
     customer1 = zeronimo.Customer()
@@ -228,7 +229,6 @@ def test_ipc():
 @autowork
 def test_tcp():
     # assign
-    app = Application()
     worker1 = zeronimo.Worker(app)
     worker2 = zeronimo.Worker(app)
     customer1 = zeronimo.Customer()
@@ -256,7 +256,6 @@ def test_tcp():
 @autowork
 def test_epgm():
     # assign
-    app = Application()
     worker1 = zeronimo.Worker(app)
     worker2 = zeronimo.Worker(app)
     customer1 = zeronimo.Customer()
@@ -275,5 +274,25 @@ def test_epgm():
          customer2.link_workers([worker1, worker2]) as tunnel2:
         assert tunnel1.simple() == 'ok'
         assert tunnel2.simple() == 'ok'
-        assert list(tunnel1(fanout=True).simple()) == ['ok', 'ok']
-        assert list(tunnel2(fanout=True).simple()) == ['ok', 'ok']
+        assert tunnel1(fanout=True).simple() == ['ok', 'ok']
+        assert tunnel2(fanout=True).simple() == ['ok', 'ok']
+
+
+@autowork
+def test_offbeat(customer, worker1, worker2):
+    def run_task(self, invocation):
+        self._slow = invocation.function_name != '_znm_test'
+        return zeronimo.Worker.run_task(self, invocation)
+    def send_reply(self, sock, method, *args, **kwargs):
+        if self._slow and method == zeronimo.ACCEPT:
+            gevent.sleep(0.02)
+        return zeronimo.Worker.send_reply(self, sock, method, *args, **kwargs)
+    # worker2 sleeps 0.2 seconds before accepting
+    worker2.run_task = functools.partial(run_task, worker2)
+    worker2.send_reply = functools.partial(send_reply, worker2)
+    yield [worker1, worker2]
+    with customer.link_workers([worker1, worker2]) as tunnel:
+        tasks = tunnel(fanout=True, as_task=True).sleep_range(0.01, 3)
+        assert len(tasks) == 1
+        list(tasks[0]())
+        assert len(tasks) == 2
