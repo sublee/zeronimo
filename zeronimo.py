@@ -406,6 +406,7 @@ class Customer(Runner, ZMQSocketManager):
 
     def unregister_invoker(self, invoker):
         assert self.invokers.pop(invoker.id) is invoker
+        invoker.queue.put(StopIteration)
 
     def register_task(self, task):
         try:
@@ -419,11 +420,9 @@ class Customer(Runner, ZMQSocketManager):
         if self.tasks[task.invoker_id]:
             return
         try:
-            invoker = self.invokers.pop(task.invoker_id)
+            self.unregister_invoker(self.invokers[task.invoker_id])
         except KeyError:
             pass
-        else:
-            invoker.queue.put(StopIteration)
         del self.tasks[task.invoker_id]
 
     def _restore_missing_messages(self, task):
@@ -594,7 +593,7 @@ class Invoker(object):
             self.id, self.best_customer_addr(fanout=False))
         # find one worker
         self.customer.register_invoker(self)
-        rejected = 0
+        rejected = set()
         try:
             with Timeout(finding_timeout, False):
                 while True:
@@ -603,7 +602,7 @@ class Invoker(object):
                     reply = None
                     reply = self.queue.get()
                     if reply.method == REJECT:
-                        rejected += 1
+                        rejected.add(reply.worker_addr)
                         continue
                     elif reply.method == ACCEPT:
                         break
@@ -614,7 +613,7 @@ class Invoker(object):
             errmsg = 'Worker not found'
             if rejected:
                 errmsg += ', {0} worker{1} rejected'.format(
-                    rejected, '' if rejected == 1 else 's')
+                    len(rejected), '' if len(rejected) == 1 else 's')
             raise ZeronimoError(errmsg)
         return self._spawn_task(reply, as_task)
 

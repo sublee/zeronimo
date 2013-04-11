@@ -146,13 +146,17 @@ def test_slow(customer, worker):
 def test_reject(customer, worker1, worker2):
     yield [worker1, worker2]
     with customer.link_workers([worker1, worker2]) as tunnel:
-        assert len(list(tunnel(fanout=True).simple())) == 2
+        assert len(tunnel(fanout=True).simple()) == 2
         worker2.reject_all()
         assert tunnel(as_task=True).simple().worker_addr in worker1.addrs
         assert tunnel(as_task=True).simple().worker_addr in worker1.addrs
-        assert len(list(tunnel(fanout=True).simple())) == 1
+        assert len(tunnel(fanout=True).simple()) == 1
+        worker1.reject_all()
+        with pytest.raises(zeronimo.ZeronimoError):
+            assert tunnel(fanout=True).simple()
+        worker1.accept_all()
         worker2.accept_all()
-        assert len(list(tunnel(fanout=True).simple())) == 2
+        assert len(tunnel(fanout=True).simple()) == 2
 
 
 @autowork
@@ -161,16 +165,16 @@ def test_topic(customer, worker1, worker2):
     fanout_addrs = list(worker1.fanout_addrs) + list(worker2.fanout_addrs)
     fanout_topic = worker1.fanout_topic
     with customer.link(None, fanout_addrs, fanout_topic) as tunnel:
-        assert len(list(tunnel(fanout=True).simple())) == 2
+        assert len(tunnel(fanout=True).simple()) == 2
         worker2.subscribe('stop')
-        assert len(list(tunnel(fanout=True).simple())) == 1
+        assert len(tunnel(fanout=True).simple()) == 1
         worker1.subscribe('stop')
         with pytest.raises(zeronimo.ZeronimoError):
             tunnel(fanout=True).simple()
         worker1.subscribe(fanout_topic)
-        assert len(list(tunnel(fanout=True).simple())) == 1
+        assert len(tunnel(fanout=True).simple()) == 1
         worker2.subscribe(fanout_topic)
-        assert len(list(tunnel(fanout=True).simple())) == 2
+        assert len(tunnel(fanout=True).simple()) == 2
 
 
 @autowork
@@ -220,8 +224,8 @@ def test_ipc():
         assert os.path.exists('_feeds/customer2')
         assert tunnel1.simple() == 'ok'
         assert tunnel2.simple() == 'ok'
-        assert list(tunnel1(fanout=True).simple()) == ['ok', 'ok']
-        assert list(tunnel2(fanout=True).simple()) == ['ok', 'ok']
+        assert tunnel1(fanout=True).simple() == ['ok', 'ok']
+        assert tunnel2(fanout=True).simple() == ['ok', 'ok']
     assert not os.path.exists('_feeds/customer1')
     assert not os.path.exists('_feeds/customer2')
 
@@ -249,8 +253,8 @@ def test_tcp():
          customer2.link_workers([worker1, worker2]) as tunnel2:
         assert tunnel1.simple() == 'ok'
         assert tunnel2.simple() == 'ok'
-        assert list(tunnel1(fanout=True).simple()) == ['ok', 'ok']
-        assert list(tunnel2(fanout=True).simple()) == ['ok', 'ok']
+        assert tunnel1(fanout=True).simple() == ['ok', 'ok']
+        assert tunnel2(fanout=True).simple() == ['ok', 'ok']
 
 
 @autowork
