@@ -163,17 +163,17 @@ def test_reject(customer, worker1, worker2):
 def test_topic(customer, worker1, worker2):
     yield [worker1, worker2]
     fanout_addrs = [worker1.fanout_addr, worker2.fanout_addr]
-    fanout_topic = worker1.fanout_topic
-    with customer.link(None, fanout_addrs, fanout_topic) as tunnel:
+    prefix = worker1.prefix
+    with customer.link(None, fanout_addrs, prefix) as tunnel:
         assert len(tunnel(fanout=True).simple()) == 2
         worker2.subscribe('stop')
         assert len(tunnel(fanout=True).simple()) == 1
         worker1.subscribe('stop')
         with pytest.raises(zeronimo.ZeronimoError):
             tunnel(fanout=True).simple()
-        worker1.subscribe(fanout_topic)
+        worker1.subscribe(prefix)
         assert len(tunnel(fanout=True).simple()) == 1
-        worker2.subscribe(fanout_topic)
+        worker2.subscribe(prefix)
         assert len(tunnel(fanout=True).simple()) == 2
 
 
@@ -181,7 +181,7 @@ def test_topic(customer, worker1, worker2):
 def test_link_to_addrs(customer, worker):
     yield [worker]
     with customer.link(
-        [worker.addr], [worker.fanout_addr], worker.fanout_topic) as tunnel:
+        [worker.addr], [worker.fanout_addr], worker.prefix) as tunnel:
         assert tunnel.add(1, 1) == 'cutie'
 
 
@@ -306,3 +306,8 @@ def test_offbeat(customer, worker1, worker2):
         generous_tunnel = tunnel(fanout=True, as_task=True,
                                  finding_timeout=0.05)
         assert len(generous_tunnel.simple()) == 2
+
+
+@autowork
+def test_proxy():
+    yield []

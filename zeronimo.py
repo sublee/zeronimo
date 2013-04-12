@@ -250,16 +250,15 @@ class Worker(Runner, ZMQSocketManager):
     obj = None
     fanout_sock = None
     fanout_addr = None
-    fanout_topic = None
+    prefix = None
     accepting = True
 
-    def __init__(self, obj, bind=None, bind_fanout=None, fanout_topic='',
-                 **kwargs):
+    def __init__(self, obj, bind=None, bind_fanout=None, prefix='', **kwargs):
         super(Worker, self).__init__(**kwargs)
         self.obj = obj
         bind and self.bind(bind)
         bind_fanout and self.bind_fanout(bind_fanout)
-        self.subscribe(fanout_topic)
+        self.subscribe(prefix)
 
     def open_sockets(self):
         super(Worker, self).open_sockets()
@@ -268,8 +267,8 @@ class Worker(Runner, ZMQSocketManager):
         self.fanout_sock = self.context.socket(zmq.SUB)
         if self.fanout_addr is not None:
             self.fanout_sock.bind(self.fanout_addr)
-        if self.fanout_topic is not None:
-            self.subscribe(self.fanout_topic)
+        if self.prefix is not None:
+            self.fanout_sock.setsockopt(zmq.SUBSCRIBE, self.prefix)
 
     def close_sockets(self):
         super(Worker, self).close_sockets()
@@ -292,12 +291,12 @@ class Worker(Runner, ZMQSocketManager):
             self.fanout_sock.unbind(addr)
         self.fanout_addr = None
 
-    def subscribe(self, fanout_topic):
+    def subscribe(self, prefix):
         if self.fanout_sock:
-            if self.fanout_topic is not None:
-                self.fanout_sock.setsockopt(zmq.UNSUBSCRIBE, self.fanout_topic)
-            self.fanout_sock.setsockopt(zmq.SUBSCRIBE, fanout_topic)
-        self.fanout_topic = fanout_topic
+            if self.prefix is not None:
+                self.fanout_sock.setsockopt(zmq.UNSUBSCRIBE, self.prefix)
+            self.fanout_sock.setsockopt(zmq.SUBSCRIBE, prefix)
+        self.prefix = prefix
 
     def accept_all(self):
         self.accepting = True
@@ -350,8 +349,8 @@ class Worker(Runner, ZMQSocketManager):
                     continue
         self.open_sockets()
         try:
-            joinall([spawn(serve, self.sock),
-                     spawn(serve, self.fanout_sock, self.fanout_topic)])
+            joinall([spawn(serve, self.sock, self.prefix),
+                     spawn(serve, self.fanout_sock, self.prefix)])
         finally:
             self.close_sockets()
 
@@ -360,7 +359,7 @@ class Worker(Runner, ZMQSocketManager):
         super(Worker, self).stop()
 
     def __repr__(self):
-        return make_repr(self, ['addr', 'fanout_addr', 'fanout_topic'])
+        return make_repr(self, ['addr', 'fanout_addr', 'prefix'])
 
 
 class Customer(Runner, ZMQSocketManager):
@@ -386,15 +385,15 @@ class Customer(Runner, ZMQSocketManager):
         """
         addrs = []
         fanout_addrs = []
-        fanout_topic = None
+        prefix = None
         for worker in workers:
             addrs.append(worker.addr)
             fanout_addrs.append(worker.fanout_addr)
-            if fanout_topic is None:
-                fanout_topic = worker.fanout_topic
-            elif fanout_topic != worker.fanout_topic:
-                raise ValueError('All workers should subscribe same topic')
-        return Tunnel(self, addrs, fanout_addrs, fanout_topic, *args, **kwargs)
+            if prefix is None:
+                prefix = worker.prefix
+            elif prefix != worker.prefix:
+                raise ValueError('All workers should have same prefix')
+        return Tunnel(self, addrs, fanout_addrs, prefix, *args, **kwargs)
 
     def register_tunnel(self, tunnel):
         """Registers the :class:`Tunnel` object to run and ensures a socket
@@ -503,7 +502,7 @@ class Tunnel(object):
     :param customer: the :class:`Customer` object.
     :param addrs: the destination worker addresses bound at PULL sockets.
     :param fanout_addrs: the destination worker addresses bound at SUB sockets.
-    :param fanout_topic: the filter the workers are subscribing.
+    :param prefix: the filter the workers are subscribing.
 
     :param wait: if it's set to ``True``, the workers will reply. Otherwise,
                  the workers just invoke a function without reply. Defaults to
@@ -519,11 +518,11 @@ class Tunnel(object):
     """
 
     def __init__(self, customer, worker_addrs=None, worker_fanout_addrs=None,
-                 fanout_topic='', **invoker_opts):
+                 worker_prefix='', **invoker_opts):
         self._znm_customer = customer
         self._znm_worker_addrs = set(worker_addrs or [])
         self._znm_worker_fanout_addrs = set(worker_fanout_addrs or [])
-        self._znm_fanout_topic = fanout_topic
+        self._znm_worker_prefix = worker_prefix
         self._znm_invoker_opts = invoker_opts
         self._znm_sockets = {}
 
@@ -559,14 +558,14 @@ class Tunnel(object):
         invoker_opts.update(self._znm_invoker_opts)
         invoker_opts.update(replacing_invoker_opts)
         tunnel = Tunnel(self._znm_customer, self._znm_worker_addrs,
-                        self._znm_worker_fanout_addrs, self._znm_fanout_topic,
+                        self._znm_worker_fanout_addrs, self._znm_worker_prefix,
                         **invoker_opts)
         tunnel._znm_sockets = self._znm_sockets
         return tunnel
 
     def __repr__(self):
         params =['customer', 'worker_addrs', 'worker_fanout_addrs',
-                 'fanout_topic']
+                 'worker_prefix']
         keywords = self._znm_invoker_opts.keys()
         attrs = params + keywords
         data = {attr: getattr(self, '_znm_' + attr) for attr in params}
@@ -598,11 +597,10 @@ class Invoker(object):
 
     def _invoke_nowait(self, fanout=False):
         sock = self.sockets[zmq.PUB if fanout else zmq.PUSH]
-        prefix = self.fanout_topic if fanout else ''
         invocation = Invocation(
             self.function_name, self.args, self.kwargs, self.id, None)
         #print 'invoker.invoke_nowait send', invocation
-        zmq_send(sock, invocation, prefix=prefix)
+        zmq_send(sock, invocation, prefix=self.worker_prefix)
 
     def _invoke(self, as_task=False, finding_timeout=0.01):
         sock = self.sockets[zmq.PUSH]
@@ -615,7 +613,7 @@ class Invoker(object):
             with Timeout(finding_timeout, False):
                 while True:
                     #print 'invoker.invoke send', invocation
-                    zmq_send(sock, invocation)
+                    zmq_send(sock, invocation, prefix=self.worker_prefix)
                     reply = None
                     reply = self.queue.get()
                     if reply.method == REJECT:
@@ -648,7 +646,7 @@ class Invoker(object):
         replies = []
         rejected = 0
         #print 'invoker.invoke_fanout send', invocation
-        zmq_send(sock, invocation, prefix=self.fanout_topic)
+        zmq_send(sock, invocation, prefix=self.worker_prefix)
         with Timeout(finding_timeout, False):
             while True:
                 reply = self.queue.get()

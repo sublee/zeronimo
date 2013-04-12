@@ -35,7 +35,7 @@ def pytest_generate_tests(metafunc):
     argnames = []
     argvalues = []
     ids = []
-    fanout_topic = zeronimo.alloc_id()
+    prefix = zeronimo.alloc_id()
     testing_protocols = []
     if not metafunc.config.option.no_inproc:
         testing_protocols.append('inproc')
@@ -52,7 +52,7 @@ def pytest_generate_tests(metafunc):
         for param in metafunc.fixturenames:
             if param.startswith('worker') or param.startswith('customer'):
                 if param.startswith('worker'):
-                    curargvalues.append(make_worker(protocol, fanout_topic))
+                    curargvalues.append(make_worker(protocol, prefix))
                 else:
                     curargvalues.append(make_customer(protocol))
                 if not ids:
@@ -173,12 +173,12 @@ class Application(object):
 app = Application()
 
 
-def make_worker(protocol, fanout_topic):
+def make_worker(protocol, prefix):
     """Creates a :class:`zeronimo.Worker` by the given protocol."""
     make_addr, make_fanout_addr, context = protocols[protocol]
     return zeronimo.Worker(
         app, bind=make_addr(), bind_fanout=make_fanout_addr(),
-        fanout_topic=fanout_topic, context=context)
+        prefix=prefix, context=context)
 
 
 def make_customer(protocol):
