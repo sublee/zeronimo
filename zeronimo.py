@@ -209,6 +209,7 @@ class ZMQSocketManager(object):
     context = None
     sock = None
     addr = None
+    connected_addr = None
 
     def __init__(self, context=None):
         if context is None:
@@ -222,6 +223,8 @@ class ZMQSocketManager(object):
         self.sock = self.context.socket(zmq.PULL)
         if self.addr is not None:
             self.sock.bind(self.addr)
+        if self.connected_addr is not None:
+            self.sock.connect(self.connected_addr)
 
     def close_sockets(self):
         """Closes all sockets if not closed."""
@@ -233,7 +236,7 @@ class ZMQSocketManager(object):
     def bind(self, addr):
         """Binds an address to the socket."""
         if self.addr is not None:
-            raise ValueError('Address already bound')
+            raise ValueError('Already bound')
         if self.sock is not None:
             self.sock.bind(addr)
         self.addr = addr
@@ -244,13 +247,27 @@ class ZMQSocketManager(object):
             self.sock.unbind(addr)
         self.addr = None
 
+    def connect(self, addr):
+        if self.connected_addr is not None:
+            raise ValueError('Already connected')
+        if self.sock is not None:
+            self.sock.connect(addr)
+        self.connected_addr = addr
+
+    def disconnect(self, addr):
+        if self.sock is not None:
+            self.sock.disconnect(addr)
+        self.connected_addr = None
+
 
 class Worker(Runner, ZMQSocketManager):
 
     obj = None
     fanout_sock = None
-    fanout_addr = None
     prefix = None
+
+    fanout_addr = None
+    connected_fanout_addr = None
     accepting = True
 
     def __init__(self, obj, bind=None, bind_fanout=None, prefix='', **kwargs):
@@ -267,8 +284,10 @@ class Worker(Runner, ZMQSocketManager):
         self.fanout_sock = self.context.socket(zmq.SUB)
         if self.fanout_addr is not None:
             self.fanout_sock.bind(self.fanout_addr)
+        if self.connected_fanout_addr is not None:
+            self.fanout_sock.connect(self.connected_fanout_addr)
         if self.prefix is not None:
-            self.fanout_sock.setsockopt(zmq.SUBSCRIBE, self.prefix)
+            self.fanout_sock.set(zmq.SUBSCRIBE, self.prefix)
 
     def close_sockets(self):
         super(Worker, self).close_sockets()
@@ -280,7 +299,7 @@ class Worker(Runner, ZMQSocketManager):
     def bind_fanout(self, addr):
         """Binds the address to SUB socket."""
         if self.fanout_addr is not None:
-            raise ValueError('Address already bound')
+            raise ValueError('Already bound')
         if self.fanout_sock is not None:
             self.fanout_sock.bind(addr)
         self.fanout_addr = addr
@@ -291,11 +310,25 @@ class Worker(Runner, ZMQSocketManager):
             self.fanout_sock.unbind(addr)
         self.fanout_addr = None
 
+    def connect_fanout(self, addr):
+        """Binds the address to SUB socket."""
+        if self.fanout_addr is not None:
+            raise ValueError('Already connected')
+        if self.fanout_sock is not None:
+            self.fanout_sock.connect(addr)
+        self.connected_fanout_addr = addr
+
+    def disconnect_fanout(self, addr):
+        """Unbinds the address to SUB socket."""
+        if self.fanout_sock is not None:
+            self.fanout_sock.disconnect(addr)
+        self.connected_fanout_addr = None
+
     def subscribe(self, prefix):
         if self.fanout_sock:
             if self.prefix is not None:
-                self.fanout_sock.setsockopt(zmq.UNSUBSCRIBE, self.prefix)
-            self.fanout_sock.setsockopt(zmq.SUBSCRIBE, prefix)
+                self.fanout_sock.set(zmq.UNSUBSCRIBE, self.prefix)
+            self.fanout_sock.set(zmq.SUBSCRIBE, prefix)
         self.prefix = prefix
 
     def accept_all(self):
@@ -306,7 +339,7 @@ class Worker(Runner, ZMQSocketManager):
 
     def send_reply(self, sock, method, data, task_id, run_id, worker_addr):
         reply = Reply(method, data, task_id, run_id, worker_addr)
-        #print 'worker send', reply
+        print 'worker send', reply
         return zmq_send(sock, reply)
 
     def run_task(self, invocation):
@@ -482,7 +515,7 @@ class Customer(Runner, ZMQSocketManager):
                         queue = self._missings[invoker_id][task_id]
                     else:
                         queue = task.queue
-                #print 'customer recv', reply
+                print 'customer recv', reply
                 queue.put(reply)
         finally:
             self.close_sockets()
@@ -599,7 +632,7 @@ class Invoker(object):
         sock = self.sockets[zmq.PUB if fanout else zmq.PUSH]
         invocation = Invocation(
             self.function_name, self.args, self.kwargs, self.id, None)
-        #print 'invoker.invoke_nowait send', invocation
+        print 'invoker.invoke_nowait send', invocation
         zmq_send(sock, invocation, prefix=self.worker_prefix)
 
     def _invoke(self, as_task=False, finding_timeout=0.01):
@@ -612,7 +645,7 @@ class Invoker(object):
         try:
             with Timeout(finding_timeout, False):
                 while True:
-                    #print 'invoker.invoke send', invocation
+                    print 'invoker.invoke send', invocation
                     zmq_send(sock, invocation, prefix=self.worker_prefix)
                     reply = None
                     reply = self.queue.get()
@@ -645,7 +678,7 @@ class Invoker(object):
         self.customer.register_invoker(self)
         replies = []
         rejected = 0
-        #print 'invoker.invoke_fanout send', invocation
+        print 'invoker.invoke_fanout send', invocation
         zmq_send(sock, invocation, prefix=self.worker_prefix)
         with Timeout(finding_timeout, False):
             while True:
@@ -695,7 +728,7 @@ class Task(object):
     def __call__(self):
         self.customer.register_task(self)
         reply = self.queue.get()
-        #print 'task recv %r' % (reply,)
+        print 'task recv %r' % (reply,)
         assert reply.method not in (ACCEPT, REJECT)
         if reply.method in (RETURN, RAISE):
             self.customer.unregister_task(self)
@@ -712,7 +745,7 @@ class Task(object):
         yield first_reply.data
         while True:
             reply = self.queue.get()
-            #print 'task recv %r' % (reply,)
+            print 'task recv %r' % (reply,)
             assert reply.method not in (ACCEPT, REJECT, RETURN)
             if reply.method == YIELD:
                 yield reply.data

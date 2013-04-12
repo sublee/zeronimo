@@ -211,8 +211,8 @@ def autowork(f, *args, **kwargs):
             raise
         finally:
             stop_workers(all_workers)
-            assert not ps.get_connections()
         break
+    assert not ps.get_connections()
 
 
 def busywait(func, equal=True):

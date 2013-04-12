@@ -10,6 +10,7 @@ from conftest import app, autowork, inproc, ipc, tcp, pgm, epgm, zmq_context
 import zeronimo
 
 
+'''
 def test_running():
     class MockRunner(zeronimo.Runner):
         def reset_sockets(self):
@@ -265,13 +266,13 @@ def test_epgm():
     # assign
     worker1 = zeronimo.Worker(app)
     worker2 = zeronimo.Worker(app)
-    customer1 = zeronimo.Customer()
-    customer2 = zeronimo.Customer()
     fanout_addr = epgm()
     worker1.bind(tcp())
     worker1.bind_fanout(fanout_addr)
     worker2.bind(tcp())
     worker2.bind_fanout(fanout_addr)
+    customer1 = zeronimo.Customer()
+    customer2 = zeronimo.Customer()
     customer1.bind(tcp())
     customer2.bind(tcp())
     yield [worker1, worker2]
@@ -306,8 +307,52 @@ def test_offbeat(customer, worker1, worker2):
         generous_tunnel = tunnel(fanout=True, as_task=True,
                                  finding_timeout=0.05)
         assert len(generous_tunnel.simple()) == 2
+'''
 
 
 @autowork
 def test_proxy():
-    yield []
+    import zmq.green as zmq
+    # run proxies
+    def run_device(in_type, out_type, in_addr, out_addr):
+        in_sock = zmq_context.socket(in_type)
+        if in_type == zmq.SUB:
+            in_sock.set(zmq.SUBSCRIBE, '')
+        out_sock = zmq_context.socket(out_type)
+        try:
+            in_sock.bind(in_addr)
+            out_sock.bind(out_addr)
+            zmq.device(0, in_sock, out_sock)
+        finally:
+            in_sock.close()
+            out_sock.close()
+    streamer_in_addr, streamer_out_addr = tcp(), tcp()
+    forwarder_in_addr, forwarder_out_addr = tcp(), tcp()
+    streamer = spawn(run_device, zmq.PULL, zmq.PUSH,
+                     streamer_in_addr, streamer_out_addr)
+    if zmq.zmq_version() >= (3, 2):
+        forwarder = spawn(run_device, zmq.XSUB, zmq.XPUB,
+                          forwarder_in_addr, forwarder_out_addr)
+    else:
+        forwarder = spawn(run_device, zmq.SUB, zmq.PUB,
+                          forwarder_in_addr, forwarder_out_addr)
+    # test zeronimo
+    worker1 = zeronimo.Worker(app)
+    worker2 = zeronimo.Worker(app)
+    worker1.connect(streamer_out_addr)
+    worker2.connect(streamer_out_addr)
+    worker1.connect_fanout(forwarder_out_addr)
+    worker2.connect_fanout(forwarder_out_addr)
+    customer1 = zeronimo.Customer()
+    customer2 = zeronimo.Customer()
+    customer1.bind(tcp())
+    customer2.bind(tcp())
+    yield [worker1, worker2]
+    with customer1.link([streamer_in_addr], [forwarder_in_addr]) as tunnel1, \
+         customer2.link([streamer_in_addr], [forwarder_in_addr]) as tunnel2:
+        assert tunnel1.simple() == 'ok'
+        assert tunnel2.simple() == 'ok'
+        assert tunnel1(fanout=True).simple() == ['ok', 'ok']
+        assert tunnel2(fanout=True).simple() == ['ok', 'ok']
+    streamer.kill()
+    forwarder.kill()
