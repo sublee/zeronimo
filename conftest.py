@@ -266,5 +266,4 @@ def stop_workers(workers):
             worker.stop()
         except RuntimeError:
             pass
-    print 'wait stop'
     wait_workers(workers, for_binding=False)

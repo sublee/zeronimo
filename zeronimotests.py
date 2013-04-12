@@ -107,7 +107,6 @@ def test_1to2(customer, worker1, worker2):
         assert task1() == 'cutie'
         assert task2() == 'cutie'
         assert task1.worker_addr != task2.worker_addr
-    print 'OUT OF WITH'
 
 
 @autowork
