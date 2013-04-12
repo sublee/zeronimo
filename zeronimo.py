@@ -14,6 +14,7 @@ try:
 except ImportError:
     import pickle
 from types import MethodType
+import uuid
 
 from gevent import joinall, spawn, Timeout
 from gevent.coros import Semaphore
@@ -30,10 +31,7 @@ __all__ = []
 
 
 def alloc_id():
-    import hashlib
-    import uuid
     return str(uuid.uuid4())
-    return hashlib.md5(str(uuid.uuid4())).hexdigest()[:6]
 
 
 def should_yield(val):
@@ -495,9 +493,7 @@ class Customer(Runner, ZMQSocketManager):
         super(Customer, self).stop()
 
     def __repr__(self):
-        import inspect
-        frame = inspect.getouterframes(inspect.currentframe())[3]
-        return make_repr(self, ['addr']) + frame[0].f_code.co_filename + ':' + str(frame[0].f_lineno)
+        return make_repr(self, ['addr'])
 
 
 class Tunnel(object):
