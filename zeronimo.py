@@ -32,6 +32,7 @@ __all__ = []
 def alloc_id():
     import hashlib
     import uuid
+    return str(uuid.uuid4())
     return hashlib.md5(str(uuid.uuid4())).hexdigest()[:6]
 
 
@@ -209,21 +210,20 @@ class ZMQSocketManager(object):
 
     context = None
     sock = None
-    addrs = None
+    addr = None
 
     def __init__(self, context=None):
         if context is None:
             context = zmq.Context()
         self.context = context
-        self.addrs = set()
 
     def open_sockets(self):
         """Opens all sockets if not opened."""
         if self.sock is not None:
             return
         self.sock = self.context.socket(zmq.PULL)
-        for addr in self.addrs:
-            self.bind(addr)
+        if self.addr is not None:
+            self.sock.bind(self.addr)
 
     def close_sockets(self):
         """Closes all sockets if not closed."""
@@ -234,22 +234,24 @@ class ZMQSocketManager(object):
 
     def bind(self, addr):
         """Binds an address to the socket."""
+        if self.addr is not None:
+            raise ValueError('Address already bound')
         if self.sock is not None:
             self.sock.bind(addr)
-        self.addrs.add(addr)
+        self.addr = addr
 
     def unbind(self, addr):
         """Unbinds an address to the socket."""
         if self.sock is not None:
             self.sock.unbind(addr)
-        self.addrs.remove(addr)
+        self.addr = None
 
 
 class Worker(Runner, ZMQSocketManager):
 
     obj = None
     fanout_sock = None
-    fanout_addrs = None
+    fanout_addr = None
     fanout_topic = None
     accepting = True
 
@@ -257,7 +259,6 @@ class Worker(Runner, ZMQSocketManager):
                  **kwargs):
         super(Worker, self).__init__(**kwargs)
         self.obj = obj
-        self.fanout_addrs = set()
         bind and self.bind(bind)
         bind_fanout and self.bind_fanout(bind_fanout)
         self.subscribe(fanout_topic)
@@ -267,8 +268,8 @@ class Worker(Runner, ZMQSocketManager):
         if self.fanout_sock is not None:
             return
         self.fanout_sock = self.context.socket(zmq.SUB)
-        for addr in self.fanout_addrs:
-            self.bind_fanout(addr)
+        if self.fanout_addr is not None:
+            self.fanout_sock.bind(self.fanout_addr)
         if self.fanout_topic is not None:
             self.subscribe(self.fanout_topic)
 
@@ -281,15 +282,17 @@ class Worker(Runner, ZMQSocketManager):
 
     def bind_fanout(self, addr):
         """Binds the address to SUB socket."""
+        if self.fanout_addr is not None:
+            raise ValueError('Address already bound')
         if self.fanout_sock is not None:
             self.fanout_sock.bind(addr)
-        self.fanout_addrs.add(addr)
+        self.fanout_addr = addr
 
     def unbind_fanout(self, addr):
         """Unbinds the address to SUB socket."""
         if self.fanout_sock is not None:
             self.fanout_sock.unbind(addr)
-        self.fanout_addrs.remove(addr)
+        self.fanout_addr = None
 
     def subscribe(self, fanout_topic):
         if self.fanout_sock:
@@ -319,8 +322,7 @@ class Worker(Runner, ZMQSocketManager):
         else:
             sock = self.context.socket(zmq.PUSH)
             sock.connect(invocation.customer_addr)
-            worker_addr = best_addr(self.addrs, [invocation.customer_addr])
-            meta = (invocation.invoker_id, task_id, worker_addr)
+            meta = (invocation.invoker_id, task_id, self.addr)
             method = ACCEPT if self.accepting else REJECT
             sock and self.send_reply(sock, method, None, *meta)
         if not self.accepting:
@@ -360,7 +362,7 @@ class Worker(Runner, ZMQSocketManager):
         super(Worker, self).stop()
 
     def __repr__(self):
-        return make_repr(self, ['addrs', 'fanout_addrs', 'fanout_topic'])
+        return make_repr(self, ['addr', 'fanout_addr', 'fanout_topic'])
 
 
 class Customer(Runner, ZMQSocketManager):
@@ -384,12 +386,12 @@ class Customer(Runner, ZMQSocketManager):
         """Merges addresses from the workers then creates a :class:`Tunnel`
         object. All workers should subscribe same topic.
         """
-        addrs = set()
-        fanout_addrs = set()
+        addrs = []
+        fanout_addrs = []
         fanout_topic = None
         for worker in workers:
-            addrs.update(worker.addrs)
-            fanout_addrs.update(worker.fanout_addrs)
+            addrs.append(worker.addr)
+            fanout_addrs.append(worker.fanout_addr)
             if fanout_topic is None:
                 fanout_topic = worker.fanout_topic
             elif fanout_topic != worker.fanout_topic:
@@ -537,9 +539,9 @@ class Tunnel(object):
         for socket_type, addrs in [(zmq.PUSH, self._znm_worker_addrs),
                                    (zmq.PUB, self._znm_worker_fanout_addrs)]:
             sock = self._znm_customer.context.socket(socket_type)
-            self._znm_sockets[socket_type] = sock
             for addr in addrs:
                 sock.connect(addr)
+            self._znm_sockets[socket_type] = sock
         return self
 
     def __exit__(self, error, error_type, traceback):
@@ -575,11 +577,6 @@ class Invoker(object):
     def __getattr__(self, attr):
         return getattr(self.tunnel, '_znm_' + attr)
 
-    def best_customer_addr(self, fanout=False):
-        return best_addr(
-            self.customer.addrs,
-            self.worker_fanout_addrs if fanout else self.worker_addrs)
-
     def invoke(self, wait=True, fanout=False, as_task=False,
                finding_timeout=0.01):
         if not wait:
@@ -599,9 +596,8 @@ class Invoker(object):
 
     def _invoke(self, as_task=False, finding_timeout=0.01):
         sock = self.sockets[zmq.PUSH]
-        invocation = Invocation(
-            self.function_name, self.args, self.kwargs,
-            self.id, self.best_customer_addr(fanout=False))
+        invocation = Invocation(self.function_name, self.args, self.kwargs,
+                                self.id, self.customer.addr)
         # find one worker
         self.customer.register_invoker(self)
         rejected = set()
@@ -635,9 +631,8 @@ class Invoker(object):
 
     def _invoke_fanout(self, as_task=False, finding_timeout=0.01):
         sock = self.sockets[zmq.PUB]
-        invocation = Invocation(
-            self.function_name, self.args, self.kwargs,
-            self.id, self.best_customer_addr(fanout=True))
+        invocation = Invocation(self.function_name, self.args, self.kwargs,
+                                self.id, self.customer.addr)
         # find one or more workers
         self.customer.register_invoker(self)
         replies = []

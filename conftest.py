@@ -173,13 +173,14 @@ def make_worker(protocol, fanout_topic):
     """Creates a :class:`zeronimo.Worker` by the given protocol."""
     make_addr, make_fanout_addr, context = protocols[protocol]
     return zeronimo.Worker(
-        app, make_addr(), make_fanout_addr(), fanout_topic, context=context)
+        app, bind=make_addr(), bind_fanout=make_fanout_addr(),
+        fanout_topic=fanout_topic, context=context)
 
 
 def make_customer(protocol):
     """Creates a :class:`zeronimo.Customer` by the given protocol."""
     make_addr, __, context = protocols[protocol]
-    return zeronimo.Customer(make_addr(), context=context)
+    return zeronimo.Customer(bind=make_addr(), context=context)
 
 
 @decorator

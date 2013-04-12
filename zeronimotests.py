@@ -148,8 +148,8 @@ def test_reject(customer, worker1, worker2):
     with customer.link_workers([worker1, worker2]) as tunnel:
         assert len(tunnel(fanout=True).simple()) == 2
         worker2.reject_all()
-        assert tunnel(as_task=True).simple().worker_addr in worker1.addrs
-        assert tunnel(as_task=True).simple().worker_addr in worker1.addrs
+        assert tunnel(as_task=True).simple().worker_addr == worker1.addr
+        assert tunnel(as_task=True).simple().worker_addr == worker1.addr
         assert len(tunnel(fanout=True).simple()) == 1
         worker1.reject_all()
         with pytest.raises(zeronimo.ZeronimoError):
@@ -162,7 +162,7 @@ def test_reject(customer, worker1, worker2):
 @autowork
 def test_topic(customer, worker1, worker2):
     yield [worker1, worker2]
-    fanout_addrs = list(worker1.fanout_addrs) + list(worker2.fanout_addrs)
+    fanout_addrs = [worker1.fanout_addr, worker2.fanout_addr]
     fanout_topic = worker1.fanout_topic
     with customer.link(None, fanout_addrs, fanout_topic) as tunnel:
         assert len(tunnel(fanout=True).simple()) == 2
@@ -180,8 +180,8 @@ def test_topic(customer, worker1, worker2):
 @autowork
 def test_link_to_addrs(customer, worker):
     yield [worker]
-    with customer.link(worker.addrs, worker.fanout_addrs,
-                       worker.fanout_topic) as tunnel:
+    with customer.link(
+        [worker.addr], [worker.fanout_addr], worker.fanout_topic) as tunnel:
         assert tunnel.add(1, 1) == 'cutie'
 
 
