@@ -13,17 +13,21 @@ import zeronimo
 
 
 zmq_context = zmq.Context()
-#gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
+gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
+
+
+import psutil
+ps = psutil.Process(os.getpid())
 
 
 def pytest_addoption(parser):
     parser.addoption('--no-inproc', action='store_true',
-                     help='don\'t use inproc sockets')
+                     help='don\'t use inproc sockets.')
     parser.addoption('--no-ipc', action='store_true',
-                     help='don\'t use ipc sockets')
-    parser.addoption('--tcp', action='store_true', help='use tcp sockets')
-    parser.addoption('--pgm', action='store_true', help='use pgm sockets')
-    parser.addoption('--epgm', action='store_true', help='use epgm sockets')
+                     help='don\'t use ipc sockets.')
+    parser.addoption('--tcp', action='store_true', help='use tcp sockets.')
+    parser.addoption('--pgm', action='store_true', help='use pgm sockets.')
+    parser.addoption('--epgm', action='store_true', help='use epgm sockets.')
 
 
 def pytest_generate_tests(metafunc):
@@ -203,13 +207,12 @@ def autowork(f, *args, **kwargs):
                 start_workers(workers)
         except zmq.ZMQError as error:
             if error.errno == 98:
-                print 'retry'
                 continue
             raise
-        else:
-            return
         finally:
             stop_workers(all_workers)
+            assert not ps.get_connections()
+        break
 
 
 def busywait(func, equal=True):
@@ -228,7 +231,8 @@ def test_worker(worker):
     except zmq.ZMQError, e:
         if e.errno == 111:
             return False
-        raise
+        else:
+            raise
     else:
         try:
             tunnel._znm_test()
@@ -262,4 +266,5 @@ def stop_workers(workers):
             worker.stop()
         except RuntimeError:
             pass
+    print 'wait stop'
     wait_workers(workers, for_binding=False)

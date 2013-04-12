@@ -74,7 +74,7 @@ def ensure_sequence(val, sequence=list):
 
 
 def make_repr(obj, params=[], keywords=[], data={}):
-    get = lambda attr: data.get(attr, getattr(obj, attr))
+    get = lambda attr: data[attr] if attr in data else getattr(obj, attr)
     c = type(obj)
     opts = []
     if params:
@@ -309,7 +309,7 @@ class Worker(Runner, ZMQSocketManager):
 
     def send_reply(self, sock, method, data, task_id, run_id, worker_addr):
         reply = Reply(method, data, task_id, run_id, worker_addr)
-        print 'worker send', reply
+        #print 'worker send', reply
         return zmq_send(sock, reply)
 
     def run_task(self, invocation):
@@ -405,7 +405,6 @@ class Customer(Runner, ZMQSocketManager):
         if tunnel in self.tunnels:
             raise ValueError('Already registered tunnel')
         self.tunnels.add(tunnel)
-        self.open_sockets()
 
     def unregister_tunnel(self, tunnel):
         """Unregisters the :class:`Tunnel` object."""
@@ -452,47 +451,53 @@ class Customer(Runner, ZMQSocketManager):
             pass
 
     def run(self, should_run):
-        while should_run():
-            try:
-                reply = zmq_recv(self.sock)
-            except zmq.ZMQError:
-                continue
-            invoker_id = reply.invoker_id
-            task_id = reply.task_id
-            if reply.method in (ACCEPT, REJECT):
+        self.open_sockets()
+        try:
+            while should_run():
                 try:
-                    queue = self.invokers[invoker_id].queue
-                except KeyError:
-                    # drop message
+                    reply = zmq_recv(self.sock)
+                except zmq.ZMQError:
                     continue
-                # prepare collections for task messages
-                if invoker_id not in self.tasks:
-                    self.tasks[invoker_id] = {}
-                try:
-                    self._missings[invoker_id][task_id] = Queue()
-                except KeyError:
-                    self._missings[invoker_id] = {task_id: Queue()}
-            else:
-                try:
-                    tasks = self.tasks[invoker_id]
-                except KeyError:
-                    # drop message
-                    continue
-                try:
-                    task = tasks[task_id]
-                except KeyError:
-                    queue = self._missings[invoker_id][task_id]
+                invoker_id = reply.invoker_id
+                task_id = reply.task_id
+                if reply.method in (ACCEPT, REJECT):
+                    try:
+                        queue = self.invokers[invoker_id].queue
+                    except KeyError:
+                        # drop message
+                        continue
+                    # prepare collections for task messages
+                    if invoker_id not in self.tasks:
+                        self.tasks[invoker_id] = {}
+                    try:
+                        self._missings[invoker_id][task_id] = Queue()
+                    except KeyError:
+                        self._missings[invoker_id] = {task_id: Queue()}
                 else:
-                    queue = task.queue
-            print 'customer recv', reply
-            queue.put(reply)
+                    try:
+                        tasks = self.tasks[invoker_id]
+                    except KeyError:
+                        # drop message
+                        continue
+                    try:
+                        task = tasks[task_id]
+                    except KeyError:
+                        queue = self._missings[invoker_id][task_id]
+                    else:
+                        queue = task.queue
+                #print 'customer recv', reply
+                queue.put(reply)
+        finally:
+            self.close_sockets()
 
     def stop(self):
         self.close_sockets()
         super(Customer, self).stop()
 
     def __repr__(self):
-        return make_repr(self, ['addrs'])
+        import inspect
+        frame = inspect.getouterframes(inspect.currentframe())[3]
+        return make_repr(self, ['addr']) + frame[0].f_code.co_filename + ':' + str(frame[0].f_lineno)
 
 
 class Tunnel(object):
@@ -517,11 +522,11 @@ class Tunnel(object):
                     accepted a task. Defaults to 0.01 seconds.
     """
 
-    def __init__(self, customer, addrs=None, fanout_addrs=None,
+    def __init__(self, customer, worker_addrs=None, worker_fanout_addrs=None,
                  fanout_topic='', **invoker_opts):
         self._znm_customer = customer
-        self._znm_worker_addrs = ensure_sequence(addrs, set)
-        self._znm_worker_fanout_addrs = ensure_sequence(fanout_addrs, set)
+        self._znm_worker_addrs = set(worker_addrs or [])
+        self._znm_worker_fanout_addrs = set(worker_fanout_addrs or [])
         self._znm_fanout_topic = fanout_topic
         self._znm_invoker_opts = invoker_opts
         self._znm_sockets = {}
@@ -563,6 +568,15 @@ class Tunnel(object):
         tunnel._znm_sockets = self._znm_sockets
         return tunnel
 
+    def __repr__(self):
+        params =['customer', 'worker_addrs', 'worker_fanout_addrs',
+                 'fanout_topic']
+        keywords = self._znm_invoker_opts.keys()
+        attrs = params + keywords
+        data = {attr: getattr(self, '_znm_' + attr) for attr in params}
+        data.update(self._znm_invoker_opts)
+        return make_repr(self, params, keywords, data)
+
 
 class Invoker(object):
 
@@ -591,7 +605,7 @@ class Invoker(object):
         prefix = self.fanout_topic if fanout else ''
         invocation = Invocation(
             self.function_name, self.args, self.kwargs, self.id, None)
-        print 'invoker.invoke_nowait send', invocation
+        #print 'invoker.invoke_nowait send', invocation
         zmq_send(sock, invocation, prefix=prefix)
 
     def _invoke(self, as_task=False, finding_timeout=0.01):
@@ -604,7 +618,7 @@ class Invoker(object):
         try:
             with Timeout(finding_timeout, False):
                 while True:
-                    print 'invoker.invoke send', invocation
+                    #print 'invoker.invoke send', invocation
                     zmq_send(sock, invocation)
                     reply = None
                     reply = self.queue.get()
@@ -637,7 +651,7 @@ class Invoker(object):
         self.customer.register_invoker(self)
         replies = []
         rejected = 0
-        print 'invoker.invoke_fanout send', invocation
+        #print 'invoker.invoke_fanout send', invocation
         zmq_send(sock, invocation, prefix=self.fanout_topic)
         with Timeout(finding_timeout, False):
             while True:
@@ -670,6 +684,9 @@ class Invoker(object):
         collect_tasks(iter_replies.next)
         spawn(collect_tasks, self.queue.get)
         return tasks
+
+    def __repr__(self):
+        return make_repr(self, ['function_name', 'args', 'kwargs'])
 
 
 class Task(object):

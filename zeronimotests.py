@@ -107,6 +107,7 @@ def test_1to2(customer, worker1, worker2):
         assert task1() == 'cutie'
         assert task2() == 'cutie'
         assert task1.worker_addr != task2.worker_addr
+    print 'OUT OF WITH'
 
 
 @autowork
@@ -211,8 +212,9 @@ def test_ipc():
     assert os.path.exists('_feeds/worker2')
     assert os.path.exists('_feeds/worker2_fanout')
     with customer1.link_workers([worker1]) as tunnel1:
-        assert os.path.exists('_feeds/customer1')
+        assert not os.path.exists('_feeds/customer1')
         assert tunnel1.simple() == 'ok'
+        assert os.path.exists('_feeds/customer1')
     assert not os.path.exists('_feeds/customer1')
     assert os.path.exists('_feeds/worker1')
     assert os.path.exists('_feeds/worker1_fanout')
@@ -220,10 +222,12 @@ def test_ipc():
     assert os.path.exists('_feeds/worker2_fanout')
     with customer1.link_workers([worker1, worker2]) as tunnel1, \
          customer2.link_workers([worker1, worker2]) as tunnel2:
-        assert os.path.exists('_feeds/customer1')
-        assert os.path.exists('_feeds/customer2')
+        assert not os.path.exists('_feeds/customer1')
         assert tunnel1.simple() == 'ok'
+        assert os.path.exists('_feeds/customer1')
+        assert not os.path.exists('_feeds/customer2')
         assert tunnel2.simple() == 'ok'
+        assert os.path.exists('_feeds/customer2')
         assert tunnel1(fanout=True).simple() == ['ok', 'ok']
         assert tunnel2(fanout=True).simple() == ['ok', 'ok']
     assert not os.path.exists('_feeds/customer1')
@@ -296,7 +300,7 @@ def test_offbeat(customer, worker1, worker2):
     worker2.send_reply = functools.partial(send_reply, worker2)
     yield [worker1, worker2]
     with customer.link_workers([worker1, worker2]) as tunnel:
-        tasks = tunnel(fanout=True, as_task=True).sleep_range(0.01, 3)
+        tasks = tunnel(fanout=True, as_task=True).sleep_range(0.01, 5)
         assert len(tasks) == 1
         list(tasks[0]())
         assert len(tasks) == 2
