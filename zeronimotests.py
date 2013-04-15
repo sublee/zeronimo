@@ -13,19 +13,27 @@ import zeronimo
 
 def test_running():
     class MockRunner(zeronimo.Runner):
+        def __init__(self, sleep=None):
+            self.sleep = sleep
         def run(self, stopper):
             assert not stopper.is_set()
             assert self.is_running()
+            if self.sleep is not None:
+                gevent.sleep(self.sleep)
     mock_runner = MockRunner()
     assert not mock_runner.is_running()
     mock_runner.run()
     assert not mock_runner.is_running()
-    mock_runner.start()
-    mock_runner.join()
-    spawn(mock_runner.run)
+    sleeping_mock_runner = MockRunner(0.01)
+    assert not sleeping_mock_runner.is_running()
+    sleeping_mock_runner.start()
+    assert sleeping_mock_runner.is_running()
+    sleeping_mock_runner.join()
+    assert not sleeping_mock_runner.is_running()
+    spawn(sleeping_mock_runner.run)
     with pytest.raises(RuntimeError):
-        mock_runner.join()
-    mock_runner.wait()
+        sleeping_mock_runner.join()
+    sleeping_mock_runner.wait()
 
 
 @autowork
@@ -82,10 +90,8 @@ def test_tunnel(customer, worker, tunnel_socks, prefix):
     assert len(customer.tunnels) == 0
     with customer.link(*tunnel_socks, prefix=prefix) as tunnel1, \
          customer.link(*tunnel_socks, prefix=prefix) as tunnel2:
-        assert not customer.is_running()
-        assert len(customer.tunnels) == 2
-        tunnel1.add(0, 0)
         assert customer.is_running()
+        assert len(customer.tunnels) == 2
     # should clean up
     assert not customer.is_running()
     assert len(customer.tunnels) == 0
@@ -341,3 +347,17 @@ def test_simple(addr1, addr2):
     customer = zeronimo.Customer(addr2, customer_sock)
     with customer.link(tunnel_sock) as tunnel:
         assert tunnel.simple() == 'ok'
+
+
+@autowork
+def test_2nd_start(customer, worker):
+    assert worker.is_running()
+    worker.stop()
+    assert not worker.is_running()
+    worker.start()
+    assert worker.is_running()
+    assert customer.is_running()
+    customer.stop()
+    assert not customer.is_running()
+    customer.start()
+    assert customer.is_running()

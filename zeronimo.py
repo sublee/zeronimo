@@ -36,40 +36,8 @@ def alloc_id():
 
 
 def should_yield(val):
-    return (
-        isinstance(val, Iterable) and
-        not isinstance(val, (Sequence, Set, Mapping)))
-
-
-def assort_addrs(addrs):
-    assorted_addrs = defaultdict(set)
-    for addr in addrs:
-        protocol = addr.split('://', 1)[0]
-        assorted_addrs[protocol].add(addr)
-    return dict(assorted_addrs)
-
-
-def best_addr(host_addrs, peer_addrs):
-    return iter(host_addrs).next()
-    priorities = {'inproc': 0, 'ipc': 1, 'tcp': 2, 'pgm': 2, 'epgm': 2}
-    assorted_host_addrs = assort_addrs(host_addrs)
-    assorted_peer_addrs = assort_addrs(peer_addrs)
-    for host_protocol, addrs in assorted_host_addrs.viewitems():
-        host_priority = priorities[host_protocol]
-        for peer_protocol in assorted_peer_addrs.viewkeys():
-            peer_priority = priorities[peer_protocol]
-            if peer_priority <= host_priority:
-                return iter(addrs).next()
-    raise ValueError('Cannot find the best address the peer is connectable')
-
-
-def ensure_sequence(val, sequence=list):
-    if val is None:
-        return sequence()
-    elif isinstance(val, (Sequence, Set)):
-        return sequence(val)
-    else:
-        return sequence([val])
+    serializable = (Sequence, Set, Mapping)
+    return (isinstance(val, Iterable) and not isinstance(val, serializable))
 
 
 def make_repr(obj, params=[], keywords=[], data={}):
@@ -170,11 +138,13 @@ class Runner(object):
     @classmethod
     def _patch_run(cls, obj, stopper):
         obj._running_lock = Semaphore()
-        def run(self):
+        def run(self, starter=None):
             if self.is_running():
                 raise RuntimeError('{0} is already running'.format(self))
             try:
                 with self._running_lock:
+                    if starter is not None:
+                        starter.set()
                     rv = obj._run(stopper)
             finally:
                 try:
@@ -194,19 +164,21 @@ class Runner(object):
             return obj._stop()
         obj.stop, obj._stop = MethodType(stop, obj), obj.stop
 
-    def is_running(self):
-        return self._running_lock.locked()
-
     def run(self, stopper):
         raise NotImplementedError
+
+    def stop(self):
+        self.wait()
+
+    def is_running(self):
+        return self._running_lock.locked()
 
     def start(self):
         if self.is_running():
             raise RuntimeError('{0} is already running'.format(self))
-        self._async_running = spawn(self.run)
-
-    def stop(self):
-        self.wait()
+        starter = Event()
+        self._async_running = spawn(self.run, starter=starter)
+        starter.wait()
 
     def join(self, block=True, timeout=None):
         try:
