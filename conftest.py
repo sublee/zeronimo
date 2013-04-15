@@ -13,7 +13,7 @@ import zeronimo
 
 
 zmq_context = zmq.Context()
-gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
+#gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
 import psutil
@@ -81,7 +81,7 @@ def ipc():
 
 def tcp():
     """Generates available TCP address."""
-    sock = gevent.socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(('127.0.0.1', 0))
     addr = 'tcp://{0}:{1}'.format(*sock.getsockname())
     sock.close()
@@ -199,18 +199,26 @@ def autowork(f, *args, **kwargs):
     automatically.
     """
     f = green(f)
-    all_workers = []
+    workers = []
+    greenlets = []
     while True:
         try:
-            for workers in f(*args, **kwargs):
-                all_workers.extend(workers)
-                start_workers(workers)
+            for objs in f(*args, **kwargs):
+                types = list(set(map(type, objs)))
+                assert len(types) == 1
+                t = types[0]
+                if issubclass(t, zeronimo.Worker):
+                    workers.extend(objs)
+                    start_workers(objs)
+                elif issubclass(t, gevent.Greenlet):
+                    greenlets.extend(objs)
         except zmq.ZMQError as error:
             if error.errno == 98:
                 continue
             raise
         finally:
-            stop_workers(all_workers)
+            stop_workers(workers)
+            gevent.killall(greenlets)
         break
     assert not ps.get_connections()
 
@@ -229,7 +237,7 @@ def test_worker(worker):
         tunnel = customer.link_workers([worker])
         tunnel.__enter__()
     except zmq.ZMQError, e:
-        if e.errno == 111:
+        if e.errno == zmq.ECONNREFUSED:
             return False
         else:
             raise
@@ -238,8 +246,11 @@ def test_worker(worker):
             tunnel._znm_test()
         except zeronimo.ZeronimoError:
             return False
-        else:
-            return True
+        try:
+            tunnel(fanout=True)._znm_test()
+        except zeronimo.ZeronimoError:
+            return False
+        return True
     finally:
         tunnel.__exit__(*sys.exc_info())
         customer.running_lock.wait()
@@ -257,7 +268,8 @@ def wait_workers(workers, for_binding):
 def start_workers(workers):
     for worker in workers:
         gevent.spawn(worker.run)
-    wait_workers(workers, for_binding=True)
+    #wait_workers(workers, for_binding=True)
+    gevent.sleep(0.5)
 
 
 def stop_workers(workers):
@@ -266,4 +278,42 @@ def stop_workers(workers):
             worker.stop()
         except RuntimeError:
             pass
-    wait_workers(workers, for_binding=False)
+    #wait_workers(workers, for_binding=False)
+
+
+def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
+    try:
+        if in_addr is not None:
+            in_sock.bind(in_addr)
+        if out_addr is not None:
+            out_sock.bind(out_addr)
+        zmq.device(0, in_sock, out_sock)
+    finally:
+        in_sock.close()
+        out_sock.close()
+
+
+def sync_pubsub(pub_sock, sub_socks, prefix=''):
+    """A PUB socket needs to receive subscription messages from the SUB sockets
+    for establishing cocnnections. It takes very short time but not
+    immediately.
+
+    This function synchronizes for a PUB socket can send messages to all the
+    SUB sockets.
+
+       >>> sub_sock1.set(zmq.SUBSCRIBE, 'test')
+       >>> sub_sock2.set(zmq.SUBSCRIBE, 'test')
+       >>> sync_pubsub(pub_sock, [sub_sock1, sub_sock2], prefix='test')
+    """
+    poller = zmq.Poller()
+    sub_socks = set(sub_socks)
+    for sub_sock in sub_socks:
+        poller.register(sub_sock, zmq.POLLIN)
+    synced = set()
+    while synced != sub_socks:
+        pub_sock.send(prefix + ':sync')
+        events = dict(poller.poll(timeout=100))
+        for sub_sock in sub_socks:
+            if sub_sock in events:
+                assert sub_sock.recv().endswith(':sync')
+                synced.add(sub_sock)
