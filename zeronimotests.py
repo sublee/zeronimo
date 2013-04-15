@@ -7,7 +7,7 @@ from gevent import joinall, spawn, Timeout
 import pytest
 import zmq.green as zmq
 
-from conftest import app, autowork, green, run_device, sync_pubsub, zmq_context
+from conftest import app, autowork, ctx, green, run_device, sync_pubsub
 import zeronimo
 
 
@@ -32,16 +32,16 @@ def test_running():
 def test_basic_zeronimo():
     # prepare sockets
     prefix = 'test'
-    worker_pull = zmq_context.socket(zmq.PULL)
+    worker_pull = ctx.socket(zmq.PULL)
     worker_pull.bind('inproc://worker')
-    worker_sub = zmq_context.socket(zmq.SUB)
+    worker_sub = ctx.socket(zmq.SUB)
     worker_sub.bind('inproc://worker-fanout')
     worker_sub.set(zmq.SUBSCRIBE, prefix)
-    customer_pull = zmq_context.socket(zmq.PULL)
+    customer_pull = ctx.socket(zmq.PULL)
     customer_pull.bind('inproc://customer')
-    tunnel_push = zmq_context.socket(zmq.PUSH)
+    tunnel_push = ctx.socket(zmq.PUSH)
     tunnel_push.connect('inproc://worker')
-    tunnel_pub = zmq_context.socket(zmq.PUB)
+    tunnel_pub = ctx.socket(zmq.PUB)
     tunnel_pub.connect('inproc://worker-fanout')
     sync_pubsub(tunnel_pub, [worker_sub], prefix)
     # prepare runners
@@ -245,31 +245,31 @@ def test_device(customer1, customer2, prefix, addr1, addr2, addr3, addr4):
     streamer_in_addr, streamer_out_addr = addr1, addr2
     forwarder_in_addr, forwarder_out_addr = addr3, addr4
     streamer = spawn(
-        run_device, zmq_context.socket(zmq.PULL), zmq_context.socket(zmq.PUSH),
+        run_device, ctx.socket(zmq.PULL), ctx.socket(zmq.PUSH),
         streamer_in_addr, streamer_out_addr)
-    sub = zmq_context.socket(zmq.SUB)
+    sub = ctx.socket(zmq.SUB)
     sub.set(zmq.SUBSCRIBE, '')
     forwarder = spawn(
-        run_device, sub, zmq_context.socket(zmq.PUB),
+        run_device, sub, ctx.socket(zmq.PUB),
         forwarder_in_addr, forwarder_out_addr)
     streamer.join(0)
     forwarder.join(0)
     yield autowork.will(streamer.kill, block=True)
     yield autowork.will(forwarder.kill, block=True)
     # connect to the devices
-    worker1_pull = zmq_context.socket(zmq.PULL)
+    worker1_pull = ctx.socket(zmq.PULL)
     worker1_pull.connect(streamer_out_addr)
-    worker1_sub = zmq_context.socket(zmq.SUB)
+    worker1_sub = ctx.socket(zmq.SUB)
     worker1_sub.connect(forwarder_out_addr)
     worker1_sub.set(zmq.SUBSCRIBE, prefix)
-    worker2_pull = zmq_context.socket(zmq.PULL)
+    worker2_pull = ctx.socket(zmq.PULL)
     worker2_pull.connect(streamer_out_addr)
-    worker2_sub = zmq_context.socket(zmq.SUB)
+    worker2_sub = ctx.socket(zmq.SUB)
     worker2_sub.connect(forwarder_out_addr)
     worker2_sub.set(zmq.SUBSCRIBE, prefix)
-    tunnel_push = zmq_context.socket(zmq.PUSH)
+    tunnel_push = ctx.socket(zmq.PUSH)
     tunnel_push.connect(streamer_in_addr)
-    tunnel_pub = zmq_context.socket(zmq.PUB)
+    tunnel_pub = ctx.socket(zmq.PUB)
     tunnel_pub.connect(forwarder_in_addr)
     sync_pubsub(tunnel_pub, [worker1_sub, worker2_sub], prefix)
     # make and start workers
@@ -294,18 +294,18 @@ def test_forwarder(customer1, customer2, prefix, addr1, addr2):
     # run devices
     forwarder_in_addr, forwarder_out_addr = addr1, addr2
     forwarder = spawn(
-        run_device, zmq_context.socket(zmq.XSUB), zmq_context.socket(zmq.XPUB),
+        run_device, ctx.socket(zmq.XSUB), ctx.socket(zmq.XPUB),
         forwarder_in_addr, forwarder_out_addr)
     forwarder.join(0)
     yield autowork.will(forwarder.kill, block=True)
     # connect to the devices
-    worker1_sub = zmq_context.socket(zmq.SUB)
+    worker1_sub = ctx.socket(zmq.SUB)
     worker1_sub.connect(forwarder_out_addr)
     worker1_sub.set(zmq.SUBSCRIBE, prefix)
-    worker2_sub = zmq_context.socket(zmq.SUB)
+    worker2_sub = ctx.socket(zmq.SUB)
     worker2_sub.connect(forwarder_out_addr)
     worker2_sub.set(zmq.SUBSCRIBE, prefix)
-    tunnel_pub = zmq_context.socket(zmq.PUB)
+    tunnel_pub = ctx.socket(zmq.PUB)
     tunnel_pub.connect(forwarder_in_addr)
     sync_pubsub(tunnel_pub, [worker1_sub, worker2_sub], prefix)
     # make and start workers
@@ -320,3 +320,24 @@ def test_forwarder(customer1, customer2, prefix, addr1, addr2):
          customer2.link(None, tunnel_pub, prefix) as tunnel2:
         assert tunnel1(fanout=True).simple() == ['ok', 'ok']
         assert tunnel2(fanout=True).simple() == ['ok', 'ok']
+
+
+@autowork
+def test_simple(addr1, addr2):
+    # sockets
+    worker_sock = ctx.socket(zmq.PULL)
+    worker_sock.bind(addr1)
+    customer_sock = ctx.socket(zmq.PULL)
+    customer_sock.bind(addr2)
+    tunnel_sock = ctx.socket(zmq.PUSH)
+    tunnel_sock.connect(addr1)
+    yield autowork.will(worker_sock.close)
+    yield autowork.will(customer_sock.close)
+    yield autowork.will(tunnel_sock.close)
+    # run
+    worker = zeronimo.Worker(app, [worker_sock])
+    worker.start()
+    yield autowork.will_stop(worker)
+    customer = zeronimo.Customer(addr2, customer_sock)
+    with customer.link(tunnel_sock) as tunnel:
+        assert tunnel.simple() == 'ok'

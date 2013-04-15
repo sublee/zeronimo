@@ -19,25 +19,22 @@ Example
 Server-side
 -----------
 
-.. sourcecode:: python
+::
 
-   import socket
+   import zmq.green as zmq
    import zeronimo
 
    class Application(object):
 
-       def whoami(self):
-           # hostname
-           yield socket.gethostname()
-           # public address
-           sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-           sock.connect(('8.8.8.8', 53))
-           yield sock.getsockname()[0]
+       def rycbar123(self):
+           for word in 'run, you clever boy; and remember.'.split():
+               yield word
 
-   worker = zeronimo.Worker(Application())
-   worker.bind('ipc://worker')
-   worker.bind_fanout('ipc://worker_fanout')
-   worker.subscribe('')
+   ctx = zmq.Context()
+   worker_sock = ctx.socket(zmq.PULL)
+   worker_sock.bind('ipc://worker')
+
+   worker = zeronimo.Worker(Application(), [worker_sock])
    worker.run()
 
 Client-side
@@ -45,15 +42,19 @@ Client-side
 
 .. sourcecode:: python
 
+   import zmq.green as zmq
    import zeronimo
 
-   customer = zeronimo.Customer()
-   customer.bind('ipc://customer')
+   ctx = zmq.Context()
+   customer_sock = ctx.socket(zmq.PULL)
+   customer_sock.bind('ipc://customer')
+   tunnel_sock = ctx.socket(zmq.PUSH)
+   tunnel_sock.connect('ipc://worker')
 
-   with customer.link(['ipc://worker'], ['ipc://worker_fanout']) as tunnel:
-       for result in tunnel(fanout=True).whoami():
-           print 'hostname=', result.next()
-           print 'public address=', result.next()
+   customer = zeronimo.Customer('ipc://customer', customer_sock)
+   with customer.link(tunnel_sock) as tunnel:
+       for line in tunnel.rycbar123():
+           print line
 
 """
 from __future__ import with_statement

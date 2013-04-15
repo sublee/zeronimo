@@ -15,7 +15,7 @@ import zmq.green as zmq
 import zeronimo
 
 
-zmq_context = zmq.Context()
+ctx = zmq.Context()
 #gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
@@ -160,10 +160,10 @@ app = Application()
 def make_worker(protocol, prefix=''):
     """Creates a :class:`zeronimo.Worker` by the given protocol."""
     make_addr, make_fanout_addr = protocols[protocol]
-    pull_sock = zmq_context.socket(zmq.PULL)
+    pull_sock = ctx.socket(zmq.PULL)
     pull_addr = make_addr()
     pull_sock.bind(pull_addr)
-    sub_sock = zmq_context.socket(zmq.SUB)
+    sub_sock = ctx.socket(zmq.SUB)
     sub_addr = make_fanout_addr()
     sub_sock.bind(sub_addr)
     sub_sock.set(zmq.SUBSCRIBE, prefix)
@@ -176,7 +176,7 @@ def make_customer(protocol):
     """Creates a :class:`zeronimo.Customer` by the given protocol."""
     make_addr, __ = protocols[protocol]
     addr = make_addr()
-    sock = zmq_context.socket(zmq.PULL)
+    sock = ctx.socket(zmq.PULL)
     sock.bind(addr)
     customer = zeronimo.Customer(addr, sock)
     return customer
@@ -195,8 +195,8 @@ def make_tunnel_sockets(workers):
     prefixes = set(worker.info[-1] for worker in workers)
     assert len(prefixes) == 1
     prefix = next(iter(prefixes))
-    push = zmq_context.socket(zmq.PUSH)
-    pub = zmq_context.socket(zmq.PUB)
+    push = ctx.socket(zmq.PUSH)
+    pub = ctx.socket(zmq.PUB)
     subs = []
     pgm_addrs = set()
     for worker in workers:
