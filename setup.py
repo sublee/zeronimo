@@ -92,7 +92,7 @@ setup(
     description='A distributed RPC solution based on ZeroMQ',
     long_description=__doc__,
     platforms='any',
-    packages=['zeronimo'],
+    py_module=['zeronimo'],
     classifiers=['Development Status :: 1 - Planning',
                  'Intended Audience :: Developers',
                  'License :: OSI Approved :: BSD License',
