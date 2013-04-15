@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 import os
 import random
+import re
 import socket
 import sys
+import types
 
 from decorator import decorator
 import gevent
@@ -21,42 +23,69 @@ ps = psutil.Process(os.getpid())
 
 
 def pytest_addoption(parser):
+    parser.addoption('--all', action='store_true', help='use all protocols.')
     parser.addoption('--no-inproc', action='store_true',
-                     help='don\'t use inproc sockets.')
+                     help='don\'t use inproc protocol.')
     parser.addoption('--no-ipc', action='store_true',
-                     help='don\'t use ipc sockets.')
-    parser.addoption('--tcp', action='store_true', help='use tcp sockets.')
-    parser.addoption('--pgm', action='store_true', help='use pgm sockets.')
-    parser.addoption('--epgm', action='store_true', help='use epgm sockets.')
+                     help='don\'t use ipc protocol.')
+    parser.addoption('--tcp', action='store_true', help='use tcp protocol.')
+    parser.addoption('--pgm', action='store_true', help='use pgm protocol.')
+    parser.addoption('--epgm', action='store_true', help='use epgm protocol.')
+
+
+def get_testing_protocols(metafunc):
+    if metafunc.config.option.all:
+        testing_protocols = ['inproc', 'ipc', 'tcp', 'pgm', 'epgm']
+    else:
+        testing_protocols = []
+        if not metafunc.config.option.no_inproc:
+            testing_protocols.append('inproc')
+        if not metafunc.config.option.no_ipc:
+            testing_protocols.append('ipc')
+        if metafunc.config.option.tcp:
+            testing_protocols.append('tcp')
+        if metafunc.config.option.pgm:
+            testing_protocols.append('pgm')
+        if metafunc.config.option.epgm:
+            testing_protocols.append('epgm')
+    return testing_protocols
 
 
 def pytest_generate_tests(metafunc):
-    """Generates worker and customer fixtures."""
+    """Generates worker and customer fixtures.
+
+    - worker_info[n] -- a tuple containing the :class:`Worker` object, the
+                        address PULL socket bound, and the address SUB socket
+                        bound.
+    - customer_info[n] -- a tuple containing the :class:`Customer` object, and
+                          the address PULL socket bound.
+    """
     argnames = []
     argvalues = []
     ids = []
-    prefix = zeronimo.alloc_id()
-    testing_protocols = []
-    if not metafunc.config.option.no_inproc:
-        testing_protocols.append('inproc')
-    if not metafunc.config.option.no_ipc:
-        testing_protocols.append('ipc')
-    if metafunc.config.option.tcp:
-        testing_protocols.append('tcp')
-    if metafunc.config.option.pgm:
-        testing_protocols.append('pgm')
-    if metafunc.config.option.epgm:
-        testing_protocols.append('epgm')
-    for protocol in testing_protocols:
+    for protocol in get_testing_protocols(metafunc):
         curargvalues = []
+        tunnel_socks = []
         for param in metafunc.fixturenames:
-            if param.startswith('worker') or param.startswith('customer'):
-                if param.startswith('worker'):
-                    curargvalues.append(make_worker(protocol, prefix))
-                else:
-                    curargvalues.append(make_customer(protocol))
-                if not ids:
-                    argnames.append(param)
+            if param.startswith('worker'):
+                # defer making a worker in autowork
+                curargvalues.append(('__make_worker', protocol))
+            elif param.startswith('customer'):
+                # defer making a customer in autowork
+                curargvalues.append(('__make_customer', protocol))
+            elif re.match('tunnel_sock(et)?s', param):
+                # defer making tunnel sockets which connect to the workers
+                curargvalues.append(('__make_tunnel_sockets',))
+            elif param == 'prefix':
+                curargvalues.append(('__prefix',))
+            elif param.startswith('addr'):
+                curargvalues.append(('__addr', protocol))
+            elif param.startswith('fanout_addr'):
+                curargvalues.append(('__fanout_addr', protocol))
+            else:
+                continue
+            if not ids:
+                argnames.append(param)
         argvalues.append(curargvalues)
         ids.append(protocol)
     if argnames:
@@ -98,13 +127,8 @@ def epgm():
     return 'epgm://127.0.0.1;224.1.1.1:5555'
 
 
-protocols = {
-    'inproc': (inproc, inproc, zmq_context),
-    'ipc': (ipc, ipc, None),
-    'tcp': (tcp, tcp, None),
-    'pgm': (tcp, pgm, None),
-    'epgm': (tcp, epgm, None),
-}
+protocols = {'inproc': (inproc, inproc), 'ipc': (ipc, ipc), 'tcp': (tcp, tcp),
+             'pgm': (tcp, pgm), 'epgm': (tcp, epgm)}
 
 
 class Application(object):
@@ -173,18 +197,60 @@ class Application(object):
 app = Application()
 
 
-def make_worker(protocol, prefix):
+def make_worker(protocol, prefix=''):
     """Creates a :class:`zeronimo.Worker` by the given protocol."""
-    make_addr, make_fanout_addr, context = protocols[protocol]
-    return zeronimo.Worker(
-        app, bind=make_addr(), bind_fanout=make_fanout_addr(),
-        prefix=prefix, context=context)
+    make_addr, make_fanout_addr = protocols[protocol]
+    pull_sock = zmq_context.socket(zmq.PULL)
+    pull_addr = make_addr()
+    pull_sock.bind(pull_addr)
+    sub_sock = zmq_context.socket(zmq.SUB)
+    sub_addr = make_fanout_addr()
+    sub_sock.bind(sub_addr)
+    sub_sock.set(zmq.SUBSCRIBE, prefix)
+    worker_info = (pull_addr, sub_addr, prefix)
+    worker = zeronimo.Worker(app, [pull_sock, sub_sock], worker_info)
+    return worker
 
 
 def make_customer(protocol):
     """Creates a :class:`zeronimo.Customer` by the given protocol."""
-    make_addr, __, context = protocols[protocol]
-    return zeronimo.Customer(bind=make_addr(), context=context)
+    make_addr, __ = protocols[protocol]
+    addr = make_addr()
+    sock = zmq_context.socket(zmq.PULL)
+    sock.bind(addr)
+    customer = zeronimo.Customer(addr, sock)
+    return customer
+
+
+def make_tunnel_sockets(workers):
+    prefix = None
+    for worker in workers:
+        if prefix is None:
+            prefix = worker.info[-1]
+        elif prefix != worker.info[-1]:
+            raise ValueError('All workers must have same subscription')
+        if worker.is_running():
+            raise RuntimeError('make_tunnel_sockets must be called before '
+                               'workers run')
+    prefixes = set(worker.info[-1] for worker in workers)
+    assert len(prefixes) == 1
+    prefix = next(iter(prefixes))
+    push = zmq_context.socket(zmq.PUSH)
+    pub = zmq_context.socket(zmq.PUB)
+    subs = []
+    pgm_addrs = set()
+    for worker in workers:
+        subs.extend(sock for sock in worker.sockets
+                    if sock.socket_type == zmq.SUB)
+        push_addr, pub_addr, prefix = worker.info
+        push.connect(push_addr)
+        if re.match('e?pgm://', pub_addr):
+            if pub_addr in pgm_addrs:
+                continue
+            pgm_addrs.add(pub_addr)
+        pub.connect(pub_addr)
+    sync_pubsub(pub, subs, prefix)
+    return (push, pub)
 
 
 @decorator
@@ -194,33 +260,84 @@ def green(f, *args, **kwargs):
 
 
 @decorator
-def autowork(f, *args, **kwargs):
+def autowork(f, *args):
     """Workers which are yielded by the function will start and stop
     automatically.
     """
-    f = green(f)
+    args = list(args)
+    # process '__make_worker', '__make_customer', '__prefix'
+    prefix = zeronimo.alloc_id()
     workers = []
-    greenlets = []
-    while True:
-        try:
-            for objs in f(*args, **kwargs):
-                types = list(set(map(type, objs)))
-                assert len(types) == 1
-                t = types[0]
-                if issubclass(t, zeronimo.Worker):
-                    workers.extend(objs)
-                    start_workers(objs)
-                elif issubclass(t, gevent.Greenlet):
-                    greenlets.extend(objs)
-        except zmq.ZMQError as error:
-            if error.errno == 98:
+    for x, arg in enumerate(args):
+        if not isinstance(arg, tuple):
+            continue
+        action = arg[0]
+        if action == '__make_worker':
+            worker = make_worker(arg[1], prefix)
+            workers.append(worker)
+            args[x] = worker
+        elif action == '__make_customer':
+            args[x] = make_customer(arg[1])
+        elif action == '__prefix':
+            args[x] = prefix
+        elif action == '__addr':
+            args[x] = protocols[arg[1]][0]()
+        elif action == '__fanout_addr':
+            args[x] = protocols[arg[1]][1]()
+    wills = []
+    def reserve(will):
+        assert next(will) is None
+        wills.append(will)
+    if workers:
+        # process '__make_tunnel_sockets'
+        for x, arg in enumerate(args):
+            if not isinstance(arg, tuple):
                 continue
-            raise
-        finally:
-            stop_workers(workers)
-            gevent.killall(greenlets)
-        break
-    assert not ps.get_connections()
+            action = arg[0]
+            if action == '__make_tunnel_sockets':
+                tunnel_socks = make_tunnel_sockets(workers)
+                args[x] = tunnel_socks
+                [reserve(autowork.will(sock.close)) for sock in tunnel_socks]
+    # Worker.start should be called after make_tunnel_sockets
+    for arg in args:
+        if isinstance(arg, zeronimo.Runner):
+            arg.start()
+            reserve(autowork.will_stop(arg))
+    # run the function
+    f = green(f)
+    try:
+        rv = f(*args)
+        if isinstance(rv, types.GeneratorType):
+            for will in rv:
+                reserve(will)
+    finally:
+        for will in wills:
+            with pytest.raises(StopIteration):
+                next(will)
+        assert not ps.get_connections()
+
+
+def will(function, *args, **kwargs):
+    yield
+    function(*args, **kwargs)
+
+
+def will_stop(runner):
+    yield
+    try:
+        runner.stop()
+    except RuntimeError:
+        pass
+    if isinstance(runner, zeronimo.Worker):
+        for sock in runner.sockets:
+            sock.close()
+    elif isinstance(runner, zeronimo.Customer):
+        runner.socket.close()
+    assert not runner.is_running()
+
+
+autowork.will = will
+autowork.will_stop = will_stop
 
 
 def busywait(func, equal=True):
@@ -231,6 +348,7 @@ def busywait(func, equal=True):
 
 def test_worker(worker):
     """Checks that the address is connectable."""
+    assert 0
     assert hasattr(worker.obj, '_znm_test')
     try:
         customer = zeronimo.Customer(tcp(), context=worker.context)
@@ -306,14 +424,33 @@ def sync_pubsub(pub_sock, sub_socks, prefix=''):
        >>> sync_pubsub(pub_sock, [sub_sock1, sub_sock2], prefix='test')
     """
     poller = zmq.Poller()
-    sub_socks = set(sub_socks)
     for sub_sock in sub_socks:
         poller.register(sub_sock, zmq.POLLIN)
-    synced = set()
-    while synced != sub_socks:
+    to_sync = sub_socks[:]
+    while to_sync:
         pub_sock.send(prefix + ':sync')
         events = dict(poller.poll(timeout=100))
         for sub_sock in sub_socks:
             if sub_sock in events:
                 assert sub_sock.recv().endswith(':sync')
-                synced.add(sub_sock)
+                try:
+                    to_sync.remove(sub_sock)
+                except ValueError:
+                    pass
+    while True:
+        events = poller.poll(timeout=100)
+        if not events:
+            break
+        for sub_sock, event in events:
+            msg = sub_sock.recv()
+            print msg
+            #.endswith(':sync')
+
+
+def sync_fanout(tunnel, workers):
+    tunnel_sock = tunnel._znm_sockets[zmq.PUB]
+    worker_socks = []
+    for worker in workers:
+        worker_socks.extend([sock for sock in worker.sockets
+                             if sock.socket_type == zmq.SUB])
+    sync_pubsub(tunnel_sock, worker_socks, tunnel._znm_prefix)
