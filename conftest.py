@@ -442,9 +442,7 @@ def sync_pubsub(pub_sock, sub_socks, prefix=''):
         if not events:
             break
         for sub_sock, event in events:
-            msg = sub_sock.recv()
-            print msg
-            #.endswith(':sync')
+            assert sub_sock.recv().endswith(':sync')
 
 
 def sync_fanout(tunnel, workers):

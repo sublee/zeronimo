@@ -7,13 +7,10 @@ from gevent import joinall, spawn, Timeout
 import pytest
 import zmq.green as zmq
 
-from conftest import (
-    sync_pubsub, make_tunnel_sockets,
-    app, autowork, green, inproc, ipc, tcp, pgm, epgm, run_device, zmq_context)
+from conftest import app, autowork, green, run_device, sync_pubsub, zmq_context
 import zeronimo
 
 
-'''
 def test_running():
     class MockRunner(zeronimo.Runner):
         def run(self, stopper):
@@ -240,16 +237,13 @@ def test_offbeat(customer, worker1, worker2, tunnel_socks, prefix):
         assert len(tasks) == 2
         generous = tunnel(fanout=True, as_task=True, finding_timeout=0.05)
         assert len(generous.simple()) == 2
-'''
 
 
-'''
 @autowork
-def test_device(customer1, customer2, prefix,
-                addr1, addr2, fanout_addr1, fanout_addr2):
+def test_device(customer1, customer2, prefix, addr1, addr2, addr3, addr4):
     # run devices
     streamer_in_addr, streamer_out_addr = addr1, addr2
-    forwarder_in_addr, forwarder_out_addr = fanout_addr1, fanout_addr2
+    forwarder_in_addr, forwarder_out_addr = addr3, addr4
     streamer = spawn(
         run_device, zmq_context.socket(zmq.PULL), zmq_context.socket(zmq.PUSH),
         streamer_in_addr, streamer_out_addr)
@@ -258,8 +252,8 @@ def test_device(customer1, customer2, prefix,
     forwarder = spawn(
         run_device, sub, zmq_context.socket(zmq.PUB),
         forwarder_in_addr, forwarder_out_addr)
-    streamer.join(0.01)
-    forwarder.join(0.01)
+    streamer.join(0)
+    forwarder.join(0)
     yield autowork.will(streamer.kill, block=True)
     yield autowork.will(forwarder.kill, block=True)
     # connect to the devices
@@ -296,30 +290,33 @@ def test_device(customer1, customer2, prefix,
 
 @pytest.mark.skipif('zmq.zmq_version_info() < (3, 2)')
 @autowork
-def test_forwarder(customer1, customer2):
-    streamer_in_addr, streamer_out_addr = tcp(), tcp()
-    forwarder_in_addr, forwarder_out_addr = tcp(), tcp()
-    print streamer_in_addr, streamer_out_addr
-    print forwarder_in_addr, forwarder_out_addr
-    streamer = spawn(
-        run_device, zmq_context.socket(zmq.PULL), zmq_context.socket(zmq.PUSH),
-        streamer_in_addr, streamer_out_addr)
+def test_forwarder(customer1, customer2, prefix, addr1, addr2):
+    # run devices
+    forwarder_in_addr, forwarder_out_addr = addr1, addr2
     forwarder = spawn(
         run_device, zmq_context.socket(zmq.XSUB), zmq_context.socket(zmq.XPUB),
         forwarder_in_addr, forwarder_out_addr)
-    # test zeronimo
-    worker1 = zeronimo.Worker(app, context=zmq_context)
-    worker2 = zeronimo.Worker(app, context=zmq_context)
-    worker1.connect(streamer_out_addr)
-    worker2.connect(streamer_out_addr)
-    worker1.connect_fanout(forwarder_out_addr)
-    worker2.connect_fanout(forwarder_out_addr)
-    yield [worker1, worker2]
-    yield [streamer, forwarder]
-    with customer1.link([streamer_in_addr], [forwarder_in_addr]) as tunnel1, \
-         customer2.link([streamer_in_addr], [forwarder_in_addr]) as tunnel2:
-        assert tunnel1.simple() == 'ok'
-        assert tunnel2.simple() == 'ok'
+    forwarder.join(0)
+    yield autowork.will(forwarder.kill, block=True)
+    # connect to the devices
+    worker1_sub = zmq_context.socket(zmq.SUB)
+    worker1_sub.connect(forwarder_out_addr)
+    worker1_sub.set(zmq.SUBSCRIBE, prefix)
+    worker2_sub = zmq_context.socket(zmq.SUB)
+    worker2_sub.connect(forwarder_out_addr)
+    worker2_sub.set(zmq.SUBSCRIBE, prefix)
+    tunnel_pub = zmq_context.socket(zmq.PUB)
+    tunnel_pub.connect(forwarder_in_addr)
+    sync_pubsub(tunnel_pub, [worker1_sub, worker2_sub], prefix)
+    # make and start workers
+    worker1 = zeronimo.Worker(app, [worker1_sub])
+    worker1.start()
+    yield autowork.will_stop(worker1)
+    worker2 = zeronimo.Worker(app, [worker2_sub])
+    worker2.start()
+    yield autowork.will_stop(worker2)
+    # zeronimo!
+    with customer1.link(None, tunnel_pub, prefix) as tunnel1, \
+         customer2.link(None, tunnel_pub, prefix) as tunnel2:
         assert tunnel1(fanout=True).simple() == ['ok', 'ok']
         assert tunnel2(fanout=True).simple() == ['ok', 'ok']
-'''
