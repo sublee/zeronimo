@@ -26,7 +26,6 @@ import zmq.green as zmq
 
 __version__ = '0.0.dev'
 __all__ = []
-from termcolor import colored
 
 
 # utility functions
