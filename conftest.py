@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from collections import namedtuple
 import os
 import random
 import re
@@ -49,47 +50,6 @@ def get_testing_protocols(metafunc):
         if metafunc.config.option.epgm:
             testing_protocols.append('epgm')
     return testing_protocols
-
-
-def pytest_generate_tests(metafunc):
-    """Generates worker and customer fixtures.
-
-    - worker_info[n] -- a tuple containing the :class:`Worker` object, the
-                        address PULL socket bound, and the address SUB socket
-                        bound.
-    - customer_info[n] -- a tuple containing the :class:`Customer` object, and
-                          the address PULL socket bound.
-    """
-    argnames = []
-    argvalues = []
-    ids = []
-    for protocol in get_testing_protocols(metafunc):
-        curargvalues = []
-        tunnel_socks = []
-        for param in metafunc.fixturenames:
-            if param.startswith('worker'):
-                # defer making a worker in autowork
-                curargvalues.append(('__make_worker', protocol))
-            elif param.startswith('customer'):
-                # defer making a customer in autowork
-                curargvalues.append(('__make_customer', protocol))
-            elif re.match('tunnel_sock(et)?s', param):
-                # defer making tunnel sockets which connect to the workers
-                curargvalues.append(('__make_tunnel_sockets',))
-            elif param == 'prefix':
-                curargvalues.append(('__prefix',))
-            elif param.startswith('addr'):
-                curargvalues.append(('__addr', protocol))
-            elif param.startswith('fanout_addr'):
-                curargvalues.append(('__fanout_addr', protocol))
-            else:
-                continue
-            if not ids:
-                argnames.append(param)
-        argvalues.append(curargvalues)
-        ids.append(protocol)
-    if argnames:
-        metafunc.parametrize(argnames, argvalues, ids=ids)
 
 
 def inproc():
@@ -253,152 +213,6 @@ def make_tunnel_sockets(workers):
     return (push, pub)
 
 
-@decorator
-def green(f, *args, **kwargs):
-    """Runs the function within a greenlet."""
-    return gevent.spawn(f, *args, **kwargs).get()
-
-
-@decorator
-def autowork(f, *args):
-    """Workers which are yielded by the function will start and stop
-    automatically.
-    """
-    args = list(args)
-    # process '__make_worker', '__make_customer', '__prefix'
-    prefix = zeronimo.alloc_id()
-    workers = []
-    for x, arg in enumerate(args):
-        if not isinstance(arg, tuple):
-            continue
-        action = arg[0]
-        if action == '__make_worker':
-            worker = make_worker(arg[1], prefix)
-            workers.append(worker)
-            args[x] = worker
-        elif action == '__make_customer':
-            args[x] = make_customer(arg[1])
-        elif action == '__prefix':
-            args[x] = prefix
-        elif action == '__addr':
-            args[x] = protocols[arg[1]][0]()
-        elif action == '__fanout_addr':
-            args[x] = protocols[arg[1]][1]()
-    wills = []
-    def reserve(will):
-        assert next(will) is None
-        wills.append(will)
-    if workers:
-        # process '__make_tunnel_sockets'
-        for x, arg in enumerate(args):
-            if not isinstance(arg, tuple):
-                continue
-            action = arg[0]
-            if action == '__make_tunnel_sockets':
-                tunnel_socks = make_tunnel_sockets(workers)
-                args[x] = tunnel_socks
-                [reserve(autowork.will(sock.close)) for sock in tunnel_socks]
-    # Worker.start should be called after make_tunnel_sockets
-    for arg in args:
-        if isinstance(arg, zeronimo.Runner):
-            arg.start()
-            reserve(autowork.will_stop(arg))
-    # run the function
-    f = green(f)
-    try:
-        rv = f(*args)
-        if isinstance(rv, types.GeneratorType):
-            for will in rv:
-                reserve(will)
-    finally:
-        for will in wills:
-            with pytest.raises(StopIteration):
-                next(will)
-        assert not ps.get_connections()
-
-
-def will(function, *args, **kwargs):
-    yield
-    function(*args, **kwargs)
-
-
-def will_stop(runner):
-    yield
-    try:
-        runner.stop()
-    except RuntimeError:
-        pass
-    if isinstance(runner, zeronimo.Worker):
-        for sock in runner.sockets:
-            sock.close()
-    elif isinstance(runner, zeronimo.Customer):
-        runner.socket.close()
-    assert not runner.is_running()
-
-
-autowork.will = will
-autowork.will_stop = will_stop
-
-
-def busywait(func, equal=True):
-    """Sleeps while the ``while_`` function returns ``True``."""
-    while func() == equal:
-        gevent.sleep(0.001)
-
-
-def test_worker(worker):
-    """Checks that the address is connectable."""
-    assert 0
-    assert hasattr(worker.obj, '_znm_test')
-    try:
-        customer = zeronimo.Customer(tcp(), context=worker.context)
-        tunnel = customer.link_workers([worker])
-        tunnel.__enter__()
-    except zmq.ZMQError, e:
-        if e.errno == zmq.ECONNREFUSED:
-            return False
-        else:
-            raise
-    else:
-        try:
-            tunnel._znm_test()
-        except zeronimo.ZeronimoError:
-            return False
-        try:
-            tunnel(fanout=True)._znm_test()
-        except zeronimo.ZeronimoError:
-            return False
-        return True
-    finally:
-        tunnel.__exit__(*sys.exc_info())
-        customer.running_lock.wait()
-
-
-def wait_workers(workers, for_binding):
-    waits = []
-    for worker in workers:
-        worker.obj._znm_test = lambda: True
-        check = lambda: test_worker(worker)
-        waits.append(gevent.spawn(busywait, check, equal=not for_binding))
-    gevent.joinall(waits)
-
-
-def start_workers(workers):
-    for worker in workers:
-        gevent.spawn(worker.run)
-    #wait_workers(workers, for_binding=True)
-    gevent.sleep(0.5)
-
-
-def stop_workers(workers):
-    for worker in workers:
-        try:
-            worker.stop()
-        except RuntimeError:
-            pass
-    #wait_workers(workers, for_binding=False)
-
-
 def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
     try:
         if in_addr is not None:
@@ -452,3 +266,134 @@ def sync_fanout(tunnel, workers):
         worker_socks.extend([sock for sock in worker.sockets
                              if sock.socket_type == zmq.SUB])
     sync_pubsub(tunnel_sock, worker_socks, tunnel._znm_prefix)
+
+
+@decorator
+def green(f, *args, **kwargs):
+    """Runs the function within a greenlet."""
+    return gevent.spawn(f, *args, **kwargs).get()
+
+
+deferred_worker = namedtuple('deferred_worker', ['protocol'])
+deferred_customer = namedtuple('deferred_cutomer', ['protocol'])
+deferred_prefix = namedtuple('deferred_prefix', [])
+deferred_addr = namedtuple('deferred_addr', ['protocol'])
+deferred_fanout_addr = namedtuple('deferred_fanout_addr', ['protocol'])
+deferred_tunnel_sockets = namedtuple('deferred_tunnel_sockets', [])
+
+
+@decorator
+def autowork(f, *args):
+    """Workers which are yielded by the function will start and stop
+    automatically.
+    """
+    args = list(args)
+    # process deferred worker, customer, prefix, addr, fanout_addr
+    prefix = zeronimo.alloc_id()
+    workers = []
+    for x, arg in enumerate(args):
+        if isinstance(arg, deferred_worker):
+            worker = make_worker(arg.protocol, prefix)
+            workers.append(worker)
+            args[x] = worker
+        elif isinstance(arg, deferred_customer):
+            args[x] = make_customer(arg.protocol)
+        elif isinstance(arg, deferred_prefix):
+            args[x] = prefix
+        elif isinstance(arg, deferred_addr):
+            args[x] = protocols[arg.protocol][0]()
+        elif isinstance(arg, deferred_fanout_addr):
+            args[x] = protocols[arg.protocol][1]()
+    wills = []
+    def reserve(will):
+        assert next(will) is None
+        wills.append(will)
+    # process deferred tunnel sockets because it should be called before the
+    # workers start
+    if workers:
+        for x, arg in enumerate(args):
+            if isinstance(arg, deferred_tunnel_sockets):
+                tunnel_socks = make_tunnel_sockets(workers)
+                args[x] = tunnel_socks
+                [reserve(autowork.will(sock.close)) for sock in tunnel_socks]
+    # start all runners
+    for arg in args:
+        if isinstance(arg, zeronimo.Runner):
+            arg.start()
+            reserve(autowork.will_stop(arg))
+    # run the function
+    f = green(f)
+    try:
+        rv = f(*args)
+        if isinstance(rv, types.GeneratorType):
+            for will in rv:
+                reserve(will)
+    finally:
+        for will in wills:
+            with pytest.raises(StopIteration):
+                next(will)
+        assert not ps.get_connections()
+
+
+def will(function, *args, **kwargs):
+    yield
+    function(*args, **kwargs)
+
+
+def will_stop(runner):
+    yield
+    try:
+        runner.stop()
+    except RuntimeError:
+        pass
+    if isinstance(runner, zeronimo.Worker):
+        for sock in runner.sockets:
+            sock.close()
+    elif isinstance(runner, zeronimo.Customer):
+        runner.socket.close()
+    assert not runner.is_running()
+
+
+autowork.will = will
+autowork.will_stop = will_stop
+
+
+def pytest_generate_tests(metafunc):
+    """Generates worker and customer fixtures.
+
+    - worker_info[n] -- a tuple containing the :class:`Worker` object, the
+                        address PULL socket bound, and the address SUB socket
+                        bound.
+    - customer_info[n] -- a tuple containing the :class:`Customer` object, and
+                          the address PULL socket bound.
+    """
+    argnames = []
+    argvalues = []
+    ids = []
+    for protocol in get_testing_protocols(metafunc):
+        curargvalues = []
+        tunnel_socks = []
+        for param in metafunc.fixturenames:
+            if param.startswith('worker'):
+                # defer making a worker in autowork
+                curargvalues.append(deferred_worker(protocol))
+            elif param.startswith('customer'):
+                # defer making a customer in autowork
+                curargvalues.append(deferred_customer(protocol))
+            elif re.match('tunnel_sock(et)?s', param):
+                # defer making tunnel sockets which connect to the workers
+                curargvalues.append(deferred_tunnel_sockets())
+            elif param == 'prefix':
+                curargvalues.append(deferred_prefix())
+            elif param.startswith('addr'):
+                curargvalues.append(deferred_addr(protocol))
+            elif param.startswith('fanout_addr'):
+                curargvalues.append(deferred_fanout_addr(protocol))
+            else:
+                continue
+            if not ids:
+                argnames.append(param)
+        argvalues.append(curargvalues)
+        ids.append(protocol)
+    if argnames:
+        metafunc.parametrize(argnames, argvalues, ids=ids)
