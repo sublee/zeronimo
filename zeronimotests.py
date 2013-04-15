@@ -288,7 +288,7 @@ def test_device(customer1, customer2, prefix, addr1, addr2, addr3, addr4):
         assert tunnel2(fanout=True).simple() == ['ok', 'ok']
 
 
-@pytest.mark.skipif('zmq.zmq_version_info() < (3, 2)')
+@pytest.mark.xfail('zmq.zmq_version_info() < (3, 2)')
 @autowork
 def test_forwarder(customer1, customer2, prefix, addr1, addr2):
     # run devices
