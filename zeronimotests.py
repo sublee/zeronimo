@@ -361,3 +361,16 @@ def test_2nd_start(customer, worker):
     assert not customer.is_running()
     customer.start()
     assert customer.is_running()
+
+
+@autowork
+def test_concurrent_tunnels(customer, worker, tunnel_socks, prefix):
+    done = []
+    def test_tunnel():
+        with customer.link(*tunnel_socks, prefix=prefix) as tunnel:
+            assert tunnel.simple() == 'ok'
+            assert tunnel(fanout=True).simple() == ['ok']
+        done.append(True)
+    times = 5
+    joinall([spawn(test_tunnel) for x in xrange(times)])
+    assert len(done) == times

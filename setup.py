@@ -40,7 +40,7 @@ Server-side
 Client-side
 -----------
 
-.. sourcecode:: python
+::
 
    import zmq.green as zmq
    import zeronimo
