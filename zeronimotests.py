@@ -59,8 +59,8 @@ def test_basic_zeronimo():
     customer.start()
     yield autowork.will_stop(worker)
     yield autowork.will_stop(customer)
-    yield autowork.will(tunnel_push.close)
-    yield autowork.will(tunnel_pub.close)
+    yield autowork.will_close(tunnel_push)
+    yield autowork.will_close(tunnel_pub)
     # zeronimo!
     tunnel = customer.link(tunnel_push, tunnel_pub, 'test')
     assert tunnel.simple() == 'ok'
@@ -337,9 +337,9 @@ def test_simple(addr1, addr2):
     customer_sock.bind(addr2)
     tunnel_sock = ctx.socket(zmq.PUSH)
     tunnel_sock.connect(addr1)
-    yield autowork.will(worker_sock.close)
-    yield autowork.will(customer_sock.close)
-    yield autowork.will(tunnel_sock.close)
+    yield autowork.will_close(worker_sock)
+    yield autowork.will_close(customer_sock)
+    yield autowork.will_close(tunnel_sock)
     # run
     worker = zeronimo.Worker(app, [worker_sock])
     worker.start()

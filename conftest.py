@@ -350,14 +350,24 @@ def will_stop(runner):
         pass
     if isinstance(runner, zeronimo.Worker):
         for sock in runner.sockets:
-            sock.close()
+            sock_closing = autowork.will_close(sock)
+            next(sock_closing)
+            with pytest.raises(StopIteration):
+                next(sock_closing)
     elif isinstance(runner, zeronimo.Customer):
         runner.socket.close()
     assert not runner.is_running()
 
 
+def will_close(sock):
+    yield
+    sock.close()
+    gevent.sleep(0.000001)
+
+
 autowork.will = will
 autowork.will_stop = will_stop
+autowork.will_close = will_close
 
 
 def pytest_generate_tests(metafunc):

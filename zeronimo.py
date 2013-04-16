@@ -187,10 +187,7 @@ class Runner(object):
             raise RuntimeError('Running in foreground')
 
     def wait(self, timeout=None):
-        try:
-            return self._async_running.wait(timeout)
-        except AttributeError:
-            self._running_lock.wait(timeout)
+        self._running_lock.wait(timeout)
 
 
 class Worker(Runner):
