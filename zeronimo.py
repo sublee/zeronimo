@@ -219,6 +219,17 @@ class Runner(object):
 
 
 class Worker(Runner):
+    """The worker object runs an RPC service of an object through ZMQ sockets.
+    The ZMQ sockets should be PULL or SUB socket type. The PULL sockets receive
+    Round-robin invocations; the SUB sockets receive Publish-subscribe
+    (fan-out) invocations.
+
+    :param obj: the object to be shared by an RPC service.
+    :param sockets: the ZMQ sockets, PULL or SUB socket type.
+    :param info: (optional) the worker will send this value to customers at
+                 accepting an invocation. it might be identity of the worker to
+                 let the customer's know what worker accepted.
+    """
 
     obj = None
     sockets = None
@@ -237,12 +248,19 @@ class Worker(Runner):
         self.accept_all()
 
     def accept_all(self):
+        """After calling this, the worker will accept all invocations. This
+        will be called at the initialization of the worker.
+        """
         self.accepting = True
 
     def reject_all(self):
+        """After calling this, the worker will reject all invocations. If the
+        worker is busy, it will be helpful.
+        """
         self.accepting = False
 
     def run(self, stopper):
+        """Runs the worker. While running, an RPC service is online."""
         poller = zmq.Poller()
         for sock in self.sockets:
             poller.register(sock, zmq.POLLIN)
@@ -251,9 +269,14 @@ class Worker(Runner):
             if events is True:  # has been stopped
                 break
             for sock, event in events:
-                spawn(self.run_task, zmq_recv(sock), sock.context)
+                invocation = Invocation(*zmq_recv(sock))
+                spawn(self.run_task, invocation, sock.context)
 
     def run_task(self, invocation, context):
+        """Invokes a function and send results to the customer. It supports
+        all of function actions. A function could return, yield, raise any
+        picklable objects.
+        """
         task_id = alloc_id()
         function_name = invocation.function_name
         args = invocation.args
@@ -289,7 +312,7 @@ class Worker(Runner):
 
     def send_reply(self, sock, method, data, task_id, run_id):
         reply = Reply(method, data, task_id, run_id)
-        return zmq_send(sock, reply)
+        return zmq_send(sock, tuple(reply))
 
     def __repr__(self):
         keywords = ['info'] if self.info is not None else []
@@ -375,11 +398,9 @@ class Customer(Runner):
         poller = zmq.Poller()
         poller.register(self.socket, zmq.POLLIN)
         while not stopper.is_set():
-            events = poll_or_stopped(poller, stopper)
-            if events is True:  # has been stopped
+            if poll_or_stopped(poller, stopper) is True:  # has been stopped
                 break
-            reply = zmq_recv(events[0][0])
-            assert isinstance(reply, Reply)
+            reply = Reply(*zmq_recv(self.socket))
             self.dispatch_reply(reply)
 
     def dispatch_reply(self, reply):
@@ -519,7 +540,7 @@ class Invoker(object):
                 cls_name(self.tunnel), 'PUB' if fanout else 'PUSH'))
         invocation = Invocation(
             self.function_name, self.args, self.kwargs, self.id, None)
-        zmq_send(sock, invocation, prefix=self.prefix)
+        zmq_send(sock, tuple(invocation), prefix=self.prefix)
 
     def _invoke(self, as_task=False, finding_timeout=0.01):
         try:
@@ -535,7 +556,7 @@ class Invoker(object):
         try:
             with Timeout(finding_timeout, False):
                 while True:
-                    zmq_send(sock, invocation, prefix=self.prefix)
+                    zmq_send(sock, tuple(invocation), prefix=self.prefix)
                     reply = None
                     reply = self.queue.get()
                     if reply.method == REJECT:
@@ -572,7 +593,7 @@ class Invoker(object):
         self.customer.register_invoker(self)
         replies = []
         rejected = 0
-        zmq_send(sock, invocation, prefix=self.prefix)
+        zmq_send(sock, tuple(invocation), prefix=self.prefix)
         with Timeout(finding_timeout, False):
             while True:
                 reply = self.queue.get()
