@@ -34,7 +34,7 @@ Server-side
    worker_sock = ctx.socket(zmq.PULL)
    worker_sock.bind('ipc://worker')
 
-   worker = zeronimo.Worker(Application(), [worker_sock])
+   worker = zeronimo.Worker(Application(), worker_sock)
    worker.run()
 
 Client-side

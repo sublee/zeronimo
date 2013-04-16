@@ -351,13 +351,16 @@ def will_stop(runner):
     except RuntimeError:
         pass
     if isinstance(runner, zeronimo.Worker):
-        for sock in runner.sockets:
-            sock_closing = autowork.will_close(sock)
-            next(sock_closing)
-            with pytest.raises(StopIteration):
-                next(sock_closing)
+        sockets = runner.sockets
     elif isinstance(runner, zeronimo.Customer):
-        runner.socket.close()
+        sockets = [runner.socket]
+    else:
+        sockets = []
+    for sock in sockets:
+        sock_closing = autowork.will_close(sock)
+        next(sock_closing)
+        with pytest.raises(StopIteration):
+            next(sock_closing)
     assert not runner.is_running()
 
 
