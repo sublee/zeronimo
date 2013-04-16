@@ -317,7 +317,7 @@ def autowork(f, *args):
             if isinstance(arg, deferred_tunnel_sockets):
                 tunnel_socks = make_tunnel_sockets(workers)
                 args[x] = tunnel_socks
-                [reserve(autowork.will(sock.close)) for sock in tunnel_socks]
+                [reserve(autowork.will_close(sock)) for sock in tunnel_socks]
     # start all runners
     for arg in args:
         if isinstance(arg, zeronimo.Runner):
@@ -334,7 +334,9 @@ def autowork(f, *args):
         for will in wills:
             with pytest.raises(StopIteration):
                 next(will)
-        assert not ps.get_connections()
+        conns = [conn for conn in ps.get_connections()
+                 if conn.status in ('LISTEN', 'ESTABLISHED')]
+        assert not conns
 
 
 def will(function, *args, **kwargs):
