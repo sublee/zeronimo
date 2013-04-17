@@ -1,198 +1,105 @@
+# -*- coding: utf-8 -*-
 import functools
-from itertools import chain
 import os
-import textwrap
-import uuid
 
-from decorator import decorator
 import gevent
-from gevent import joinall, killall, spawn, Timeout
+from gevent import joinall, spawn, Timeout
 import pytest
 import zmq.green as zmq
 
+from conftest import app, autowork, ctx, green, run_device, sync_pubsub
 import zeronimo
 
 
-zmq_context = zmq.Context()
-gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
-
-
-@decorator
-def green(f, *args, **kwargs):
-    return spawn(f, *args, **kwargs).get()
-
-
-def busywait(while_, until=False, timeout=None):
-    """Sleeps while the ``while_`` function returns ``True``."""
-    until = bool(until)
-    with gevent.Timeout(timeout):
-        while until != bool(while_()):
-            gevent.sleep(0.001)
-
-
-def is_connectable(addr, socket_type, context=zmq_context):
-    """Checks that the address is connectable."""
-    try:
-        context.socket(socket_type).connect(addr)
-    except zmq.ZMQError:
-        return False
-    else:
-        return True
-
-
-def inproc():
-    return 'inproc://{0}'.format(zeronimo.uuid_str())
-
-
-def start_workers(workers):
-    waits = []
-    for worker in workers:
-        spawn(worker.run)
-        for addr in chain(worker.addrs, worker.fanout_addrs):
-            until = lambda: is_connectable(addr, zmq.PUSH)
-            waits.append(spawn(busywait, until, until=True, timeout=1))
-    joinall(waits)
-
-
-class Application(object):
-
-    @zeronimo.remote
-    def simple(self):
-        return 'ok'
-
-    @zeronimo.remote
-    def add(self, a, b):
-        """Koreans' mathematical addition."""
-        if a == b:
-            if 1 <= a < 6:
-                return 'cutie'
-            elif a == 6:
-                return 'xoxoxoxoxoxo cutie'
-        return a + b
-
-    @zeronimo.remote
-    def jabberwocky(self):
-        yield 'Twas brillig, and the slithy toves'
-        yield 'Did gyre and gimble in the wabe;'
-        yield 'All mimsy were the borogoves,'
-        yield 'And the mome raths outgrabe.'
-
-    @zeronimo.remote
-    def xrange(self):
-        return xrange(5)
-
-    @zeronimo.remote
-    def dict_view(self):
-        return dict(zip(xrange(5), xrange(5))).viewkeys()
-
-    @zeronimo.remote
-    def dont_yield(self):
-        if False:
-            yield 'it should\'t be sent'
-            assert 0
-
-    @zeronimo.remote
-    def zero_div(self):
-        0/0      /0/0 /0/0    /0/0   /0/0/0/0   /0/0
-        0/0  /0  /0/0 /0/0    /0/0 /0/0    /0/0     /0
-        0/0/0/0/0/0/0 /0/0/0/0/0/0 /0/0    /0/0   /0
-        0/0/0/0/0/0/0 /0/0    /0/0 /0/0    /0/0
-        0/0  /0  /0/0 /0/0    /0/0   /0/0/0/0     /0
-
-    @zeronimo.remote
-    def launch_rocket(self):
-        yield 3
-        yield 2
-        yield 1
-        raise RuntimeError('Launch!')
-
-    @zeronimo.remote
-    def rycbar123(self):
-        for word in 'run, you clever boy; and remember.'.split():
-            yield word
-
-    @zeronimo.remote
-    def sleep(self):
-        gevent.sleep(0.1)
-        return 'slept'
-
-
-# fixtures
-
-
-for x in xrange(4):
-    exec(textwrap.dedent('''
-    @pytest.fixture
-    def worker{x}():
-        app = Application()
-        return zeronimo.Worker(app, inproc(), inproc(), '',
-                               context=zmq_context)
-    @pytest.fixture
-    def customer{x}():
-        return zeronimo.Customer(inproc(), context=zmq_context)
-    ''').format(x=x if x else ''))
-
-
-# tests
-
-
-def test_remote_function_collection():
-    class App(object):
-        @zeronimo.remote
-        def foo(self):
-            return 'foo-%s' % id(self)
-        @zeronimo.remote
-        def bar(self):
-            return 'bar-%s' % id(self)
-        @zeronimo.remote
-        def baz(self):
-            yield 'baz-%s-begin' % id(self)
-            yield 'baz-%s-end' % id(self)
-    # collect from an object
-    app = App()
-    functions = dict(zeronimo.collect_remote_functions(app))
-    assert set(functions.keys()) == set(['foo', 'bar', 'baz'])
-    # collect from a class
-    functions = dict(zeronimo.collect_remote_functions(App))
-    assert set(functions.keys()) == set(['foo', 'bar', 'baz'])
-
-
 def test_running():
-    class Runner(zeronimo.Base):
-        def reset_sockets(self):
-            pass
-        def run(self):
-            assert self.running
-    runner = Runner()
-    assert not runner.running
-    runner.run()
-    assert not runner.running
+    class MockRunner(zeronimo.Runner):
+        def __init__(self, sleep=None):
+            self.sleep = sleep
+        def run(self, stopper):
+            assert not stopper.is_set()
+            assert self.is_running()
+            if self.sleep is not None:
+                gevent.sleep(self.sleep)
+    mock_runner = MockRunner()
+    assert not mock_runner.is_running()
+    mock_runner.run()
+    assert not mock_runner.is_running()
+    sleeping_mock_runner = MockRunner(0.01)
+    assert not sleeping_mock_runner.is_running()
+    sleeping_mock_runner.start()
+    assert sleeping_mock_runner.is_running()
+    sleeping_mock_runner.join()
+    assert not sleeping_mock_runner.is_running()
+    spawn(sleeping_mock_runner.run)
+    with pytest.raises(RuntimeError):
+        sleeping_mock_runner.join()
+    sleeping_mock_runner.wait()
 
 
-@green
-def test_tunnel(customer, worker):
-    start_workers([worker])
+@autowork
+def test_basic_zeronimo():
+    # prepare sockets
+    prefix = 'test'
+    worker_pull = ctx.socket(zmq.PULL)
+    worker_sub = ctx.socket(zmq.SUB)
+    customer_pull = ctx.socket(zmq.PULL)
+    tunnel_push = ctx.socket(zmq.PUSH)
+    tunnel_pub = ctx.socket(zmq.PUB)
+    worker_pull.bind('inproc://worker')
+    worker_sub.bind('inproc://worker-fanout')
+    customer_pull.bind('inproc://customer')
+    tunnel_push.connect('inproc://worker')
+    tunnel_pub.connect('inproc://worker-fanout')
+    worker_sub.set(zmq.SUBSCRIBE, prefix)
+    sync_pubsub(tunnel_pub, [worker_sub], prefix)
+    # prepare runners
+    worker = zeronimo.Worker(app, [worker_pull, worker_sub])
+    customer = zeronimo.Customer('inproc://customer', customer_pull)
+    worker.start()
+    customer.start()
+    yield autowork.will_stop(worker)
+    yield autowork.will_stop(customer)
+    yield autowork.will_close(tunnel_push)
+    yield autowork.will_close(tunnel_pub)
+    # zeronimo!
+    tunnel = customer.link([tunnel_push, tunnel_pub], 'test')
+    assert tunnel.simple() == 'ok'
+    assert tunnel(fanout=True).simple() == ['ok']
+
+
+@autowork
+def test_fixtures(customer, worker, tunnel_socks, prefix):
+    tunnel = customer.link(tunnel_socks, prefix)
+    assert tunnel.simple() == 'ok'
+    assert tunnel(fanout=True).simple() == ['ok']
+
+
+@autowork
+def test_tunnel_context(customer, worker, tunnel_socks, prefix):
+    assert not customer.tunnels
+    with customer.link(tunnel_socks, prefix) as tunnel:
+        assert tunnel.simple() == 'ok'
+        assert tunnel(fanout=True).simple() == ['ok']
+
+
+@autowork
+def test_tunnel(customer, worker, tunnel_socks, prefix):
     assert len(customer.tunnels) == 0
-    with customer.link([worker]) as tunnel:
+    with customer.link(tunnel_socks, prefix) as tunnel:
         assert len(customer.tunnels) == 1
     assert len(customer.tunnels) == 0
-    '''
-    with customer.link([worker]) as tunnel1, \
-         customer.link([worker]) as tunnel2:
-        assert not customer.running
+    with customer.link(tunnel_socks, prefix) as tunnel1, \
+         customer.link(tunnel_socks, prefix) as tunnel2:
+        assert customer.is_running()
         assert len(customer.tunnels) == 2
-        tunnel1.add(0, 0)
-        assert customer.running
-    '''
+    # should clean up
+    assert not customer.is_running()
     assert len(customer.tunnels) == 0
-    busywait(lambda: customer.running, timeout=1)
-    assert not customer.running
 
 
-@green
-def test_return(customer, worker):
-    start_workers([worker])
-    with customer.link([worker]) as tunnel:
+@autowork
+def test_return(customer, worker, tunnel_socks, prefix):
+    with customer.link(tunnel_socks, prefix) as tunnel:
         assert tunnel.add(1, 1) == 'cutie'
         assert tunnel.add(2, 2) == 'cutie'
         assert tunnel.add(3, 3) == 'cutie'
@@ -202,10 +109,9 @@ def test_return(customer, worker):
         assert tunnel.add(42, 12) == 54
 
 
-@green
-def test_yield(customer, worker):
-    start_workers([worker])
-    with customer.link([worker]) as tunnel:
+@autowork
+def test_yield(customer, worker, tunnel_socks, prefix):
+    with customer.link(tunnel_socks, prefix) as tunnel:
         assert len(list(tunnel.jabberwocky())) == 4
         assert list(tunnel.xrange()) == [0, 1, 2, 3, 4]
         view = tunnel.dict_view()
@@ -219,10 +125,9 @@ def test_yield(customer, worker):
         assert list(tunnel.dont_yield()) == []
 
 
-@green
-def test_raise(customer, worker):
-    start_workers([worker])
-    with customer.link([worker]) as tunnel:
+@autowork
+def test_raise(customer, worker, tunnel_socks, prefix):
+    with customer.link(tunnel_socks, prefix) as tunnel:
         with pytest.raises(ZeroDivisionError):
             tunnel.zero_div()
         rocket_launching = tunnel.launch_rocket()
@@ -233,43 +138,40 @@ def test_raise(customer, worker):
             rocket_launching.next()
 
 
-@green
-def test_2to1(customer1, customer2, worker):
-    start_workers([worker])
+@autowork
+def test_2to1(customer1, customer2, worker, tunnel_socks, prefix):
     def test(tunnel):
         assert tunnel.add(1, 1) == 'cutie'
         assert len(list(tunnel.jabberwocky())) == 4
         with pytest.raises(ZeroDivisionError):
             tunnel.zero_div()
-    with customer1.link([worker]) as tunnel1, \
-         customer2.link([worker]) as tunnel2:
+    with customer1.link(tunnel_socks, prefix) as tunnel1, \
+         customer2.link(tunnel_socks, prefix) as tunnel2:
         joinall([spawn(test, tunnel1), spawn(test, tunnel2)])
 
 
-@green
-def test_1to2(customer, worker1, worker2):
-    start_workers([worker1, worker2])
-    with customer.link([worker1, worker2], as_task=True) as tunnel:
+@autowork
+def test_1to2(customer, worker1, worker2, tunnel_socks, prefix):
+    with customer.link(tunnel_socks, prefix, as_task=True) as tunnel:
         task1 = tunnel.add(1, 1)
         task2 = tunnel.add(2, 2)
         assert task1() == 'cutie'
         assert task2() == 'cutie'
-        assert task1.worker_addr != task2.worker_addr
+        assert task1.worker_info != task2.worker_info
 
 
-@green
-def test_fanout(customer, worker1, worker2):
-    start_workers([worker1, worker2])
-    with customer.link([worker1, worker2]) as tunnel:
+@autowork
+def test_fanout(customer, worker1, worker2, tunnel_socks, prefix):
+    with customer.link(tunnel_socks, prefix) as tunnel:
         assert list(tunnel.rycbar123()) == \
                'run, you clever boy; and remember.'.split()
         for rycbar123 in tunnel(fanout=True).rycbar123():
-            assert rycbar123.next() == 'run,'
-            assert rycbar123.next() == 'you'
-            assert rycbar123.next() == 'clever'
-            assert rycbar123.next() == 'boy;'
-            assert rycbar123.next() == 'and'
-            assert rycbar123.next() == 'remember.'
+            assert next(rycbar123) == 'run,'
+            assert next(rycbar123) == 'you'
+            assert next(rycbar123) == 'clever'
+            assert next(rycbar123) == 'boy;'
+            assert next(rycbar123) == 'and'
+            assert next(rycbar123) == 'remember.'
         with pytest.raises(ZeroDivisionError):
             tunnel(fanout=True).zero_div()
         failures = tunnel(fanout=True, as_task=True).zero_div()
@@ -280,29 +182,221 @@ def test_fanout(customer, worker1, worker2):
             failures[1]()
 
 
-@green
-def test_slow(customer, worker):
-    start_workers([worker])
-    with customer.link([worker]) as tunnel:
+@autowork
+def test_slow(customer, worker, tunnel_socks, prefix):
+    with customer.link(tunnel_socks, prefix) as tunnel:
         with pytest.raises(Timeout):
             with Timeout(0.1):
                 tunnel.sleep()
         assert tunnel.sleep() == 'slept'
 
 
-@green
-def test_link_to_addrs(customer, worker):
-    start_workers([worker])
-    with customer.link([(worker.addrs, worker.fanout_addrs)]) as tunnel:
-        assert tunnel.add(1, 1) == 'cutie'
-
-
-@green
-def _test_reject(customer, worker1, worker2):
-    start_workers([worker1, worker2])
-    with customer.link([worker1, worker2]) as tunnel:
-        assert len(list(tunnel(fanout=True).simple())) == 2
+@autowork
+def test_reject(customer, worker1, worker2, tunnel_socks, prefix):
+    with customer.link(tunnel_socks, prefix) as tunnel:
+        assert len(tunnel(fanout=True).simple()) == 2
         worker2.reject_all()
-        assert len(list(tunnel(fanout=True).simple())) == 1
+        assert tunnel(as_task=True).simple().worker_info == worker1.info
+        assert tunnel(as_task=True).simple().worker_info == worker1.info
+        assert len(tunnel(fanout=True).simple()) == 1
+        worker1.reject_all()
+        with pytest.raises(zeronimo.WorkerNotFound):
+            assert tunnel(fanout=True).simple()
+        worker1.accept_all()
         worker2.accept_all()
-        assert len(list(tunnel(fanout=True).simple())) == 2
+        assert len(tunnel(fanout=True).simple()) == 2
+
+
+@autowork
+def test_subscription(customer, worker1, worker2, tunnel_socks, prefix):
+    sub1 = [sock for sock in worker1.sockets if sock.socket_type == zmq.SUB][0]
+    sub2 = [sock for sock in worker2.sockets if sock.socket_type == zmq.SUB][0]
+    with customer.link(tunnel_socks, prefix) as tunnel:
+        assert len(tunnel(fanout=True).simple()) == 2
+        sub1.set(zmq.UNSUBSCRIBE, prefix)
+        assert len(tunnel(fanout=True).simple()) == 1
+        sub2.set(zmq.UNSUBSCRIBE, prefix)
+        with pytest.raises(zeronimo.WorkerNotFound):
+            tunnel(fanout=True).simple()
+        sub1.set(zmq.SUBSCRIBE, prefix)
+        assert len(tunnel(fanout=True).simple()) == 1
+        sub2.set(zmq.SUBSCRIBE, prefix)
+        assert len(tunnel(fanout=True).simple()) == 2
+
+
+@autowork
+def test_offbeat(customer, worker1, worker2, tunnel_socks, prefix):
+    def run_task(self, invocation, context):
+        self._slow = invocation.function_name != '_znm_test'
+        return zeronimo.Worker.run_task(self, invocation, context)
+    def send_reply(self, sock, method, *args, **kwargs):
+        if self._slow and method == zeronimo.ACCEPT:
+            gevent.sleep(0.02)
+        return zeronimo.Worker.send_reply(self, sock, method, *args, **kwargs)
+    # worker2 sleeps 0.2 seconds before accepting
+    worker2.run_task = functools.partial(run_task, worker2)
+    worker2.send_reply = functools.partial(send_reply, worker2)
+    with customer.link(tunnel_socks, prefix) as tunnel:
+        tasks = tunnel(fanout=True, as_task=True).sleep_range(0.01, 5)
+        assert len(tasks) == 1
+        list(tasks[0]())
+        assert len(tasks) == 2
+        generous = tunnel(fanout=True, as_task=True, finding_timeout=0.05)
+        assert len(generous.simple()) == 2
+
+
+@autowork
+def test_device(customer1, customer2, prefix, addr1, addr2, addr3, addr4):
+    # run devices
+    streamer_in_addr, streamer_out_addr = addr1, addr2
+    forwarder_in_addr, forwarder_out_addr = addr3, addr4
+    streamer = spawn(
+        run_device, ctx.socket(zmq.PULL), ctx.socket(zmq.PUSH),
+        streamer_in_addr, streamer_out_addr)
+    sub = ctx.socket(zmq.SUB)
+    sub.set(zmq.SUBSCRIBE, '')
+    forwarder = spawn(
+        run_device, sub, ctx.socket(zmq.PUB),
+        forwarder_in_addr, forwarder_out_addr)
+    streamer.join(0)
+    forwarder.join(0)
+    yield autowork.will(streamer.kill, block=True)
+    yield autowork.will(forwarder.kill, block=True)
+    # connect to the devices
+    worker_pull1 = ctx.socket(zmq.PULL)
+    worker_pull2 = ctx.socket(zmq.PULL)
+    worker_sub1 = ctx.socket(zmq.SUB)
+    worker_sub2 = ctx.socket(zmq.SUB)
+    tunnel_push = ctx.socket(zmq.PUSH)
+    tunnel_pub = ctx.socket(zmq.PUB)
+    worker_pull1.connect(streamer_out_addr)
+    worker_pull2.connect(streamer_out_addr)
+    worker_sub1.connect(forwarder_out_addr)
+    worker_sub2.connect(forwarder_out_addr)
+    tunnel_push.connect(streamer_in_addr)
+    tunnel_pub.connect(forwarder_in_addr)
+    worker_sub1.set(zmq.SUBSCRIBE, prefix)
+    worker_sub2.set(zmq.SUBSCRIBE, prefix)
+    sync_pubsub(tunnel_pub, [worker_sub1, worker_sub2], prefix)
+    # make and start workers
+    worker1 = zeronimo.Worker(app, [worker_pull1, worker_sub1])
+    worker1.start()
+    yield autowork.will_stop(worker1)
+    worker2 = zeronimo.Worker(app, [worker_pull2, worker_sub2])
+    worker2.start()
+    yield autowork.will_stop(worker2)
+    # zeronimo!
+    with customer1.link([tunnel_push, tunnel_pub], prefix) as tunnel1, \
+         customer2.link([tunnel_push, tunnel_pub], prefix) as tunnel2:
+        assert tunnel1.simple() == 'ok'
+        assert tunnel2.simple() == 'ok'
+        assert tunnel1(fanout=True).simple() == ['ok', 'ok']
+        assert tunnel2(fanout=True).simple() == ['ok', 'ok']
+
+
+@pytest.mark.xfail('zmq.zmq_version_info() < (3, 2)')
+@autowork
+def test_forwarder(customer1, customer2, prefix, addr1, addr2):
+    # run devices
+    forwarder_in_addr, forwarder_out_addr = addr1, addr2
+    forwarder = spawn(
+        run_device, ctx.socket(zmq.XSUB), ctx.socket(zmq.XPUB),
+        forwarder_in_addr, forwarder_out_addr)
+    forwarder.join(0)
+    yield autowork.will(forwarder.kill, block=True)
+    # connect to the devices
+    worker_sub1 = ctx.socket(zmq.SUB)
+    worker_sub2 = ctx.socket(zmq.SUB)
+    tunnel_pub = ctx.socket(zmq.PUB)
+    worker_sub1.connect(forwarder_out_addr)
+    worker_sub2.connect(forwarder_out_addr)
+    tunnel_pub.connect(forwarder_in_addr)
+    worker_sub1.set(zmq.SUBSCRIBE, prefix)
+    worker_sub2.set(zmq.SUBSCRIBE, prefix)
+    sync_pubsub(tunnel_pub, [worker_sub1, worker_sub2], prefix)
+    # make and start workers
+    worker1 = zeronimo.Worker(app, [worker_sub1])
+    worker1.start()
+    yield autowork.will_stop(worker1)
+    worker2 = zeronimo.Worker(app, [worker_sub2])
+    worker2.start()
+    yield autowork.will_stop(worker2)
+    # zeronimo!
+    with customer1.link([tunnel_pub], prefix) as tunnel1, \
+         customer2.link([tunnel_pub], prefix) as tunnel2:
+        assert tunnel1(fanout=True).simple() == ['ok', 'ok']
+        assert tunnel2(fanout=True).simple() == ['ok', 'ok']
+
+
+@autowork
+def test_simple(addr1, addr2):
+    # sockets
+    worker_sock = ctx.socket(zmq.PULL)
+    worker_sock.bind(addr1)
+    customer_sock = ctx.socket(zmq.PULL)
+    customer_sock.bind(addr2)
+    tunnel_sock = ctx.socket(zmq.PUSH)
+    tunnel_sock.connect(addr1)
+    yield autowork.will_close(worker_sock)
+    yield autowork.will_close(customer_sock)
+    yield autowork.will_close(tunnel_sock)
+    # run
+    worker = zeronimo.Worker(app, worker_sock)
+    worker.start()
+    yield autowork.will_stop(worker)
+    customer = zeronimo.Customer(addr2, customer_sock)
+    with customer.link(tunnel_sock) as tunnel:
+        assert tunnel.simple() == 'ok'
+        with pytest.raises(ValueError):
+            tunnel(fanout=True).simple()
+
+
+@autowork
+def test_2nd_start(customer, worker):
+    assert worker.is_running()
+    worker.stop()
+    assert not worker.is_running()
+    worker.start()
+    assert worker.is_running()
+    assert customer.is_running()
+    customer.stop()
+    assert not customer.is_running()
+    customer.start()
+    assert customer.is_running()
+
+
+@autowork
+def test_concurrent_tunnels(customer, worker, tunnel_socks, prefix):
+    done = []
+    def test_tunnel():
+        with customer.link(tunnel_socks, prefix) as tunnel:
+            assert tunnel.simple() == 'ok'
+            assert tunnel(fanout=True).simple() == ['ok']
+        done.append(True)
+    times = 5
+    joinall([spawn(test_tunnel) for x in xrange(times)])
+    assert len(done) == times
+
+
+@autowork
+def test_proxied_customer(worker, tunnel_socks, prefix, addr1, addr2):
+    streamer = spawn(
+        run_device, ctx.socket(zmq.PULL), ctx.socket(zmq.PUSH), addr1, addr2)
+    streamer.join(0)
+    yield autowork.will(streamer.kill, block=True)
+    customer_sock = ctx.socket(zmq.PULL)
+    customer_sock.connect(addr2)
+    yield autowork.will_close(customer_sock)
+    customer = zeronimo.Customer(addr1, customer_sock)
+    with customer.link(tunnel_socks, prefix) as tunnel:
+        assert tunnel.simple() == 'ok'
+
+
+def test_socket_type_error():
+    with pytest.raises(ValueError):
+        zeronimo.Customer('x', ctx.socket(zmq.PAIR))
+    with pytest.raises(ValueError):
+        zeronimo.Worker(None, [ctx.socket(zmq.PAIR)])
+    customer = zeronimo.Customer('x', ctx.socket(zmq.PULL))
+    with pytest.raises(ValueError):
+        tunnel = customer.link([ctx.socket(zmq.PULL)])
