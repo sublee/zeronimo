@@ -102,12 +102,12 @@ def test_tunnel(customer, worker, tunnel_socks, prefix):
 @autowork
 def test_return(customer, worker, tunnel_socks, prefix):
     with customer.link(tunnel_socks, prefix) as tunnel:
-        assert tunnel.add(1, 1) == 'cutie'
-        assert tunnel.add(2, 2) == 'cutie'
-        assert tunnel.add(3, 3) == 'cutie'
-        assert tunnel.add(4, 4) == 'cutie'
-        assert tunnel.add(5, 5) == 'cutie'
-        assert tunnel.add(6, 6) == 'xoxoxoxoxoxo cutie'
+        assert tunnel.add(1, 1) == 2
+        assert tunnel.add(2, 2) == 4
+        assert tunnel.add(3, 3) == 6
+        assert tunnel.add(4, 4) == 8
+        assert tunnel.add(5, 5) == 10
+        assert tunnel.add(6, 6) == 12
         assert tunnel.add(42, 12) == 54
 
 
@@ -143,7 +143,7 @@ def test_raise(customer, worker, tunnel_socks, prefix):
 @autowork
 def test_2to1(customer1, customer2, worker, tunnel_socks, prefix):
     def test(tunnel):
-        assert tunnel.add(1, 1) == 'cutie'
+        assert tunnel.add(1, 1) == 2
         assert len(list(tunnel.jabberwocky())) == 4
         with pytest.raises(ZeroDivisionError):
             tunnel.zero_div()
@@ -157,8 +157,8 @@ def test_1to2(customer, worker1, worker2, tunnel_socks, prefix):
     with customer.link(tunnel_socks, prefix, as_task=True) as tunnel:
         task1 = tunnel.add(1, 1)
         task2 = tunnel.add(2, 2)
-        assert task1() == 'cutie'
-        assert task2() == 'cutie'
+        assert task1() == 2
+        assert task2() == 4
         assert task1.worker_info != task2.worker_info
 
 
@@ -415,6 +415,18 @@ def test_finding_timeout(customer, worker, tunnel_socks, prefix):
             tunnel(fanout=True, finding_timeout=0.01).simple()
         assert tunnel(finding_timeout=0.1).simple() == 'ok'
         assert tunnel(fanout=True, finding_timeout=0.1).simple() == ['ok']
+
+
+@autowork
+def test_stopped_customer(customer, worker, tunnel_socks, prefix):
+    customer.stop()
+    assert not customer.is_running()
+    tunnel = zeronimo.Tunnel(customer, tunnel_socks, prefix)
+    with pytest.raises(RuntimeError):
+        tunnel.simple()
+    customer.start()
+    assert customer.is_running()
+    assert tunnel.simple() == 'ok'
 
 
 def test_socket_type_error():

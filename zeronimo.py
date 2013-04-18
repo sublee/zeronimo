@@ -536,6 +536,8 @@ class Tunnel(object):
         if self._znm_customer is None:
             invoker_id = None
         else:
+            if not self._znm_customer.is_running():
+                raise RuntimeError('Customer not running')
             invoker_id = alloc_id(self._znm_customer.invokers)
         invoker = Invoker(self, function_name, args, kwargs, invoker_id)
         return invoker.invoke(**self._znm_invoker_opts)

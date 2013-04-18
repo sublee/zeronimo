@@ -99,12 +99,7 @@ class Application(object):
         return 'ok'
 
     def add(self, a, b):
-        """Koreans' mathematical addition."""
-        if a == b:
-            if 1 <= a < 6:
-                return 'cutie'
-            elif a == 6:
-                return 'xoxoxoxoxoxo cutie'
+        """a + b."""
         return a + b
 
     def jabberwocky(self):
