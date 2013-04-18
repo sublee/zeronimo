@@ -178,12 +178,14 @@ class Runner(object):
         obj._running_lock = Semaphore()
         def run(self, starter=None):
             if self.is_running():
+                if starter is not None:
+                    starter.set()
+                    return
                 raise RuntimeError(
                     '{0} already running'.format(cls_name(self)))
             try:
                 with self._running_lock:
-                    if starter is not None:
-                        starter.set()
+                    starter and starter.set()
                     rv = obj._run(stopper)
             finally:
                 try:
@@ -215,8 +217,7 @@ class Runner(object):
 
     def start(self):
         if self.is_running():
-            raise RuntimeError(
-                '{0} already running'.format(cls_name(self)))
+            raise RuntimeError('{0} already running'.format(cls_name(self)))
         starter = Event()
         self._async_running = spawn(self.run, starter=starter)
         starter.wait()
@@ -359,10 +360,12 @@ class Customer(Runner):
         self._missings = {}
 
     def link(self, *args, **kwargs):
-        """Creates a tunnel which uses the customer as a linked customer. ::
+        """Creates a tunnel which uses the customer as a linked customer.
 
-        with customer.link([socket_which_connects_to_workers]) as tunnel:
-            print tunnel.hello()
+        ::
+
+           with customer.link([socket_which_connects_to_workers]) as tunnel:
+               print tunnel.hello()
         """
         return Tunnel(self, *args, **kwargs)
 

@@ -364,12 +364,16 @@ def test_concurrent_tunnels(customer, worker, tunnel_socks, prefix):
     done = []
     def test_tunnel():
         with customer.link(tunnel_socks, prefix) as tunnel:
+            assert customer.is_running()
             assert tunnel.simple() == 'ok'
             assert tunnel(fanout=True).simple() == ['ok']
         done.append(True)
+    customer.stop()  # stop customer's auto-running
+    assert not customer.is_running()
     times = 5
     joinall([spawn(test_tunnel) for x in xrange(times)])
     assert len(done) == times
+    assert not customer.is_running()
 
 
 @autowork
