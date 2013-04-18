@@ -3,15 +3,15 @@
 Zeronimo
 ~~~~~~~~
 
-A distributed RPC solution based on ZeroMQ_. Follow the features:
+A distributed RPC solution based on ØMQ_ and gevent_. Follow the features:
 
-- A worker can return a value to the remote customer.
-- A worker can yield a value to the remote customer.
-- A worker can raise an error to the remote customer.
+- A worker can return, yield, raise any picklable object to the remote
+  customer.
 - A customer can invoke to any remote worker in the worker cluster.
 - A customer can invoke to all remote workers in the worker cluster.
 
-.. _ZeroMQ: http://www.zeromq.org/
+.. _ØMQ: http://www.zeromq.org/
+.. _gevent: http://gevent.org/
 
 Example
 =======

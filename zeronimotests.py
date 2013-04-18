@@ -7,7 +7,9 @@ from gevent import joinall, spawn, Timeout
 import pytest
 import zmq.green as zmq
 
-from conftest import app, autowork, ctx, green, run_device, sync_pubsub
+from conftest import (
+    app, autowork, ctx, green, run_device, sync_pubsub,
+    patch_worker_to_be_slow)
 import zeronimo
 
 
@@ -226,16 +228,8 @@ def test_subscription(customer, worker1, worker2, tunnel_socks, prefix):
 
 @autowork
 def test_offbeat(customer, worker1, worker2, tunnel_socks, prefix):
-    def run_task(self, invocation, context):
-        self._slow = invocation.function_name != '_znm_test'
-        return zeronimo.Worker.run_task(self, invocation, context)
-    def send_reply(self, sock, method, *args, **kwargs):
-        if self._slow and method == zeronimo.ACCEPT:
-            gevent.sleep(0.02)
-        return zeronimo.Worker.send_reply(self, sock, method, *args, **kwargs)
     # worker2 sleeps 0.2 seconds before accepting
-    worker2.run_task = functools.partial(run_task, worker2)
-    worker2.send_reply = functools.partial(send_reply, worker2)
+    patch_worker_to_be_slow(worker2, delay=0.02)
     with customer.link(tunnel_socks, prefix) as tunnel:
         tasks = tunnel(fanout=True, as_task=True).sleep_range(0.01, 5)
         assert len(tasks) == 1
@@ -405,11 +399,18 @@ def test_tunnel_without_customer(worker, tunnel_socks, prefix):
 
 @autowork
 def test_finding_timeout(customer, worker, tunnel_socks, prefix):
+    patch_worker_to_be_slow(worker, delay=0.05)
     with customer.link(tunnel_socks, prefix) as tunnel:
         with pytest.raises(zeronimo.WorkerNotFound):
             tunnel(finding_timeout=0).simple()
         with pytest.raises(zeronimo.WorkerNotFound):
             tunnel(fanout=True, finding_timeout=0).simple()
+        with pytest.raises(zeronimo.WorkerNotFound):
+            tunnel(finding_timeout=0.01).simple()
+        with pytest.raises(zeronimo.WorkerNotFound):
+            tunnel(fanout=True, finding_timeout=0.01).simple()
+        assert tunnel(finding_timeout=0.1).simple() == 'ok'
+        assert tunnel(fanout=True, finding_timeout=0.1).simple() == ['ok']
 
 
 def test_socket_type_error():

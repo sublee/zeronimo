@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from collections import namedtuple
+import functools
 import os
 import random
 import re
@@ -211,6 +212,18 @@ def make_tunnel_sockets(workers):
         pub.connect(pub_addr)
     sync_pubsub(pub, subs, prefix)
     return (push, pub)
+
+
+def patch_worker_to_be_slow(worker, delay):
+    def run_task(self, invocation, context):
+        self._slow = invocation.function_name != '_znm_test'
+        return zeronimo.Worker.run_task(self, invocation, context)
+    def send_reply(self, sock, method, *args, **kwargs):
+        if self._slow and method == zeronimo.ACCEPT:
+            gevent.sleep(delay)
+        return zeronimo.Worker.send_reply(self, sock, method, *args, **kwargs)
+    worker.run_task = functools.partial(run_task, worker)
+    worker.send_reply = functools.partial(send_reply, worker)
 
 
 def run_device(in_sock, out_sock, in_addr=None, out_addr=None):

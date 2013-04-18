@@ -359,7 +359,11 @@ class Customer(Runner):
         self._missings = {}
 
     def link(self, *args, **kwargs):
-        """Creates a tunnel which uses the customer as a linked customer."""
+        """Creates a tunnel which uses the customer as a linked customer. ::
+
+        with customer.link([socket_which_connects_to_workers]) as tunnel:
+            print tunnel.hello()
+        """
         return Tunnel(self, *args, **kwargs)
 
     def register_tunnel(self, tunnel):
