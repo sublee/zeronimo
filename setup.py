@@ -34,7 +34,7 @@ Server-side
    worker_sock = ctx.socket(zmq.PULL)
    worker_sock.bind('ipc://worker')
 
-   worker = zeronimo.Worker(Application(), worker_sock)
+   worker = zeronimo.Worker(Application(), [worker_sock])
    worker.run()
 
 Client-side
@@ -51,8 +51,8 @@ Client-side
    tunnel_sock = ctx.socket(zmq.PUSH)
    tunnel_sock.connect('ipc://worker')
 
-   customer = zeronimo.Customer('ipc://customer', customer_sock)
-   with customer.link(tunnel_sock) as tunnel:
+   customer = zeronimo.Customer(customer_sock, 'ipc://customer')
+   with customer.link([tunnel_sock]) as tunnel:
        for line in tunnel.rycbar123():
            print line
 

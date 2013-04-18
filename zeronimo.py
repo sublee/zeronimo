@@ -25,14 +25,17 @@ import zmq.green as zmq
 
 
 __version__ = '0.0.dev'
-__all__ = []
+__all__ = ['Worker', 'Customer', 'Tunnel', 'Invoker', 'Task']
 
 
 # utility functions
 
 
-def alloc_id():
-    return str(uuid.uuid4())[:6]
+def alloc_id(exclusive=None):
+    id = None
+    while id is None or exclusive is not None and id in exclusive:
+        id = str(uuid.uuid4())[:6]
+    return id
 
 
 def poll_or_stopped(poller, stopper):
@@ -47,25 +50,19 @@ def should_yield(val):
     return (isinstance(val, Iterable) and not isinstance(val, serializable))
 
 
-def ensure_sequence(val, sequence=list):
-    if val is None:
-        return sequence()
-    elif isinstance(val, (Sequence, Set)):
-        return sequence(val)
-    else:
-        return sequence([val])
+def read_socket_type(socket_type):
+    return {
+        zmq.PAIR: 'PAIR', zmq.PUB: 'PUB', zmq.SUB: 'SUB', zmq.REQ: 'REQ',
+        zmq.REP: 'REP', zmq.DEALER: 'DEALER', zmq.ROUTER: 'ROUTER',
+        zmq.PULL: 'PULL', zmq.PUSH: 'PUSH', zmq.XPUB: 'XPUB', zmq.XSUB: 'XSUB'
+    }[socket_type]
 
 
 def get_socket(sockets, socket_type, name=None):
     try:
         return sockets[socket_type]
     except KeyError:
-        socket_type_name = {
-            zmq.PAIR: 'PAIR', zmq.PUB: 'PUB', zmq.SUB: 'SUB', zmq.REQ: 'REQ',
-            zmq.REP: 'REP', zmq.DEALER: 'DEALER', zmq.ROUTER: 'ROUTER',
-            zmq.PULL: 'PULL', zmq.PUSH: 'PUSH', zmq.XPUB: 'XPUB',
-            zmq.XSUB: 'XSUB'}[socket_type]
-        msg = 'no {0} socket'.format(socket_type_name)
+        msg = 'no {0} socket'.format(read_socket_type(socket_type))
         if name is None:
             msg = 'There\'s ' + msg
         else:
@@ -361,9 +358,9 @@ class Customer(Runner):
         self.invokers = {}
         self._missings = {}
 
-    def link(self, sockets, prefix='', **invoker_opts):
+    def link(self, *args, **kwargs):
         """Creates a tunnel which uses the customer as a linked customer."""
-        return Tunnel(sockets, prefix, self, **invoker_opts)
+        return Tunnel(self, *args, **kwargs)
 
     def register_tunnel(self, tunnel):
         """Registers a :class:`Tunnel` object.
@@ -438,8 +435,8 @@ class Customer(Runner):
             pass
 
     def run(self, stopper):
-        """Runs the customer. It receives replies from the socket and dispatch
-        them to put to the proper queue.
+        """Runs the customer. While running, it receives replies from the
+        socket and dispatch them to put to the proper queue.
         """
         poller = zmq.Poller()
         poller.register(self.socket, zmq.POLLIN)
@@ -486,25 +483,27 @@ class Tunnel(object):
     """A session between the customer and the distributed workers. It can send
     a request of RPC through sockets on the customer's context.
 
-    :param customer: the :class:`Customer` object.
-    :param addrs: the destination worker addresses bound at PULL sockets.
-    :param fanout_addrs: the destination worker addresses bound at SUB sockets.
-    :param prefix: the filter the workers are subscribing.
+    :param customer: the :class:`Customer` object or ``None``.
+    :param sockets: the sockets which connect to the workers. it should be
+                    one or none PUSH socket and one or none PUB socket.
+    :param prefix: the topic the workers are subscribing.
 
-    :param wait: if it's set to ``True``, the workers will reply. Otherwise,
-                 the workers just invoke a function without reply. Defaults to
-                 ``True``.
-    :param fanout: if it's set to ``True``, all workers will receive an
-                   invocation request. Defaults to ``False``.
-    :param as_task: actually, every remote function calls have own
-                    :class:`Task` object. if it's set to ``True``, remote
+    :param wait: (keyword-only) if it's set to ``True``, the workers will
+                 reply. Otherwise, the workers just invoke a function without
+                 reply. Defaults to ``True``.
+    :param fanout: (keyword-only) if it's set to ``True``, all workers will
+                   receive an invocation request. Defaults to ``False``.
+    :param as_task: (keyword-only) actually, every remote function calls have
+                    own :class:`Task` object. if it's set to ``True``, remote
                     functions return a :class:`Task` object instead of result
                     value. Defaults to ``False``.
-    :param timeout: the seconds to timeout for collecting workers which
-                    accepted a task. Defaults to 0.01 seconds.
+    :param finding_timeout: (keyword-only) the seconds to timeout for
+                            collecting workers which accepted the task.
+                            Defaults to 0.01 seconds.
     """
 
-    def __init__(self, sockets, prefix='', customer=None, **invoker_opts):
+    def __init__(self, customer, sockets, prefix='', **invoker_opts):
+        self._znm_customer = customer
         self._znm_sockets = {}
         for sock in sockets:
             if (sock.socket_type not in (zmq.PUSH, zmq.PUB) or
@@ -514,7 +513,6 @@ class Tunnel(object):
                     'none PUB socket')
             self._znm_sockets[sock.socket_type] = sock
         self._znm_prefix = prefix
-        self._znm_customer = customer
         self._znm_invoker_opts = invoker_opts
 
     def __getattr__(self, attr):
@@ -522,7 +520,11 @@ class Tunnel(object):
 
     def _znm_invoke(self, function_name, *args, **kwargs):
         """Invokes a remote function."""
-        invoker = Invoker(self, function_name, args, kwargs)
+        if self._znm_customer is None:
+            invoker_id = None
+        else:
+            invoker_id = alloc_id(self._znm_customer.invokers)
+        invoker = Invoker(self, function_name, args, kwargs, invoker_id)
         return invoker.invoke(**self._znm_invoker_opts)
 
     def __enter__(self):
@@ -545,8 +547,8 @@ class Tunnel(object):
         invoker_opts = {}
         invoker_opts.update(self._znm_invoker_opts)
         invoker_opts.update(replacing_invoker_opts)
-        tunnel = Tunnel([], self._znm_prefix, self._znm_customer,
-                        **invoker_opts)
+        prefix, customer = self._znm_prefix, self._znm_customer
+        tunnel = Tunnel(customer, [], prefix, **invoker_opts)
         tunnel._znm_sockets = self._znm_sockets
         return tunnel
 
@@ -560,13 +562,22 @@ class Tunnel(object):
 
 
 class Invoker(object):
+    """The invoker object sends an invocation message to the workers which the
+    tunnel connected.
 
-    def __init__(self, tunnel, function_name, args, kwargs, id=None):
-        self.tunnel = tunnel
+    :param tunnel: the tunnel object.
+    :param function_name: the function name.
+    :param args: the tuple of the arguments.
+    :param kwargs: the dictionary of the keyword arguments.
+    :param id: the identifier.
+    """
+
+    def __init__(self, tunnel, function_name, args, kwargs, id):
         self.function_name = function_name
         self.args = args
         self.kwargs = kwargs
-        self.id = alloc_id() if id is None else id
+        self.tunnel = tunnel
+        self.id = id
         self.queue = Queue()
 
     def __getattr__(self, attr):
@@ -672,8 +683,15 @@ class Invoker(object):
 
 
 class Task(object):
+    """The task object.
 
-    def __init__(self, customer, id=None, invoker_id=None, worker_info=None):
+    :param customer: the customer object.
+    :param id: the task identifier.
+    :param invoker_id: the identifier of the invoker which spawned this task.
+    :param worker_info: the value the worker sent at accepting.
+    """
+
+    def __init__(self, customer, id, invoker_id, worker_info=None):
         self.customer = customer
         self.id = id
         self.invoker_id = invoker_id
@@ -681,6 +699,7 @@ class Task(object):
         self.queue = Queue()
 
     def __call__(self):
+        """Gets the result."""
         self.customer.register_task(self)
         reply = self.queue.get()
         assert reply.method not in (ACCEPT, REJECT)
@@ -715,4 +734,4 @@ class Task(object):
 
     def __repr__(self):
         return make_repr(
-            self, ['customer'], ['id', 'invoker_id', 'worker_info'])
+            self, ['customer', 'id'], ['invoker_id', 'worker_info'])

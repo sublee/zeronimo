@@ -394,7 +394,7 @@ def test_proxied_customer(worker, tunnel_socks, prefix, addr1, addr2):
 
 @autowork
 def test_tunnel_without_customer(worker, tunnel_socks, prefix):
-    tunnel = zeronimo.Tunnel(tunnel_socks, prefix)
+    tunnel = zeronimo.Tunnel(None, tunnel_socks, prefix)
     tunnel(wait=False).simple()
     tunnel(wait=False, fanout=True).simple()
     with pytest.raises(ValueError):
