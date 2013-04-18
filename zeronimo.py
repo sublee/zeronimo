@@ -56,6 +56,23 @@ def ensure_sequence(val, sequence=list):
         return sequence([val])
 
 
+def get_socket(sockets, socket_type, name=None):
+    try:
+        return sockets[socket_type]
+    except KeyError:
+        socket_type_name = {
+            zmq.PAIR: 'PAIR', zmq.PUB: 'PUB', zmq.SUB: 'SUB', zmq.REQ: 'REQ',
+            zmq.REP: 'REP', zmq.DEALER: 'DEALER', zmq.ROUTER: 'ROUTER',
+            zmq.PULL: 'PULL', zmq.PUSH: 'PUSH', zmq.XPUB: 'XPUB',
+            zmq.XSUB: 'XSUB'}[socket_type]
+        msg = 'no {0} socket'.format(socket_type_name)
+        if name is None:
+            msg = 'There\'s ' + msg
+        else:
+            msg = '{0} has {1}'.format(name, msg)
+        raise KeyError(msg)
+
+
 def make_repr(obj, params=[], keywords=[], data={}):
     get = lambda attr: data[attr] if attr in data else getattr(obj, attr)
     opts = []
@@ -225,7 +242,7 @@ class Worker(Runner):
     (fan-out) invocations.
 
     :param obj: the object to be shared by an RPC service.
-    :param sockets: the ZMQ sockets, PULL or SUB socket type.
+    :param sockets: the ZMQ sockets of PULL or SUB socket type.
     :param info: (optional) the worker will send this value to customers at
                  accepting an invocation. it might be identity of the worker to
                  let the customer's know what worker accepted.
@@ -238,11 +255,9 @@ class Worker(Runner):
     def __init__(self, obj, sockets, info=None):
         super(Worker, self).__init__()
         self.obj = obj
-        sockets = ensure_sequence(sockets)
         socket_types = set(sock.socket_type for sock in sockets)
         if socket_types.difference([zmq.PULL, zmq.SUB]):
-            raise ValueError(
-                '{0} socket should be PULL or SUB'.format(cls_name(self)))
+            raise ValueError('Worker socket should be PULL or SUB')
         self.sockets = sockets
         self.info = info
         self.accept_all()
@@ -320,68 +335,96 @@ class Worker(Runner):
 
 
 class Customer(Runner):
+    """The customer object makes a tunnel which links to workers and collects
+    workers' replies.
 
-    public_addr = None
+    A customer has a PULL type socket to collect worker's replies and its
+    public address what workers can connect.
+
+    :param socket: the ZMQ socket of PULL socket type.
+    :param addr: the public address of the socket what workers can connect.
+    """
+
     socket = None
+    addr = None
     tunnels = None
     tasks = None
 
-    def __init__(self, public_addr, socket):
+    def __init__(self, socket, addr):
         super(Customer, self).__init__()
-        self.public_addr = public_addr
         if socket.socket_type != zmq.PULL:
-            raise ValueError(
-                '{0} socket should be PULL'.format(cls_name(self)))
+            raise ValueError('Customer socket should be PULL')
         self.socket = socket
+        self.addr = addr
         self.tunnels = set()
         self.tasks = {}
         self.invokers = {}
         self._missings = {}
 
-    def link(self, *args, **kwargs):
-        return Tunnel(self, *args, **kwargs)
+    def link(self, sockets, prefix='', **invoker_opts):
+        """Creates a tunnel which uses the customer as a linked customer."""
+        return Tunnel(sockets, prefix, self, **invoker_opts)
 
     def register_tunnel(self, tunnel):
-        """Registers the :class:`Tunnel` object to run and ensures a socket
-        which pulls replies.
+        """Registers a :class:`Tunnel` object.
+
+        :returns: the tunnel registry.
         """
-        if tunnel in self.tunnels:
-            raise ValueError('Already registered tunnel')
         self.tunnels.add(tunnel)
         return self.tunnels
 
     def unregister_tunnel(self, tunnel):
-        """Unregisters the :class:`Tunnel` object."""
+        """Unregisters a :class:`Tunnel` object.
+
+        :returns: the tunnel registry.
+        """
         self.tunnels.remove(tunnel)
         return self.tunnels
 
     def register_invoker(self, invoker):
+        """Registers a :class:`Invoker` object.
+
+        :returns: the invoker registry.
+        """
         self.invokers[invoker.id] = invoker
         return self.invokers
 
     def unregister_invoker(self, invoker):
+        """Unregisters a :class:`Invoker` object. It puts :exc:`StopIteration`
+        to the invoker queue.
+
+        :returns: the invoker registry.
+        """
         assert self.invokers.pop(invoker.id) is invoker
         invoker.queue.put(StopIteration)
         return self.invokers
 
     def register_task(self, task):
+        """Registers a :class:`Task` object. If there're missing messages for
+        the task, it restores them.
+
+        :returns: the task registry related to the same invoker.
+        """
         try:
             self.tasks[task.invoker_id][task.id] = task
         except KeyError:
             self.tasks[task.invoker_id] = {task.id: task}
         self._restore_missing_messages(task)
+        return self.tasks[task.invoker_id]
 
     def unregister_task(self, task):
-        assert self.tasks[task.invoker_id].pop(task.id) is task
-        if self.tasks[task.invoker_id]:
-            return
-        try:
-            self.unregister_invoker(self.invokers[task.invoker_id])
-        except KeyError:
-            pass
-        del self.tasks[task.invoker_id]
+        """Unregisters a :class:`Task` object.
+
+        :returns: the task registry related to the same invoker.
+        """
+        tasks = self.tasks[task.invoker_id]
+        assert tasks.pop(task.id) is task
+        if not tasks:
+            del self.tasks[task.invoker_id]
+        return tasks
 
     def _restore_missing_messages(self, task):
+        """Restores kept missing messages for the task."""
         try:
             missing = self._missings[task.invoker_id].pop(task.id)
         except KeyError:
@@ -395,6 +438,9 @@ class Customer(Runner):
             pass
 
     def run(self, stopper):
+        """Runs the customer. It receives replies from the socket and dispatch
+        them to put to the proper queue.
+        """
         poller = zmq.Poller()
         poller.register(self.socket, zmq.POLLIN)
         while not stopper.is_set():
@@ -404,6 +450,7 @@ class Customer(Runner):
             self.dispatch_reply(reply)
 
     def dispatch_reply(self, reply):
+        """Puts a reply to the proper queue."""
         invoker_id = reply.invoker_id
         task_id = reply.task_id
         if reply.method in (ACCEPT, REJECT):
@@ -432,7 +479,7 @@ class Customer(Runner):
         queue.put(reply)
 
     def __repr__(self):
-        return make_repr(self, ['public_addr'])
+        return make_repr(self, ['socket', 'addr'])
 
 
 class Tunnel(object):
@@ -457,17 +504,17 @@ class Tunnel(object):
                     accepted a task. Defaults to 0.01 seconds.
     """
 
-    def __init__(self, customer, sockets, prefix='', **invoker_opts):
-        self._znm_customer = customer
+    def __init__(self, sockets, prefix='', customer=None, **invoker_opts):
         self._znm_sockets = {}
-        for sock in ensure_sequence(sockets):
+        for sock in sockets:
             if (sock.socket_type not in (zmq.PUSH, zmq.PUB) or
                 sock.socket_type in self._znm_sockets):
                 raise ValueError(
-                    '{0} allows only one or none PUSH socket and one or none '
-                    'PUB socket'.format(cls_name(self)))
+                    'Tunnel allows only one or none PUSH socket and one or '
+                    'none PUB socket')
             self._znm_sockets[sock.socket_type] = sock
         self._znm_prefix = prefix
+        self._znm_customer = customer
         self._znm_invoker_opts = invoker_opts
 
     def __getattr__(self, attr):
@@ -480,14 +527,16 @@ class Tunnel(object):
 
     def __enter__(self):
         customer = self._znm_customer
-        if customer.register_tunnel(self) and not customer.is_running():
-            customer.start()
+        if customer is not None:
+            if customer.register_tunnel(self) and not customer.is_running():
+                customer.start()
         return self
 
     def __exit__(self, error, error_type, traceback):
         customer = self._znm_customer
-        if not customer.unregister_tunnel(self):
-            customer.stop()
+        if customer is not None:
+            if not customer.unregister_tunnel(self):
+                customer.stop()
 
     def __call__(self, **replacing_invoker_opts):
         """Creates a :class:`Tunnel` object which follows same consumer and
@@ -496,14 +545,14 @@ class Tunnel(object):
         invoker_opts = {}
         invoker_opts.update(self._znm_invoker_opts)
         invoker_opts.update(replacing_invoker_opts)
-        tunnel = Tunnel(self._znm_customer, [], self._znm_prefix,
+        tunnel = Tunnel([], self._znm_prefix, self._znm_customer,
                         **invoker_opts)
         tunnel._znm_sockets = self._znm_sockets
         return tunnel
 
     def __repr__(self):
-        params = ['customer']
-        keywords = self._znm_invoker_opts.keys()
+        params = ['customer', 'sockets']
+        keywords = ['prefix'] + self._znm_invoker_opts.keys()
         attrs = params + keywords
         data = {attr: getattr(self, '_znm_' + attr) for attr in params}
         data.update(self._znm_invoker_opts)
@@ -527,29 +576,25 @@ class Invoker(object):
                finding_timeout=0.01):
         if not wait:
             return self._invoke_nowait(fanout)
+        if self.customer is None:
+            raise ValueError(
+                'To wait for a result, the tunnel must have a customer')
         if fanout:
             return self._invoke_fanout(as_task, finding_timeout)
         else:
             return self._invoke(as_task, finding_timeout)
 
     def _invoke_nowait(self, fanout=False):
-        try:
-            sock = self.sockets[zmq.PUB if fanout else zmq.PUSH]
-        except KeyError:
-            raise ValueError('{0} has no {1} socket'.format(
-                cls_name(self.tunnel), 'PUB' if fanout else 'PUSH'))
+        socket_type = zmq.PUB if fanout else zmq.PUSH
+        sock = get_socket(self.sockets, socket_type, 'Tunnel')
         invocation = Invocation(
             self.function_name, self.args, self.kwargs, self.id, None)
         zmq_send(sock, tuple(invocation), prefix=self.prefix)
 
     def _invoke(self, as_task=False, finding_timeout=0.01):
-        try:
-            sock = self.sockets[zmq.PUSH]
-        except KeyError:
-            raise ValueError(
-                '{0} has no PUSH socket'.format(cls_name(self.tunnel)))
+        sock = get_socket(self.sockets, zmq.PUSH, 'Tunnel')
         invocation = Invocation(self.function_name, self.args, self.kwargs,
-                                self.id, self.customer.public_addr)
+                                self.id, self.customer.addr)
         # find one worker
         self.customer.register_invoker(self)
         rejected = 0
@@ -582,13 +627,9 @@ class Invoker(object):
         return task if as_task else task()
 
     def _invoke_fanout(self, as_task=False, finding_timeout=0.01):
-        try:
-            sock = self.sockets[zmq.PUB]
-        except KeyError:
-            raise ValueError(
-                '{0} has no PUB socket'.format(cls_name(self.tunnel)))
+        sock = get_socket(self.sockets, zmq.PUB, 'Tunnel')
         invocation = Invocation(self.function_name, self.args, self.kwargs,
-                                self.id, self.customer.public_addr)
+                                self.id, self.customer.addr)
         # find one or more workers
         self.customer.register_invoker(self)
         replies = []
@@ -644,7 +685,13 @@ class Task(object):
         reply = self.queue.get()
         assert reply.method not in (ACCEPT, REJECT)
         if reply.method in (RETURN, RAISE):
-            self.customer.unregister_task(self)
+            if not self.customer.unregister_task(self):
+                try:
+                    invoker = self.customer.invokers[self.invoker_id]
+                except KeyError:
+                    pass
+                else:
+                    self.customer.unregister_invoker(invoker)
         if reply.method == RETURN:
             return reply.data
         elif reply.method == RAISE:

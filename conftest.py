@@ -178,7 +178,7 @@ def make_customer(protocol):
     addr = make_addr()
     sock = ctx.socket(zmq.PULL)
     sock.bind(addr)
-    customer = zeronimo.Customer(addr, sock)
+    customer = zeronimo.Customer(sock, addr)
     return customer
 
 

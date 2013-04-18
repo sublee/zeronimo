@@ -54,7 +54,7 @@ def test_basic_zeronimo():
     sync_pubsub(tunnel_pub, [worker_sub], prefix)
     # prepare runners
     worker = zeronimo.Worker(app, [worker_pull, worker_sub])
-    customer = zeronimo.Customer('inproc://customer', customer_pull)
+    customer = zeronimo.Customer(customer_pull, 'inproc://customer')
     worker.start()
     customer.start()
     yield autowork.will_stop(worker)
@@ -341,13 +341,13 @@ def test_simple(addr1, addr2):
     yield autowork.will_close(customer_sock)
     yield autowork.will_close(tunnel_sock)
     # run
-    worker = zeronimo.Worker(app, worker_sock)
+    worker = zeronimo.Worker(app, [worker_sock])
     worker.start()
     yield autowork.will_stop(worker)
-    customer = zeronimo.Customer(addr2, customer_sock)
-    with customer.link(tunnel_sock) as tunnel:
+    customer = zeronimo.Customer(customer_sock, addr2)
+    with customer.link([tunnel_sock]) as tunnel:
         assert tunnel.simple() == 'ok'
-        with pytest.raises(ValueError):
+        with pytest.raises(KeyError):
             tunnel(fanout=True).simple()
 
 
@@ -387,16 +387,27 @@ def test_proxied_customer(worker, tunnel_socks, prefix, addr1, addr2):
     customer_sock = ctx.socket(zmq.PULL)
     customer_sock.connect(addr2)
     yield autowork.will_close(customer_sock)
-    customer = zeronimo.Customer(addr1, customer_sock)
+    customer = zeronimo.Customer(customer_sock, addr1)
     with customer.link(tunnel_socks, prefix) as tunnel:
         assert tunnel.simple() == 'ok'
 
 
+@autowork
+def test_tunnel_without_customer(worker, tunnel_socks, prefix):
+    tunnel = zeronimo.Tunnel(tunnel_socks, prefix)
+    tunnel(wait=False).simple()
+    tunnel(wait=False, fanout=True).simple()
+    with pytest.raises(ValueError):
+        tunnel.simple()
+    with pytest.raises(ValueError):
+        tunnel(fanout=True).simple()
+
+
 def test_socket_type_error():
     with pytest.raises(ValueError):
-        zeronimo.Customer('x', ctx.socket(zmq.PAIR))
+        zeronimo.Customer(ctx.socket(zmq.PAIR), 'x')
     with pytest.raises(ValueError):
         zeronimo.Worker(None, [ctx.socket(zmq.PAIR)])
-    customer = zeronimo.Customer('x', ctx.socket(zmq.PULL))
+    customer = zeronimo.Customer(ctx.socket(zmq.PULL), 'x')
     with pytest.raises(ValueError):
         tunnel = customer.link([ctx.socket(zmq.PULL)])
