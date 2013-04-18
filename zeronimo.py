@@ -608,19 +608,22 @@ class Invoker(object):
                                 self.id, self.customer.addr)
         # find one worker
         self.customer.register_invoker(self)
+        reply = None
         rejected = 0
+        zmq_send(sock, tuple(invocation), prefix=self.prefix)
         try:
             with Timeout(finding_timeout, False):
                 while True:
-                    zmq_send(sock, tuple(invocation), prefix=self.prefix)
-                    reply = None
                     reply = self.queue.get()
                     if reply.method == REJECT:
                         rejected += 1
+                        # send again
+                        zmq_send(sock, tuple(invocation), prefix=self.prefix)
                         continue
                     elif reply.method == ACCEPT:
                         break
-                    assert 0
+                    else:
+                        assert 0
         finally:
             self.customer.unregister_invoker(self)
         if reply is None:

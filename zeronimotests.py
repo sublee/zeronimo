@@ -403,6 +403,15 @@ def test_tunnel_without_customer(worker, tunnel_socks, prefix):
         tunnel(fanout=True).simple()
 
 
+@autowork
+def test_finding_timeout(customer, worker, tunnel_socks, prefix):
+    with customer.link(tunnel_socks, prefix) as tunnel:
+        with pytest.raises(zeronimo.WorkerNotFound):
+            tunnel(finding_timeout=0).simple()
+        with pytest.raises(zeronimo.WorkerNotFound):
+            tunnel(fanout=True, finding_timeout=0).simple()
+
+
 def test_socket_type_error():
     with pytest.raises(ValueError):
         zeronimo.Customer(ctx.socket(zmq.PAIR), 'x')
