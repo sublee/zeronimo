@@ -239,6 +239,12 @@ class Worker(Runner):
     Round-robin invocations; the SUB sockets receive Publish-subscribe
     (fan-out) invocations.
 
+    ::
+
+       import os
+       worker = Worker(os, [sock1, sock2], info='doctor')
+       worker.run()
+
     :param obj: the object to be shared by an RPC service.
     :param sockets: the ZMQ sockets of PULL or SUB socket type.
     :param info: (optional) the worker will send this value to customers at
@@ -339,6 +345,12 @@ class Customer(Runner):
     A customer has a PULL type socket to collect worker's replies and its
     public address what workers can connect.
 
+    ::
+
+       customer = Customer(socket_which_receive_replies, public_address)
+       with customer.link([socket_which_connects_to_workers]) as tunnel:
+           print tunnel.hello()
+
     :param socket: the ZMQ socket of PULL socket type.
     :param addr: the public address of the socket what workers can connect.
     """
@@ -360,13 +372,7 @@ class Customer(Runner):
         self._missings = {}
 
     def link(self, *args, **kwargs):
-        """Creates a tunnel which uses the customer as a linked customer.
-
-        ::
-
-           with customer.link([socket_which_connects_to_workers]) as tunnel:
-               print tunnel.hello()
-        """
+        """Creates a tunnel which uses the customer as a linked customer."""
         return Tunnel(self, *args, **kwargs)
 
     def register_tunnel(self, tunnel):
@@ -554,7 +560,7 @@ class Tunnel(object):
         invoker_opts = {}
         invoker_opts.update(self._znm_invoker_opts)
         invoker_opts.update(replacing_invoker_opts)
-        prefix, customer = self._znm_prefix, self._znm_customer
+        customer, prefix = self._znm_customer, self._znm_prefix
         tunnel = Tunnel(customer, [], prefix, **invoker_opts)
         tunnel._znm_sockets = self._znm_sockets
         return tunnel
