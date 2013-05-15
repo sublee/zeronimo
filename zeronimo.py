@@ -6,8 +6,7 @@
     :copyright: (c) 2013 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
-from collections import (
-    defaultdict, namedtuple, Iterable, Sequence, Set, Mapping)
+from collections import namedtuple, Iterable, Sequence, Set, Mapping
 import functools
 try:
     import cPickle as pickle
@@ -17,7 +16,7 @@ import re
 from types import MethodType
 import uuid
 
-from gevent import spawn, joinall, killall, Timeout
+from gevent import spawn, Timeout
 from gevent.coros import Semaphore
 from gevent.event import Event, AsyncResult
 from gevent.queue import Queue, Empty
@@ -570,7 +569,6 @@ class Tunnel(object):
     def __repr__(self):
         params = ['customer', 'sockets']
         keywords = ['prefix'] + self._znm_invoker_opts.keys()
-        attrs = params + keywords
         data = {attr: getattr(self, '_znm_' + attr) for attr in params}
         data.update(self._znm_invoker_opts)
         return make_repr(self, params, keywords, data)

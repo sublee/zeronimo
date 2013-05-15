@@ -104,5 +104,5 @@ setup(
                  'Topic :: Software Development'],
     install_requires=['distribute', 'gevent', 'pyzmq>=13'],
     test_suite='zeronimotests',
-    tests_require=['pytest', 'decorator'],
+    tests_require=['pytest', 'decorator', 'psutil'],
 )
