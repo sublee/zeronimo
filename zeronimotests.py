@@ -41,7 +41,7 @@ def test_running():
 @autowork
 def test_basic_zeronimo():
     # prepare sockets
-    prefix = 'test'
+    prefix = 'test11'
     worker_pull = ctx.socket(zmq.PULL)
     worker_sub = ctx.socket(zmq.SUB)
     customer_pull = ctx.socket(zmq.PULL)
@@ -64,7 +64,7 @@ def test_basic_zeronimo():
     yield autowork.will_close(tunnel_push)
     yield autowork.will_close(tunnel_pub)
     # zeronimo!
-    tunnel = customer.link([tunnel_push, tunnel_pub], 'test')
+    tunnel = customer.link([tunnel_push, tunnel_pub], prefix)
     assert tunnel.simple() == 'ok'
     assert tunnel(fanout=True).simple() == ['ok']
 

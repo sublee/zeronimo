@@ -8,10 +8,8 @@
 """
 from collections import namedtuple, Iterable, Sequence, Set, Mapping
 import functools
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
+import msgpack
+import pickle
 import re
 from types import MethodType
 import uuid
@@ -87,24 +85,35 @@ def cls_name(obj):
 # wrapped ZMQ functions
 
 
-prefix_length_pattern = re.compile(r'\0(\d+)$')
+prefix_sep = chr(0)
+prefix_pattern = re.compile(r'^[^{0}]*{0}'.format(prefix_sep))
 
 
-def zmq_send(sock, obj, flags=0, prefix='', dump=pickle.dumps):
+def default(obj):
+    return {'pickle': pickle.dumps(obj)}
+
+
+def object_hook(obj):
+    if 'pickle' in obj:
+        return pickle.loads(obj['pickle'])
+    return obj
+
+
+def zmq_send(sock, obj, flags=0, prefix=''):
     """Same with :meth:`zmq.Socket.send_pyobj` but can append prefix for
     filtering subscription.
     """
-    msg = '{0}{1}\0{2}'.format(prefix, dump(obj), len(prefix))
+    assert prefix_sep not in prefix
+    serial = msgpack.packb(obj, default=default)
+    msg = prefix_sep.join([prefix, serial])
     return sock.send(msg, flags)
 
 
-def zmq_recv(sock, flags=0, load=pickle.loads):
+def zmq_recv(sock, flags=0):
     """Same with :meth:`zmq.Socket.recv_pyobj`."""
     msg = sock.recv(flags)
-    prefix_length_match = prefix_length_pattern.search(msg)
-    prefix_length = int(prefix_length_match.group(1))
-    obj = load(msg[prefix_length:-len(prefix_length_match.group(0))])
-    return obj
+    serial = prefix_pattern.sub('', msg)
+    return msgpack.unpackb(serial, object_hook=object_hook)
 
 
 # exceptions
@@ -283,12 +292,16 @@ class Worker(Runner):
         for sock in self.sockets:
             poller.register(sock, zmq.POLLIN)
         while not stopper.is_set():
+            print 'Worker.poll'
             events = poll_or_stopped(poller, stopper)
             if events is True:  # has been stopped
                 break
             for sock, event in events:
-                invocation = Invocation(*zmq_recv(sock))
-                spawn(self.run_task, invocation, sock.context)
+                if event & zmq.POLLIN:
+                    invocation = Invocation(*zmq_recv(sock))
+                    spawn(self.run_task, invocation, sock.context)
+                if event & zmq.POLLERR:
+                    assert 0
 
     def run_task(self, invocation, context):
         """Invokes a function and send results to the customer. It supports
@@ -299,10 +312,9 @@ class Worker(Runner):
         function_name = invocation.function_name
         args = invocation.args
         kwargs = invocation.kwargs
+        sock = False
         try:
-            if invocation.customer_addr is None:
-                sock = False
-            else:
+            if invocation.customer_addr is not None:
                 sock = context.socket(zmq.PUSH)
                 sock.connect(invocation.customer_addr)
                 channel = (invocation.invoker_id, task_id)
@@ -453,10 +465,16 @@ class Customer(Runner):
         poller = zmq.Poller()
         poller.register(self.socket, zmq.POLLIN)
         while not stopper.is_set():
-            if poll_or_stopped(poller, stopper) is True:  # has been stopped
+            print 'Customer.poll'
+            events = poll_or_stopped(poller, stopper)
+            if events is True:  # has been stopped
                 break
-            reply = Reply(*zmq_recv(self.socket))
-            self.dispatch_reply(reply)
+            event = events[0][1]
+            if event & zmq.POLLIN:
+                reply = Reply(*zmq_recv(self.socket))
+                self.dispatch_reply(reply)
+            if event & zmq.POLLERR:
+                assert 0
 
     def dispatch_reply(self, reply):
         """Puts a reply to the proper queue."""
@@ -650,7 +668,8 @@ class Invoker(object):
 
     def _spawn_task(self, reply, as_task=False):
         assert reply.method == ACCEPT
-        task = Task(self.customer, reply.task_id, self.id, reply.data)
+        worker_info = reply.data and tuple(reply.data)
+        task = Task(self.customer, reply.task_id, self.id, worker_info)
         return task if as_task else task()
 
     def _invoke_fanout(self, as_task=False, finding_timeout=0.01):
@@ -688,7 +707,8 @@ class Invoker(object):
                 if reply is StopIteration:
                     break
                 assert reply.method == ACCEPT
-                task = Task(self.customer, reply.task_id, self.id, reply.data)
+                worker_info = reply.data and tuple(reply.data)
+                task = Task(self.customer, reply.task_id, self.id, worker_info)
                 tasks.append(task if as_task else task())
         collect_tasks(iter_replies.next)
         spawn(collect_tasks, self.queue.get)
