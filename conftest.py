@@ -292,8 +292,10 @@ deferred_fanout_addr = namedtuple('deferred_fanout_addr', ['protocol'])
 deferred_tunnel_sockets = namedtuple('deferred_tunnel_sockets', [])
 
 
-def unexpected_connection(conn):
-    if system_platform == 'Windows' and conn.port == 5905:
+def is_unexpected_conn(conn):
+    ports = [addr[1] if addr else None
+             for addr in (conn.local_address, conn.remote_address)]
+    if system_platform == 'Windows' and 5905 in ports:
         # libzmq uses TCP port 5905 for the signaler in Windows.
         return False
     return conn.status in ('LISTEN', 'ESTABLISHED')
@@ -349,7 +351,8 @@ def autowork(f, *args):
         for will in wills:
             with pytest.raises(StopIteration):
                 next(will)
-        assert not filter(unexpected_connection, ps.get_connections())
+        unexpected_conns = filter(is_unexpected_conn, ps.get_connections())
+        assert not unexpected_conns
 
 
 def will(function, *args, **kwargs):
