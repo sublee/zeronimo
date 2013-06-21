@@ -20,7 +20,7 @@ import zeronimo
 
 ctx = zmq.Context()
 ps = psutil.Process(os.getpid())
-system_platform = platform.system()
+windows = platform.system() == 'Windows'
 #gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
@@ -28,7 +28,7 @@ def pytest_addoption(parser):
     parser.addoption('--all', action='store_true', help='use all protocols.')
     parser.addoption('--no-inproc', action='store_true',
                      help='don\'t use inproc protocol.')
-    if system_platform != 'Windows':  # windows doesn't support ipc
+    if not windows:  # windows doesn't support ipc
         parser.addoption('--no-ipc', action='store_true',
                          help='don\'t use ipc protocol.')
     parser.addoption('--tcp', action='store_true', help='use tcp protocol.')
@@ -43,15 +43,16 @@ def get_testing_protocols(metafunc):
         testing_protocols = []
         if not metafunc.config.option.no_inproc:
             testing_protocols.append('inproc')
-        if system_platform != 'Windows':  # windows doesn't support ipc
-            if not metafunc.config.option.no_ipc:
-                testing_protocols.append('ipc')
+        if not metafunc.config.option.no_ipc:
+            testing_protocols.append('ipc')
         if metafunc.config.option.tcp:
             testing_protocols.append('tcp')
         if metafunc.config.option.pgm:
             testing_protocols.append('pgm')
         if metafunc.config.option.epgm:
             testing_protocols.append('epgm')
+    if windows:  # windows doesn't support ipc
+        testing_protocols.remove('ipc')
     return testing_protocols
 
 
@@ -297,7 +298,7 @@ deferred_tunnel_sockets = namedtuple('deferred_tunnel_sockets', [])
 def is_unexpected_conn(conn):
     ports = [addr[1] if addr else None
              for addr in (conn.local_address, conn.remote_address)]
-    if system_platform == 'Windows' and 5905 in ports:
+    if windows and 5905 in ports:
         # libzmq uses TCP port 5905 for the signaler in Windows.
         return False
     return conn.status in ('LISTEN', 'ESTABLISHED')
