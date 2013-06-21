@@ -13,22 +13,24 @@ from conftest import (
 import zeronimo
 
 
-def test_msg():
+@autowork
+def test_msg(addr, prefix):
     push = ctx.socket(zmq.PUSH)
     pull = ctx.socket(zmq.PULL)
-    push.bind('inproc://push')
-    pull.connect('inproc://push')
-    zeronimo.zmq_send(push, 1)
-    assert zeronimo.zmq_recv(pull) == 1
-    zeronimo.zmq_send(push, 'doctor')
-    assert zeronimo.zmq_recv(pull) == 'doctor'
-    zeronimo.zmq_send(push, {'doctor': 'who'})
-    assert zeronimo.zmq_recv(pull) == {'doctor': 'who'}
-    zeronimo.zmq_send(push, ['doctor', 'who'])
-    assert zeronimo.zmq_recv(pull) == ['doctor', 'who']
-    zeronimo.zmq_send(push, zeronimo.ZeronimoException)
-    assert zeronimo.zmq_recv(pull) == zeronimo.ZeronimoException
-    zeronimo.zmq_send(push, zeronimo.ZeronimoException('Allons-y'))
-    assert isinstance(zeronimo.zmq_recv(pull), zeronimo.ZeronimoException)
+    push.bind(addr)
+    pull.connect(addr)
+    for p in ['', prefix]:
+        zeronimo.zmq_send(push, 1, prefix=p)
+        assert zeronimo.zmq_recv(pull) == 1
+        zeronimo.zmq_send(push, 'doctor', prefix=p)
+        assert zeronimo.zmq_recv(pull) == 'doctor'
+        zeronimo.zmq_send(push, {'doctor': 'who'}, prefix=p)
+        assert zeronimo.zmq_recv(pull) == {'doctor': 'who'}
+        zeronimo.zmq_send(push, ['doctor', 'who'], prefix=p)
+        assert zeronimo.zmq_recv(pull) == ['doctor', 'who']
+        zeronimo.zmq_send(push, Exception, prefix=p)
+        assert zeronimo.zmq_recv(pull) == Exception
+        zeronimo.zmq_send(push, Exception('Allons-y'), prefix=p)
+        assert isinstance(zeronimo.zmq_recv(pull), Exception)
     push.close()
     pull.close()
