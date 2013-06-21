@@ -2,6 +2,7 @@
 from collections import namedtuple
 import functools
 import os
+import platform
 import random
 import re
 import socket
@@ -10,6 +11,7 @@ import types
 
 from decorator import decorator
 import gevent
+import psutil
 import pytest
 import zmq.green as zmq
 
@@ -17,11 +19,9 @@ import zeronimo
 
 
 ctx = zmq.Context()
-#gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
-
-
-import psutil
 ps = psutil.Process(os.getpid())
+system_platform = platform.system()
+#gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
 def pytest_addoption(parser):
@@ -292,6 +292,13 @@ deferred_fanout_addr = namedtuple('deferred_fanout_addr', ['protocol'])
 deferred_tunnel_sockets = namedtuple('deferred_tunnel_sockets', [])
 
 
+def unexpected_connection(conn):
+    if system_platform == 'Windows' and conn.port == 5905:
+        # libzmq uses TCP port 5905 for the signaler in Windows.
+        return False
+    return conn.status in ('LISTEN', 'ESTABLISHED')
+
+
 @decorator
 def autowork(f, *args):
     """Workers which are yielded by the function will start and stop
@@ -342,9 +349,7 @@ def autowork(f, *args):
         for will in wills:
             with pytest.raises(StopIteration):
                 next(will)
-        conns = [conn for conn in ps.get_connections()
-                 if conn.status in ('LISTEN', 'ESTABLISHED')]
-        assert not conns
+        assert not filter(unexpected_connection, ps.get_connections())
 
 
 def will(function, *args, **kwargs):
