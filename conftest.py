@@ -37,13 +37,16 @@ def pytest_addoption(parser):
 
 
 def get_testing_protocols(metafunc):
+    # windows doesn't support ipc
     if metafunc.config.option.all:
         testing_protocols = ['inproc', 'ipc', 'tcp', 'pgm', 'epgm']
+        if windows:
+            testing_protocols.remove('ipc')
     else:
         testing_protocols = []
         if not metafunc.config.option.no_inproc:
             testing_protocols.append('inproc')
-        if not metafunc.config.option.no_ipc:
+        if not windows and not metafunc.config.option.no_ipc:
             testing_protocols.append('ipc')
         if metafunc.config.option.tcp:
             testing_protocols.append('tcp')
@@ -51,8 +54,6 @@ def get_testing_protocols(metafunc):
             testing_protocols.append('pgm')
         if metafunc.config.option.epgm:
             testing_protocols.append('epgm')
-    if windows:  # windows doesn't support ipc
-        testing_protocols.remove('ipc')
     return testing_protocols
 
 
