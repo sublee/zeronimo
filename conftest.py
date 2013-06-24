@@ -171,7 +171,7 @@ class Application(object):
 app = Application()
 
 
-def make_worker(protocol, prefix=''):
+def make_worker(ctx, protocol, prefix=''):
     """Creates a :class:`zeronimo.Worker` by the given protocol."""
     make_addr, make_fanout_addr = protocols[protocol]
     pull_sock = ctx.socket(zmq.PULL)
@@ -186,7 +186,7 @@ def make_worker(protocol, prefix=''):
     return worker
 
 
-def make_customer(protocol):
+def make_customer(ctx, protocol):
     """Creates a :class:`zeronimo.Customer` by the given protocol."""
     make_addr, __ = protocols[protocol]
     addr = make_addr()
@@ -196,7 +196,7 @@ def make_customer(protocol):
     return customer
 
 
-def make_tunnel_sockets(workers):
+def make_tunnel_sockets(ctx, workers):
     prefix = None
     for worker in workers:
         if prefix is None:
@@ -331,10 +331,11 @@ def green(f, *args, **kwargs):
 
 deferred_worker = namedtuple('deferred_worker', ['protocol'])
 deferred_customer = namedtuple('deferred_cutomer', ['protocol'])
-deferred_prefix = namedtuple('deferred_prefix', [])
 deferred_addr = namedtuple('deferred_addr', ['protocol'])
 deferred_fanout_addr = namedtuple('deferred_fanout_addr', ['protocol'])
 deferred_tunnel_sockets = namedtuple('deferred_tunnel_sockets', [])
+deferred_prefix = namedtuple('deferred_prefix', [])
+deferred_ctx = namedtuple('deferred_ctx', [])
 
 
 def is_unexpected_conn(conn):
@@ -365,76 +366,64 @@ def autowork(f, *args):
     automatically.
     """
     args = list(args)
+    ctx = zmq.Context()
     # process deferred worker, customer, prefix, addr, fanout_addr
     prefix = zeronimo.alloc_id()
     workers = []
     for x, arg in enumerate(args):
         if isinstance(arg, deferred_worker):
-            worker = make_worker(arg.protocol, prefix)
+            worker = make_worker(ctx, arg.protocol, prefix)
             workers.append(worker)
             args[x] = worker
         elif isinstance(arg, deferred_customer):
-            args[x] = make_customer(arg.protocol)
-        elif isinstance(arg, deferred_prefix):
-            args[x] = prefix
+            args[x] = make_customer(ctx, arg.protocol)
         elif isinstance(arg, deferred_addr):
             args[x] = protocols[arg.protocol][0]()
         elif isinstance(arg, deferred_fanout_addr):
             args[x] = protocols[arg.protocol][1]()
+        elif isinstance(arg, deferred_prefix):
+            args[x] = prefix
+        elif isinstance(arg, deferred_ctx):
+            args[x] = ctx
     wills = []
     # process deferred tunnel sockets because it should be called before the
     # workers start
     if workers:
         for x, arg in enumerate(args):
             if isinstance(arg, deferred_tunnel_sockets):
-                tunnel_socks = make_tunnel_sockets(workers)
+                tunnel_socks = make_tunnel_sockets(ctx, workers)
                 args[x] = tunnel_socks.keys()
-                for sock, addr in tunnel_socks.iteritems():
-                    wills.append(sock.close)
+                #for sock, addr in tunnel_socks.iteritems():
+                #    wills.append(sock.close)
     # start all runners
     runners = []
     for arg in args:
         if isinstance(arg, zeronimo.Runner):
             arg.start()
             runners.append(arg)
-    wills.append(lambda: stop_all(runners))
+    wills.append(lambda: stop_zeronimo(runners))
     # run the function
-    f = green(f)
     try:
-        return f(*args)
+        return green(f)(*args)
     finally:
         for will in wills:
             will()
-        unexpected_conns = filter(is_unexpected_conn, ps.get_connections())
-        for conn in unexpected_conns:
-            print '{0} -> {1} ({2})'.format(
-                conn.local_address, conn.remote_address, conn.status)
-        assert not unexpected_conns
+        print 'destroy'
+        ctx.destroy()
+        conns = filter(is_unexpected_conn, ps.get_connections())
+        assert not conns
 
 
-def stop_all(znm_objs, addrs=None):
-    if addrs is None:
-        addrs = []
-    for znm_obj in znm_objs:
+def stop_zeronimo(runners):
+    def ignore_runtimeerror(f):
         try:
-            znm_obj.stop()
-        except (RuntimeError, AttributeError):
+            return f()
+        except RuntimeError:
             pass
-        if isinstance(znm_obj, zeronimo.Worker):
-            sockets = znm_obj.sockets
-            if isinstance(znm_obj.info, tuple):
-                pull_addr, sub_addr, prefix = znm_obj.info
-                addrs.extend([pull_addr, sub_addr])
-        elif isinstance(znm_obj, zeronimo.Customer):
-            sockets = [znm_obj.socket]
-        elif isinstance(znm_obj, zeronimo.Tunnel):
-            sockets = znm_obj._znm_sockets.values()
-        else:
-            sockets = []
-        for sock in sockets:
-            sock.close()
-    for addr in addrs:
-        wait_to_close(addr)
+    stoppings = []
+    for runner in runners:
+        stoppings.append(gevent.spawn(ignore_runtimeerror, runner.stop))
+    gevent.joinall(stoppings)
 
 
 @will
@@ -493,12 +482,14 @@ def pytest_generate_tests(metafunc):
             elif re.match('tunnel_sock(et)?s', param):
                 # defer making tunnel sockets which connect to the workers
                 curargvalues.append(deferred_tunnel_sockets())
-            elif param == 'prefix':
-                curargvalues.append(deferred_prefix())
             elif param.startswith('addr'):
                 curargvalues.append(deferred_addr(protocol))
             elif param.startswith('fanout_addr'):
                 curargvalues.append(deferred_fanout_addr(protocol))
+            elif param == 'prefix':
+                curargvalues.append(deferred_prefix())
+            elif param == 'ctx':
+                curargvalues.append(deferred_ctx())
             else:
                 continue
             if not ids:

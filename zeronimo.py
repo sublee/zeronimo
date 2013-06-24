@@ -37,9 +37,15 @@ def alloc_id(exclusive=None):
 
 def poll_or_stopped(poller, stopper):
     async_result = AsyncResult()
-    spawn(poller.poll).link(async_result)
-    spawn(stopper.wait).link(async_result)
-    return async_result.get()
+    polling = spawn(poller.poll)
+    running = spawn(stopper.wait)
+    polling.link(async_result)
+    running.link(async_result)
+    try:
+        return async_result.get()
+    finally:
+        polling.kill()
+        running.kill()
 
 
 def should_yield(val):
@@ -295,6 +301,7 @@ class Worker(Runner):
             print 'Worker.poll'
             events = poll_or_stopped(poller, stopper)
             if events is True:  # has been stopped
+                print 'Worker.stopped'
                 break
             for sock, event in events:
                 if event & zmq.POLLIN:
@@ -468,6 +475,7 @@ class Customer(Runner):
             print 'Customer.poll'
             events = poll_or_stopped(poller, stopper)
             if events is True:  # has been stopped
+                print 'Customer.stopped'
                 break
             event = events[0][1]
             if event & zmq.POLLIN:

@@ -8,7 +8,7 @@ import pytest
 import zmq.green as zmq
 
 from conftest import (
-    app, autowork, ctx, green, run_device, sync_pubsub, stop_all,
+    app, autowork, green, run_device, sync_pubsub, stop_zeronimo,
     patch_worker_to_be_slow)
 import zeronimo
 
@@ -39,7 +39,7 @@ def test_running():
 
 
 @autowork
-def test_basic_zeronimo(addr, fanout_addr, addr_customer):
+def test_basic_zeronimo(ctx, addr, fanout_addr, addr_customer):
     # prepare sockets
     prefix = 'test11'
     worker_pull = ctx.socket(zmq.PULL)
@@ -63,7 +63,7 @@ def test_basic_zeronimo(addr, fanout_addr, addr_customer):
     tunnel = customer.link([tunnel_push, tunnel_pub], prefix)
     assert tunnel.simple() == 'ok'
     assert tunnel(fanout=True).simple() == ['ok']
-    stop_all([worker, customer, tunnel], [addr, fanout_addr, addr_customer])
+    stop_zeronimo([worker, customer])
 
 
 @autowork
