@@ -451,10 +451,10 @@ def resolve_fixtures(f, *args):
     finally:
         for will in wills:
             will()
+        if protocol == 'ipc':
+            shutil.rmtree(FEED_DIR)
         if config.getoption('--clear'):
             ctx.destroy()
-            if protocol == 'ipc':
-                shutil.rmtree(FEED_DIR)
             def is_unexpected_conn(conn):
                 ports = [addr[1] if addr else None
                          for addr in (conn.local_address, conn.remote_address)]

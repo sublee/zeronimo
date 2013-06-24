@@ -5,8 +5,8 @@ import pytest
 import zmq.green as zmq
 
 from conftest import (
-    app, patch_worker_to_be_slow, resolve_fixtures, run_device, stop_zeronimo,
-    sync_pubsub)
+    app, link_sockets, patch_worker_to_be_slow, resolve_fixtures, run_device,
+    stop_zeronimo, sync_pubsub)
 import zeronimo
 
 
@@ -36,9 +36,92 @@ def test_running():
 
 
 @resolve_fixtures
+def test_messaging(ctx, addr, prefix):
+    push = ctx.socket(zmq.PUSH)
+    pull = ctx.socket(zmq.PULL)
+    link_sockets(addr, push, [pull])
+    for p in ['', prefix]:
+        zeronimo.send(push, 1, prefix=p)
+        assert zeronimo.recv(pull) == 1
+        zeronimo.send(push, 'doctor', prefix=p)
+        assert zeronimo.recv(pull) == 'doctor'
+        zeronimo.send(push, {'doctor': 'who'}, prefix=p)
+        assert zeronimo.recv(pull) == {'doctor': 'who'}
+        zeronimo.send(push, ['doctor', 'who'], prefix=p)
+        assert zeronimo.recv(pull) == ['doctor', 'who']
+        zeronimo.send(push, Exception, prefix=p)
+        assert zeronimo.recv(pull) == Exception
+        zeronimo.send(push, Exception('Allons-y'), prefix=p)
+        assert isinstance(zeronimo.recv(pull), Exception)
+
+
+@resolve_fixtures
+def test_reopen(request, addr):
+    for x in xrange(100):
+        ctx = zmq.Context()
+        pull = ctx.socket(zmq.PULL)
+        push = ctx.socket(zmq.PUSH)
+        link_sockets(addr, pull, [push])
+        zeronimo.send(push, 'expected')
+        assert zeronimo.recv(pull) == 'expected'
+        if request.config.getoption('--clear'):
+            ctx.destroy()
+        else:
+            pull.close()
+            push.close()
+
+
+'''
+hang on ipc
+
+
+@resolve_fixtures
+def test_reopen_and_poll(request, addr):
+    for x in xrange(100):
+        ctx = zmq.Context()
+        pull = ctx.socket(zmq.PULL)
+        push = ctx.socket(zmq.PUSH)
+        link_sockets(addr, pull, [push])
+        poller = zmq.Poller()
+        poller.register(pull)
+        polling = gevent.spawn(poller.poll)
+        zeronimo.send(push, 'expected')
+        assert polling.get() == [(pull, zmq.POLLIN)]
+        assert zeronimo.recv(pull) == 'expected'
+        if request.config.getoption('--clear'):
+            ctx.destroy()
+        else:
+            pull.close()
+            push.close()
+
+
+@resolve_fixtures
+def test_reopen_and_poll_pubsub(request, addr, prefix):
+    for x in xrange(100):
+        ctx = zmq.Context()
+        pub = ctx.socket(zmq.PUB)
+        sub = ctx.socket(zmq.SUB)
+        sub.set(zmq.SUBSCRIBE, prefix)
+        link_sockets(addr, pub, [sub])
+        sync_pubsub(pub, [sub], prefix)
+        poller = zmq.Poller()
+        poller.register(sub)
+        polling = gevent.spawn(poller.poll)
+        zeronimo.send(pub, 'expected', prefix=prefix)
+        assert polling.get() == [(sub, zmq.POLLIN)]
+        assert zeronimo.recv(sub) == 'expected'
+        if request.config.getoption('--clear'):
+            ctx.destroy()
+        else:
+            pub.close()
+            sub.close()
+'''
+
+
+@resolve_fixtures
 def test_basic_zeronimo(ctx, addr, fanout_addr, addr_customer):
     # prepare sockets
-    prefix = 'test11'
+    prefix = 'test'
     worker_pull = ctx.socket(zmq.PULL)
     worker_sub = ctx.socket(zmq.SUB)
     customer_pull = ctx.socket(zmq.PULL)
