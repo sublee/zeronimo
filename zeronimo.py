@@ -306,6 +306,7 @@ class Worker(Runner):
             for sock, event in events:
                 if event & zmq.POLLIN:
                     invocation = Invocation(*recv(sock))
+                    print 'Worker.recv', invocation
                     spawn(self.run_task, invocation, sock.context)
                 if event & zmq.POLLERR:
                     assert 0
@@ -482,6 +483,7 @@ class Customer(Runner):
             event = events[0][1]
             if event & zmq.POLLIN:
                 reply = Reply(*recv(self.socket))
+                print 'Customer.recv', reply
                 self.dispatch_reply(reply)
             if event & zmq.POLLERR:
                 assert 0
