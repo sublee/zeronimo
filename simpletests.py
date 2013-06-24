@@ -80,53 +80,29 @@ def test_msg(addr, prefix):
 
 @autowork
 def test_reopen(addr):
-    protocol, location = addr.split('://', 1)
-    pull = ctx.socket(zmq.PULL)
-    push = ctx.socket(zmq.PUSH)
-    zmq_link(addr, pull, [push])
-    zeronimo.send(push, 'expected')
-    assert zeronimo.recv(pull) == 'expected'
-    # close and reopen
-    print 'close'
-    while 1:
-        pull.close()
-        push.close()
-        del pull
-        wait_to_close(addr)
-        if os.path.exists(location):
-            print 'closed but exists'
+    for x in xrange(100):
         pull = ctx.socket(zmq.PULL)
         push = ctx.socket(zmq.PUSH)
         zmq_link(addr, pull, [push])
-        if not os.path.exists(location):
-            print 'opened but not exist'
-        print 'send', addr
-        t = time.time()
         zeronimo.send(push, 'expected')
-        print 'recv', addr
         assert zeronimo.recv(pull) == 'expected'
-        print (time.time() - t) * 10 ** 3
-        print ps.get_num_fds()
-    # close all
-    print 'close'
-    pull.close()
-    push.close()
-    wait_to_close(addr)
+        pull.close()
+        push.close()
+        wait_to_close(addr)
 
 
-'''
-    # using poller
-    pull.close()
-    wait_to_close(addr)
-    pull = ctx.socket(zmq.PULL)
-    yield zmq_link(addr, pull, [push])
-    poller = zmq.Poller()
-    poller.register(pull)
-    polling = gevent.spawn(poller.poll)
-    zeronimo.send(push, 'expected')
-    assert polling.get() == [(pull, zmq.POLLIN)]
-    assert zeronimo.recv(pull) == 'expected'
-    pull.close()
-    push.close()
-    wait_to_close(addr)
-'''
+@autowork
+def test_reopen_and_poll(addr):
+    for x in xrange(100):
+        pull = ctx.socket(zmq.PULL)
+        push = ctx.socket(zmq.PUSH)
+        zmq_link(addr, pull, [push])
+        poller = zmq.Poller()
+        poller.register(pull)
+        polling = gevent.spawn(poller.poll)
+        zeronimo.send(push, 'expected')
+        assert polling.get() == [(pull, zmq.POLLIN)]
+        assert zeronimo.recv(pull) == 'expected'
+        pull.close()
+        push.close()
+        wait_to_close(addr)

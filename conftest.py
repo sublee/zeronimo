@@ -30,9 +30,9 @@ def pytest_addoption(parser):
                      help='tests with all protocols.')
     parser.addoption('--inproc', action='store_true',
                      help='tests with inproc protocol.')
-    if not windows:  # windows doesn't support ipc
-        parser.addoption('--ipc', action='store_true',
-                         help='tests with ipc protocol.')
+    ipc_help = 'ignored in windows.' if windows else 'tests with ipc protocol.'
+    parser.addoption('--ipc', action='store_true',
+                     help=ipc_help)
     parser.addoption('--tcp', action='store_true',
                      help='tests with tcp protocol.')
     parser.addoption('--pgm', action='store_true',
@@ -45,13 +45,11 @@ def get_testing_protocols(metafunc):
     # windows doesn't support ipc
     if metafunc.config.option.all:
         testing_protocols = ['inproc', 'ipc', 'tcp', 'pgm', 'epgm']
-        if windows:
-            testing_protocols.remove('ipc')
     else:
         testing_protocols = []
         if metafunc.config.option.inproc:
             testing_protocols.append('inproc')
-        if not windows and metafunc.config.option.ipc:
+        if metafunc.config.option.ipc:
             testing_protocols.append('ipc')
         if metafunc.config.option.tcp:
             testing_protocols.append('tcp')
@@ -59,6 +57,8 @@ def get_testing_protocols(metafunc):
             testing_protocols.append('pgm')
         if metafunc.config.option.epgm:
             testing_protocols.append('epgm')
+    if windows:
+        testing_protocols.remove('ipc')
     if not testing_protocols:
         raise RuntimeError('Should specify testing protocols')
     return testing_protocols
