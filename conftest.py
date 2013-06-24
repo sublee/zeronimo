@@ -26,15 +26,19 @@ windows = platform.system() == 'Windows'
 
 
 def pytest_addoption(parser):
-    parser.addoption('--all', action='store_true', help='use all protocols.')
-    parser.addoption('--no-inproc', action='store_true',
-                     help='don\'t use inproc protocol.')
+    parser.addoption('--all', action='store_true',
+                     help='tests with all protocols.')
+    parser.addoption('--inproc', action='store_true',
+                     help='tests with inproc protocol.')
     if not windows:  # windows doesn't support ipc
-        parser.addoption('--no-ipc', action='store_true',
-                         help='don\'t use ipc protocol.')
-    parser.addoption('--tcp', action='store_true', help='use tcp protocol.')
-    parser.addoption('--pgm', action='store_true', help='use pgm protocol.')
-    parser.addoption('--epgm', action='store_true', help='use epgm protocol.')
+        parser.addoption('--ipc', action='store_true',
+                         help='tests with ipc protocol.')
+    parser.addoption('--tcp', action='store_true',
+                     help='tests with tcp protocol.')
+    parser.addoption('--pgm', action='store_true',
+                     help='tests with pgm protocol.')
+    parser.addoption('--epgm', action='store_true',
+                     help='tests with epgm protocol.')
 
 
 def get_testing_protocols(metafunc):
@@ -45,9 +49,11 @@ def get_testing_protocols(metafunc):
             testing_protocols.remove('ipc')
     else:
         testing_protocols = []
-        if not metafunc.config.option.no_inproc:
+        if metafunc.config.option.inproc:
             testing_protocols.append('inproc')
-        if not windows and not metafunc.config.option.no_ipc:
+        if metafunc.config.option.ipc:
+            if windows:
+                raise RuntimeError('Windows does not support IPC')
             testing_protocols.append('ipc')
         if metafunc.config.option.tcp:
             testing_protocols.append('tcp')
@@ -55,6 +61,8 @@ def get_testing_protocols(metafunc):
             testing_protocols.append('pgm')
         if metafunc.config.option.epgm:
             testing_protocols.append('epgm')
+    if not testing_protocols:
+        raise RuntimeError('Should specify testing protocols')
     return testing_protocols
 
 

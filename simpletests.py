@@ -19,8 +19,17 @@ import psutil
 ps = psutil.Process(os.getpid())
 
 
+TICK = 0.001
+
+
 def zmq_link(addr, socket_to_bind, sockets_to_connect):
-    socket_to_bind.bind(addr)
+    while True:
+        try:
+            socket_to_bind.bind(addr)
+        except zmq.ZMQError:
+            gevent.sleep(TICK)
+        else:
+            break
     for sock in sockets_to_connect:
         sock.connect(addr)
 
@@ -28,6 +37,7 @@ def zmq_link(addr, socket_to_bind, sockets_to_connect):
 def wait_to_close(addr):
     protocol, location = addr.split('://', 1)
     if protocol == 'inproc':
+        gevent.sleep(TICK)
         return
     elif protocol == 'ipc':
         still_exists = lambda: os.path.exists(location)
@@ -40,7 +50,7 @@ def wait_to_close(addr):
                     return True
             return False
     while still_exists():
-        gevent.sleep(0.001)
+        gevent.sleep(TICK)
 
 
 @autowork
@@ -80,10 +90,13 @@ def test_reopen(addr):
     print 'close'
     while 1:
         pull.close()
+        push.close()
+        del pull
         wait_to_close(addr)
         if os.path.exists(location):
             print 'closed but exists'
         pull = ctx.socket(zmq.PULL)
+        push = ctx.socket(zmq.PUSH)
         zmq_link(addr, pull, [push])
         if not os.path.exists(location):
             print 'opened but not exist'
@@ -93,6 +106,7 @@ def test_reopen(addr):
         print 'recv', addr
         assert zeronimo.recv(pull) == 'expected'
         print (time.time() - t) * 10 ** 3
+        print ps.get_num_fds()
     # close all
     print 'close'
     pull.close()
