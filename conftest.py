@@ -50,6 +50,52 @@ def pytest_addoption(parser):
                      help='destroy context at each tests done.')
 
 
+def pytest_configure(config):
+    globals()['config'] = config
+    finding_timeout = config.getoption('--finding-timeout')
+    invoke = zeronimo.Invoker.invoke
+    def patched_invoke(self, *args, **kwargs):
+        kwargs.setdefault('finding_timeout', finding_timeout)
+        return invoke(self, *args, **kwargs)
+    zeronimo.Invoker.invoke = patched_invoke
+
+
+def pytest_generate_tests(metafunc):
+    """Generates worker and customer fixtures."""
+    argnames = []
+    argvalues = []
+    ids = []
+    for protocol in get_testing_protocols(metafunc):
+        curargvalues = []
+        tunnel_socks = []
+        for param in metafunc.fixturenames:
+            if param.startswith('worker'):
+                # defer making a worker in resolve_fixtures
+                curargvalues.append(deferred_worker(protocol))
+            elif param.startswith('customer'):
+                # defer making a customer in resolve_fixtures
+                curargvalues.append(deferred_customer(protocol))
+            elif re.match('tunnel_sock(et)?s', param):
+                # defer making tunnel sockets which connect to the workers
+                curargvalues.append(deferred_tunnel_sockets())
+            elif param.startswith('addr'):
+                curargvalues.append(deferred_addr(protocol))
+            elif param.startswith('fanout_addr'):
+                curargvalues.append(deferred_fanout_addr(protocol))
+            elif param == 'prefix':
+                curargvalues.append(deferred_prefix())
+            elif param == 'ctx':
+                curargvalues.append(deferred_ctx())
+            else:
+                continue
+            if not ids:
+                argnames.append(param)
+        argvalues.append(curargvalues)
+        ids.append(protocol)
+    if argnames:
+        metafunc.parametrize(argnames, argvalues, ids=ids)
+
+
 def get_testing_protocols(metafunc):
     # windows doesn't support ipc
     if metafunc.config.option.all:
@@ -246,6 +292,18 @@ def patch_worker_to_be_slow(worker, delay):
     worker.send_reply = functools.partial(send_reply, worker)
 
 
+def stop_zeronimo(runners):
+    def ignore_runtimeerror(f):
+        try:
+            return f()
+        except RuntimeError:
+            pass
+    stoppings = []
+    for runner in runners:
+        stoppings.append(gevent.spawn(ignore_runtimeerror, runner.stop))
+    gevent.joinall(stoppings, raise_error=True)
+
+
 # zmq helpers
 
 
@@ -274,7 +332,6 @@ def wait_to_close(addr, timeout=1):
         def still_exists():
             for conn in ps.get_connections():
                 if conn.local_address == (host, port):
-                    print 'still exists'
                     return True
             return False
     with gevent.Timeout(timeout, '{} still exists'.format(addr)):
@@ -346,7 +403,7 @@ deferred_ctx = namedtuple('deferred_ctx', [])
 
 
 @decorator
-def autowork(f, *args):
+def resolve_fixtures(f, *args):
     """Workers which are yielded by the function will start and stop
     automatically.
     """
@@ -407,61 +464,3 @@ def autowork(f, *args):
                 return conn.status in ('LISTEN', 'ESTABLISHED')
             conns = filter(is_unexpected_conn, ps.get_connections())
             assert not conns
-
-
-def stop_zeronimo(runners):
-    def ignore_runtimeerror(f):
-        try:
-            return f()
-        except RuntimeError:
-            pass
-    stoppings = []
-    for runner in runners:
-        stoppings.append(gevent.spawn(ignore_runtimeerror, runner.stop))
-    gevent.joinall(stoppings, raise_error=True)
-
-
-def pytest_configure(config):
-    globals()['config'] = config
-    finding_timeout = config.getoption('--finding-timeout')
-    invoke = zeronimo.Invoker.invoke
-    def patched_invoke(self, *args, **kwargs):
-        kwargs.setdefault('finding_timeout', finding_timeout)
-        return invoke(self, *args, **kwargs)
-    zeronimo.Invoker.invoke = patched_invoke
-
-
-def pytest_generate_tests(metafunc):
-    """Generates worker and customer fixtures."""
-    argnames = []
-    argvalues = []
-    ids = []
-    for protocol in get_testing_protocols(metafunc):
-        curargvalues = []
-        tunnel_socks = []
-        for param in metafunc.fixturenames:
-            if param.startswith('worker'):
-                # defer making a worker in autowork
-                curargvalues.append(deferred_worker(protocol))
-            elif param.startswith('customer'):
-                # defer making a customer in autowork
-                curargvalues.append(deferred_customer(protocol))
-            elif re.match('tunnel_sock(et)?s', param):
-                # defer making tunnel sockets which connect to the workers
-                curargvalues.append(deferred_tunnel_sockets())
-            elif param.startswith('addr'):
-                curargvalues.append(deferred_addr(protocol))
-            elif param.startswith('fanout_addr'):
-                curargvalues.append(deferred_fanout_addr(protocol))
-            elif param == 'prefix':
-                curargvalues.append(deferred_prefix())
-            elif param == 'ctx':
-                curargvalues.append(deferred_ctx())
-            else:
-                continue
-            if not ids:
-                argnames.append(param)
-        argvalues.append(curargvalues)
-        ids.append(protocol)
-    if argnames:
-        metafunc.parametrize(argnames, argvalues, ids=ids)
