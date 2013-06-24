@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from collections import namedtuple
 import functools
+import itertools
 import os
 import platform
 import random
@@ -305,6 +306,19 @@ def is_unexpected_conn(conn):
     return conn.status in ('LISTEN', 'ESTABLISHED')
 
 
+class Will(object):
+
+    def __init__(self, function):
+        self.function = function
+
+    def __call__(self, *args, **kwargs):
+        yield
+        self.function(*args, **kwargs)
+
+
+will = Will
+
+
 @decorator
 def autowork(f, *args):
     """Workers which are yielded by the function will start and stop
@@ -328,9 +342,14 @@ def autowork(f, *args):
         elif isinstance(arg, deferred_fanout_addr):
             args[x] = protocols[arg.protocol][1]()
     wills = []
-    def reserve(will):
-        assert next(will) is None
-        wills.append(will)
+    def reserve(gen):
+        more = []
+        for will in itertools.chain(gen, more):
+            if isinstance(will, types.GeneratorType):
+                more.extend(will)
+            elif isinstance(will, Will):
+                assert next(will) is None
+                wills.append(will)
     # process deferred tunnel sockets because it should be called before the
     # workers start
     if workers:
@@ -349,8 +368,7 @@ def autowork(f, *args):
     try:
         rv = f(*args)
         if isinstance(rv, types.GeneratorType):
-            for will in rv:
-                reserve(will)
+            reserve(rv)
     finally:
         for will in wills:
             with pytest.raises(StopIteration):
@@ -359,13 +377,8 @@ def autowork(f, *args):
         assert not unexpected_conns
 
 
-def will(function, *args, **kwargs):
-    yield
-    function(*args, **kwargs)
-
-
+@will
 def will_stop(runner):
-    yield
     try:
         runner.stop()
     except RuntimeError:
@@ -384,8 +397,8 @@ def will_stop(runner):
     assert not runner.is_running()
 
 
+@will
 def will_close(sock):
-    yield
     sock.close()
     gevent.sleep(0.000001)
 

@@ -99,7 +99,7 @@ def object_hook(obj):
     return obj
 
 
-def zmq_send(sock, obj, flags=0, prefix=''):
+def send(sock, obj, flags=0, prefix=''):
     """Same with :meth:`zmq.Socket.send_pyobj` but can append prefix for
     filtering subscription.
     """
@@ -109,7 +109,7 @@ def zmq_send(sock, obj, flags=0, prefix=''):
     return sock.send(msg, flags)
 
 
-def zmq_recv(sock, flags=0):
+def recv(sock, flags=0):
     """Same with :meth:`zmq.Socket.recv_pyobj`."""
     msg = sock.recv(flags)
     serial = prefix_pattern.sub('', msg)
@@ -298,7 +298,7 @@ class Worker(Runner):
                 break
             for sock, event in events:
                 if event & zmq.POLLIN:
-                    invocation = Invocation(*zmq_recv(sock))
+                    invocation = Invocation(*recv(sock))
                     spawn(self.run_task, invocation, sock.context)
                 if event & zmq.POLLERR:
                     assert 0
@@ -342,7 +342,7 @@ class Worker(Runner):
 
     def send_reply(self, sock, method, data, task_id, run_id):
         reply = Reply(method, data, task_id, run_id)
-        return zmq_send(sock, tuple(reply))
+        return send(sock, tuple(reply))
 
     def __repr__(self):
         keywords = ['info'] if self.info is not None else []
@@ -471,7 +471,7 @@ class Customer(Runner):
                 break
             event = events[0][1]
             if event & zmq.POLLIN:
-                reply = Reply(*zmq_recv(self.socket))
+                reply = Reply(*recv(self.socket))
                 self.dispatch_reply(reply)
             if event & zmq.POLLERR:
                 assert 0
@@ -631,7 +631,7 @@ class Invoker(object):
         sock = get_socket(self.sockets, socket_type, 'Tunnel')
         invocation = Invocation(
             self.function_name, self.args, self.kwargs, self.id, None)
-        zmq_send(sock, tuple(invocation), prefix=self.prefix)
+        send(sock, tuple(invocation), prefix=self.prefix)
 
     def _invoke(self, as_task=False, finding_timeout=0.01):
         sock = get_socket(self.sockets, zmq.PUSH, 'Tunnel')
@@ -641,7 +641,7 @@ class Invoker(object):
         self.customer.register_invoker(self)
         reply = None
         rejected = 0
-        zmq_send(sock, tuple(invocation), prefix=self.prefix)
+        send(sock, tuple(invocation), prefix=self.prefix)
         try:
             with Timeout(finding_timeout, False):
                 while True:
@@ -649,7 +649,7 @@ class Invoker(object):
                     if reply.method == REJECT:
                         rejected += 1
                         # send again
-                        zmq_send(sock, tuple(invocation), prefix=self.prefix)
+                        send(sock, tuple(invocation), prefix=self.prefix)
                         continue
                     elif reply.method == ACCEPT:
                         break
@@ -680,7 +680,7 @@ class Invoker(object):
         self.customer.register_invoker(self)
         replies = []
         rejected = 0
-        zmq_send(sock, tuple(invocation), prefix=self.prefix)
+        send(sock, tuple(invocation), prefix=self.prefix)
         with Timeout(finding_timeout, False):
             while True:
                 reply = self.queue.get()
