@@ -20,7 +20,6 @@ import zeronimo
 
 
 tick = 0.001
-ctx = zmq.Context()
 ps = psutil.Process(os.getpid())
 windows = platform.system() == 'Windows'
 #gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
@@ -347,19 +346,6 @@ def is_unexpected_conn(conn):
     return conn.status in ('LISTEN', 'ESTABLISHED')
 
 
-class Will(object):
-
-    def __init__(self, function):
-        self.function = function
-
-    def __call__(self, *args, **kwargs):
-        yield
-        self.function(*args, **kwargs)
-
-
-will = Will
-
-
 @decorator
 def autowork(f, *args):
     """Workers which are yielded by the function will start and stop
@@ -424,37 +410,6 @@ def stop_zeronimo(runners):
     for runner in runners:
         stoppings.append(gevent.spawn(ignore_runtimeerror, runner.stop))
     gevent.joinall(stoppings)
-
-
-@will
-def will_stop(runner):
-    try:
-        runner.stop()
-    except RuntimeError:
-        pass
-    if isinstance(runner, zeronimo.Worker):
-        sockets = runner.sockets
-    elif isinstance(runner, zeronimo.Customer):
-        sockets = [runner.socket]
-    else:
-        sockets = []
-    for sock in sockets:
-        sock_closing = autowork.will_close(sock)
-        next(sock_closing)
-        with pytest.raises(StopIteration):
-            next(sock_closing)
-    assert not runner.is_running()
-
-
-@will
-def will_close(sock):
-    sock.close()
-    gevent.sleep(0.000001)
-
-
-autowork.will = will
-autowork.will_stop = will_stop
-autowork.will_close = will_close
 
 
 def pytest_generate_tests(metafunc):

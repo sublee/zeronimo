@@ -9,9 +9,7 @@ from gevent import Timeout
 import pytest
 import zmq.green as zmq
 
-from conftest import (
-    autowork, ctx,
-    patch_worker_to_be_slow)
+from conftest import autowork, link_sockets, wait_to_close
 import zeronimo
 
 
@@ -20,7 +18,7 @@ ps = psutil.Process(os.getpid())
 
 
 @autowork
-def test_msg(addr, prefix):
+def test_msg(ctx, addr, prefix):
     push = ctx.socket(zmq.PUSH)
     pull = ctx.socket(zmq.PULL)
     link_sockets(addr, push, [pull])
@@ -44,7 +42,7 @@ def test_msg(addr, prefix):
 
 
 @autowork
-def test_reopen(addr):
+def test_reopen(ctx, addr):
     for x in xrange(100):
         pull = ctx.socket(zmq.PULL)
         push = ctx.socket(zmq.PUSH)
@@ -57,7 +55,7 @@ def test_reopen(addr):
 
 
 @autowork
-def test_reopen_and_poll(addr):
+def test_reopen_and_poll(ctx, addr):
     for x in xrange(100):
         pull = ctx.socket(zmq.PULL)
         push = ctx.socket(zmq.PUSH)

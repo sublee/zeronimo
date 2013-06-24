@@ -477,6 +477,8 @@ class Customer(Runner):
             if events is True:  # has been stopped
                 print 'Customer.stopped'
                 break
+            elif not events:  # polling timed out
+                continue
             event = events[0][1]
             if event & zmq.POLLIN:
                 reply = Reply(*recv(self.socket))
