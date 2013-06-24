@@ -51,9 +51,7 @@ def get_testing_protocols(metafunc):
         testing_protocols = []
         if metafunc.config.option.inproc:
             testing_protocols.append('inproc')
-        if metafunc.config.option.ipc:
-            if windows:
-                raise RuntimeError('Windows does not support IPC')
+        if not windows and metafunc.config.option.ipc:
             testing_protocols.append('ipc')
         if metafunc.config.option.tcp:
             testing_protocols.append('tcp')
