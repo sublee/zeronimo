@@ -39,7 +39,7 @@ def test_running():
 
 
 @autowork
-def _test_basic_zeronimo(ctx, addr, fanout_addr, addr_customer):
+def test_basic_zeronimo(ctx, addr, fanout_addr, addr_customer):
     # prepare sockets
     prefix = 'test11'
     worker_pull = ctx.socket(zmq.PULL)
@@ -81,7 +81,6 @@ def test_tunnel_context(customer, worker, tunnel_socks, prefix):
         assert tunnel(fanout=True).simple() == ['ok']
 
 
-'''
 @autowork
 def test_tunnel(customer, worker, tunnel_socks, prefix):
     assert len(customer.tunnels) == 0
@@ -225,20 +224,21 @@ def test_subscription(customer, worker1, worker2, tunnel_socks, prefix):
 
 
 @autowork
-def test_offbeat(customer, worker1, worker2, tunnel_socks, prefix):
+def test_offbeat(request, customer, worker1, worker2, tunnel_socks, prefix):
     # worker2 sleeps 0.2 seconds before accepting
-    patch_worker_to_be_slow(worker2, delay=0.02)
+    base = request.config.getoption('--finding-timeout')
+    patch_worker_to_be_slow(worker2, delay=base * 2)
     with customer.link(tunnel_socks, prefix) as tunnel:
-        tasks = tunnel(fanout=True, as_task=True).sleep_range(0.01, 5)
+        tasks = tunnel(fanout=True, as_task=True).sleep_range(base, 5)
         assert len(tasks) == 1
         list(tasks[0]())
         assert len(tasks) == 2
-        generous = tunnel(fanout=True, as_task=True, finding_timeout=0.05)
+        generous = tunnel(fanout=True, as_task=True, finding_timeout=base * 5)
         assert len(generous.simple()) == 2
 
 
 @autowork
-def test_device(customer1, customer2, prefix, addr1, addr2, addr3, addr4):
+def test_device(ctx, customer1, customer2, prefix, addr1, addr2, addr3, addr4):
     # run devices
     streamer_in_addr, streamer_out_addr = addr1, addr2
     forwarder_in_addr, forwarder_out_addr = addr3, addr4
@@ -288,7 +288,7 @@ def test_device(customer1, customer2, prefix, addr1, addr2, addr3, addr4):
 
 @pytest.mark.xfail('zmq.zmq_version_info() < (3, 2)')
 @autowork
-def test_forwarder(customer1, customer2, prefix, addr1, addr2):
+def test_forwarder(ctx, customer1, customer2, prefix, addr1, addr2):
     # run devices
     forwarder_in_addr, forwarder_out_addr = addr1, addr2
     forwarder = spawn(
@@ -321,7 +321,7 @@ def test_forwarder(customer1, customer2, prefix, addr1, addr2):
 
 
 @autowork
-def test_simple(addr1, addr2):
+def test_simple(ctx, addr1, addr2):
     # sockets
     worker_sock = ctx.socket(zmq.PULL)
     worker_sock.bind(addr1)
@@ -375,7 +375,7 @@ def test_concurrent_tunnels(customer, worker, tunnel_socks, prefix):
 
 
 @autowork
-def test_proxied_customer(worker, tunnel_socks, prefix, addr1, addr2):
+def test_proxied_customer(ctx, worker, tunnel_socks, prefix, addr1, addr2):
     streamer = spawn(
         run_device, ctx.socket(zmq.PULL), ctx.socket(zmq.PUSH), addr1, addr2)
     streamer.join(0)
@@ -427,7 +427,8 @@ def test_stopped_customer(customer, worker, tunnel_socks, prefix):
     assert tunnel.simple() == 'ok'
 
 
-def test_socket_type_error():
+@autowork
+def test_socket_type_error(ctx):
     with pytest.raises(ValueError):
         zeronimo.Customer(ctx.socket(zmq.PAIR), 'x')
     with pytest.raises(ValueError):
@@ -435,4 +436,3 @@ def test_socket_type_error():
     customer = zeronimo.Customer(ctx.socket(zmq.PULL), 'x')
     with pytest.raises(ValueError):
         tunnel = customer.link([ctx.socket(zmq.PULL)])
-'''

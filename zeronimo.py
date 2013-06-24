@@ -633,7 +633,7 @@ class Invoker(object):
         return getattr(self.tunnel, '_znm_' + attr)
 
     def invoke(self, wait=True, fanout=False, as_task=False,
-               finding_timeout=0.01):
+               finding_timeout=0.1):
         if not wait:
             return self._invoke_nowait(fanout)
         if self.customer is None:
