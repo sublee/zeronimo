@@ -6,6 +6,7 @@ import os
 import platform
 import random
 import re
+import shutil
 import socket
 import sys
 import types
@@ -19,7 +20,10 @@ import zmq.green as zmq
 import zeronimo
 
 
-tick = 0.001
+TICK = 0.001
+FEED_DIR = os.path.join(os.path.dirname(__file__), '_feeds')
+
+
 ps = psutil.Process(os.getpid())
 windows = platform.system() == 'Windows'
 #gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
@@ -74,12 +78,11 @@ def inproc():
 
 def ipc():
     """Generates available IPC address."""
-    feed_dir = os.path.join(os.path.dirname(__file__), '_feeds')
-    if not os.path.isdir(feed_dir):
-        os.mkdir(feed_dir)
+    if not os.path.isdir(FEED_DIR):
+        os.mkdir(FEED_DIR)
     pipe = None
     while pipe is None or os.path.exists(pipe):
-        pipe = os.path.join(feed_dir, zeronimo.alloc_id())
+        pipe = os.path.join(FEED_DIR, zeronimo.alloc_id())
     return 'ipc://{0}'.format(pipe)
 
 
@@ -246,7 +249,7 @@ def link_sockets(addr, server_sock, client_socks):
         try:
             server_sock.bind(addr)
         except zmq.ZMQError:
-            gevent.sleep(tick)
+            gevent.sleep(TICK)
         else:
             break
     for sock in client_socks:
@@ -256,7 +259,7 @@ def link_sockets(addr, server_sock, client_socks):
 def wait_to_close(addr, timeout=1):
     protocol, location = addr.split('://', 1)
     if protocol == 'inproc':
-        gevent.sleep(tick)
+        gevent.sleep(TICK)
         return
     elif protocol == 'ipc':
         still_exists = lambda: os.path.exists(location)
@@ -271,7 +274,7 @@ def wait_to_close(addr, timeout=1):
             return False
     with gevent.Timeout(timeout, '{} still exists'.format(addr)):
         while still_exists():
-            gevent.sleep(tick)
+            gevent.sleep(TICK)
 
 
 def sync_pubsub(pub_sock, sub_socks, prefix=''):
@@ -355,8 +358,11 @@ def autowork(f, *args):
     ctx = zmq.Context()
     # process deferred worker, customer, prefix, addr, fanout_addr
     prefix = zeronimo.alloc_id()
+    protocol = None
     workers = []
     for x, arg in enumerate(args):
+        if protocol is None and hasattr(arg, 'protocol'):
+            protocol = arg.protocol
         if isinstance(arg, deferred_worker):
             worker = make_worker(ctx, arg.protocol, prefix)
             workers.append(worker)
@@ -394,9 +400,12 @@ def autowork(f, *args):
     finally:
         for will in wills:
             will()
-        print 'destroy'
+        #print 'destroy'
         ctx.destroy()
+        if protocol == 'ipc':
+            shutil.rmtree(FEED_DIR)
         conns = filter(is_unexpected_conn, ps.get_connections())
+
         assert not conns
 
 
@@ -409,7 +418,7 @@ def stop_zeronimo(runners):
     stoppings = []
     for runner in runners:
         stoppings.append(gevent.spawn(ignore_runtimeerror, runner.stop))
-    gevent.joinall(stoppings)
+    gevent.joinall(stoppings, raise_error=True)
 
 
 def pytest_generate_tests(metafunc):

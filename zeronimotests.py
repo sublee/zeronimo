@@ -39,7 +39,7 @@ def test_running():
 
 
 @autowork
-def test_basic_zeronimo(ctx, addr, fanout_addr, addr_customer):
+def _test_basic_zeronimo(ctx, addr, fanout_addr, addr_customer):
     # prepare sockets
     prefix = 'test11'
     worker_pull = ctx.socket(zmq.PULL)

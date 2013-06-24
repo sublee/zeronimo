@@ -36,16 +36,22 @@ def alloc_id(exclusive=None):
 
 
 def poll_or_stopped(poller, stopper):
+    waiting_stop = spawn(stopper.wait)
+    try:
+        waiting_stop.get(block=False)
+    except Timeout:
+        pass
+    else:
+        return True
     async_result = AsyncResult()
+    waiting_stop.link(async_result)
     polling = spawn(poller.poll)
-    running = spawn(stopper.wait)
     polling.link(async_result)
-    running.link(async_result)
     try:
         return async_result.get()
     finally:
         polling.kill()
-        running.kill()
+        waiting_stop.kill()
 
 
 def should_yield(val):

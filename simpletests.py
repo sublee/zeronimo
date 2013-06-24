@@ -9,7 +9,7 @@ from gevent import Timeout
 import pytest
 import zmq.green as zmq
 
-from conftest import autowork, link_sockets, wait_to_close
+from conftest import autowork, link_sockets, wait_to_close, sync_pubsub
 import zeronimo
 
 
@@ -36,27 +36,24 @@ def test_msg(ctx, addr, prefix):
         assert zeronimo.recv(pull) == Exception
         zeronimo.send(push, Exception('Allons-y'), prefix=p)
         assert isinstance(zeronimo.recv(pull), Exception)
-    push.close()
-    pull.close()
-    wait_to_close(addr)
 
 
 @autowork
 def test_reopen(ctx, addr):
     for x in xrange(100):
+        ctx = zmq.Context()
         pull = ctx.socket(zmq.PULL)
         push = ctx.socket(zmq.PUSH)
         link_sockets(addr, pull, [push])
         zeronimo.send(push, 'expected')
         assert zeronimo.recv(pull) == 'expected'
-        pull.close()
-        push.close()
-        wait_to_close(addr)
+        ctx.destroy()
 
 
 @autowork
 def test_reopen_and_poll(ctx, addr):
     for x in xrange(100):
+        ctx = zmq.Context()
         pull = ctx.socket(zmq.PULL)
         push = ctx.socket(zmq.PUSH)
         link_sockets(addr, pull, [push])
@@ -66,6 +63,22 @@ def test_reopen_and_poll(ctx, addr):
         zeronimo.send(push, 'expected')
         assert polling.get() == [(pull, zmq.POLLIN)]
         assert zeronimo.recv(pull) == 'expected'
-        pull.close()
-        push.close()
-        wait_to_close(addr)
+        ctx.destroy()
+
+
+@autowork
+def test_reopen_and_poll_pubsub(ctx, addr, prefix):
+    for x in xrange(100):
+        ctx = zmq.Context()
+        pub = ctx.socket(zmq.PUB)
+        sub = ctx.socket(zmq.SUB)
+        sub.setsockopt(zmq.SUBSCRIBE, prefix)
+        link_sockets(addr, pub, [sub])
+        sync_pubsub(pub, [sub], prefix)
+        poller = zmq.Poller()
+        poller.register(sub)
+        polling = gevent.spawn(poller.poll)
+        zeronimo.send(pub, 'expected', prefix=prefix)
+        assert polling.get() == [(sub, zmq.POLLIN)]
+        assert zeronimo.recv(sub) == 'expected'
+        ctx.destroy()
