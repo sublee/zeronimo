@@ -8,7 +8,7 @@ import pytest
 import zmq.green as zmq
 
 from conftest import (
-    app, autowork, ctx, green, run_device, sync_pubsub,
+    app, autowork, ctx, green, run_device, sync_pubsub, stop_all,
     patch_worker_to_be_slow)
 import zeronimo
 
@@ -39,7 +39,7 @@ def test_running():
 
 
 @autowork
-def test_basic_zeronimo():
+def test_basic_zeronimo(addr, fanout_addr, addr_customer):
     # prepare sockets
     prefix = 'test11'
     worker_pull = ctx.socket(zmq.PULL)
@@ -47,26 +47,23 @@ def test_basic_zeronimo():
     customer_pull = ctx.socket(zmq.PULL)
     tunnel_push = ctx.socket(zmq.PUSH)
     tunnel_pub = ctx.socket(zmq.PUB)
-    worker_pull.bind('inproc://worker')
-    worker_sub.bind('inproc://worker-fanout')
-    customer_pull.bind('inproc://customer')
-    tunnel_push.connect('inproc://worker')
-    tunnel_pub.connect('inproc://worker-fanout')
+    worker_pull.bind(addr)
+    worker_sub.bind(fanout_addr)
+    customer_pull.bind(addr_customer)
+    tunnel_push.connect(addr)
+    tunnel_pub.connect(fanout_addr)
     worker_sub.set(zmq.SUBSCRIBE, prefix)
     sync_pubsub(tunnel_pub, [worker_sub], prefix)
     # prepare runners
     worker = zeronimo.Worker(app, [worker_pull, worker_sub])
-    customer = zeronimo.Customer(customer_pull, 'inproc://customer')
+    customer = zeronimo.Customer(customer_pull, addr_customer)
     worker.start()
     customer.start()
-    yield autowork.will_stop(worker)
-    yield autowork.will_stop(customer)
-    yield autowork.will_close(tunnel_push)
-    yield autowork.will_close(tunnel_pub)
     # zeronimo!
     tunnel = customer.link([tunnel_push, tunnel_pub], prefix)
     assert tunnel.simple() == 'ok'
     assert tunnel(fanout=True).simple() == ['ok']
+    stop_all([worker, customer, tunnel], [addr, fanout_addr, addr_customer])
 
 
 @autowork
@@ -84,6 +81,7 @@ def test_tunnel_context(customer, worker, tunnel_socks, prefix):
         assert tunnel(fanout=True).simple() == ['ok']
 
 
+'''
 @autowork
 def test_tunnel(customer, worker, tunnel_socks, prefix):
     assert len(customer.tunnels) == 0
@@ -437,3 +435,4 @@ def test_socket_type_error():
     customer = zeronimo.Customer(ctx.socket(zmq.PULL), 'x')
     with pytest.raises(ValueError):
         tunnel = customer.link([ctx.socket(zmq.PULL)])
+'''

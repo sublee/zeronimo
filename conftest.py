@@ -19,6 +19,7 @@ import zmq.green as zmq
 import zeronimo
 
 
+tick = 0.001
 ctx = zmq.Context()
 ps = psutil.Process(os.getpid())
 windows = platform.system() == 'Windows'
@@ -102,8 +103,11 @@ def epgm():
     return 'epgm://127.0.0.1;224.1.1.1:5555'
 
 
-protocols = {'inproc': (inproc, inproc), 'ipc': (ipc, ipc), 'tcp': (tcp, tcp),
-             'pgm': (tcp, pgm), 'epgm': (tcp, epgm)}
+protocols = {'inproc': (inproc, inproc),
+             'ipc': (ipc, ipc),
+             'tcp': (tcp, tcp),
+             'pgm': (tcp, pgm),  # addresses for direct and fanout
+             'epgm': (tcp, epgm)}
 
 
 class Application(object):
@@ -208,19 +212,19 @@ def make_tunnel_sockets(workers):
     push = ctx.socket(zmq.PUSH)
     pub = ctx.socket(zmq.PUB)
     subs = []
-    pgm_addrs = set()
+    #pgm_addrs = set()
     for worker in workers:
         subs.extend(sock for sock in worker.sockets
                     if sock.socket_type == zmq.SUB)
         push_addr, pub_addr, prefix = worker.info
         push.connect(push_addr)
-        if re.match('e?pgm://', pub_addr):
-            if pub_addr in pgm_addrs:
-                continue
-            pgm_addrs.add(pub_addr)
+        #if re.match('e?pgm://', pub_addr):
+        #    if pub_addr in pgm_addrs:
+        #        continue
+        #    pgm_addrs.add(pub_addr)
         pub.connect(pub_addr)
     sync_pubsub(pub, subs, prefix)
-    return (push, pub)
+    return {push: push_addr, pub: pub_addr}
 
 
 def patch_worker_to_be_slow(worker, delay):
@@ -235,16 +239,40 @@ def patch_worker_to_be_slow(worker, delay):
     worker.send_reply = functools.partial(send_reply, worker)
 
 
-def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
-    try:
-        if in_addr is not None:
-            in_sock.bind(in_addr)
-        if out_addr is not None:
-            out_sock.bind(out_addr)
-        zmq.device(0, in_sock, out_sock)
-    finally:
-        in_sock.close()
-        out_sock.close()
+# zmq helpers
+
+
+def link_sockets(addr, server_sock, client_socks):
+    while True:
+        try:
+            server_sock.bind(addr)
+        except zmq.ZMQError:
+            gevent.sleep(tick)
+        else:
+            break
+    for sock in client_socks:
+        sock.connect(addr)
+
+
+def wait_to_close(addr, timeout=1):
+    protocol, location = addr.split('://', 1)
+    if protocol == 'inproc':
+        gevent.sleep(tick)
+        return
+    elif protocol == 'ipc':
+        still_exists = lambda: os.path.exists(location)
+    elif protocol == 'tcp':
+        host, port = location.split(':')
+        port = int(port)
+        def still_exists():
+            for conn in ps.get_connections():
+                if conn.local_address == (host, port):
+                    print 'still exists'
+                    return True
+            return False
+    with gevent.Timeout(timeout, '{} still exists'.format(addr)):
+        while still_exists():
+            gevent.sleep(tick)
 
 
 def sync_pubsub(pub_sock, sub_socks, prefix=''):
@@ -283,13 +311,16 @@ def sync_pubsub(pub_sock, sub_socks, prefix=''):
             assert sub_sock.recv().endswith(':sync')
 
 
-def sync_fanout(tunnel, workers):
-    tunnel_sock = tunnel._znm_sockets[zmq.PUB]
-    worker_socks = []
-    for worker in workers:
-        worker_socks.extend([sock for sock in worker.sockets
-                             if sock.socket_type == zmq.SUB])
-    sync_pubsub(tunnel_sock, worker_socks, tunnel._znm_prefix)
+def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
+    try:
+        if in_addr is not None:
+            in_sock.bind(in_addr)
+        if out_addr is not None:
+            out_sock.bind(out_addr)
+        zmq.device(0, in_sock, out_sock)
+    finally:
+        in_sock.close()
+        out_sock.close()
 
 
 @decorator
@@ -351,39 +382,59 @@ def autowork(f, *args):
         elif isinstance(arg, deferred_fanout_addr):
             args[x] = protocols[arg.protocol][1]()
     wills = []
-    def reserve(gen):
-        more = []
-        for will in itertools.chain(gen, more):
-            if isinstance(will, types.GeneratorType):
-                more.extend(will)
-            elif isinstance(will, Will):
-                assert next(will) is None
-                wills.append(will)
     # process deferred tunnel sockets because it should be called before the
     # workers start
     if workers:
         for x, arg in enumerate(args):
             if isinstance(arg, deferred_tunnel_sockets):
                 tunnel_socks = make_tunnel_sockets(workers)
-                args[x] = tunnel_socks
-                [reserve(autowork.will_close(sock)) for sock in tunnel_socks]
+                args[x] = tunnel_socks.keys()
+                for sock, addr in tunnel_socks.iteritems():
+                    wills.append(sock.close)
     # start all runners
+    runners = []
     for arg in args:
         if isinstance(arg, zeronimo.Runner):
             arg.start()
-            reserve(autowork.will_stop(arg))
+            runners.append(arg)
+    wills.append(lambda: stop_all(runners))
     # run the function
     f = green(f)
     try:
-        rv = f(*args)
-        if isinstance(rv, types.GeneratorType):
-            reserve(rv)
+        return f(*args)
     finally:
         for will in wills:
-            with pytest.raises(StopIteration):
-                next(will)
+            will()
         unexpected_conns = filter(is_unexpected_conn, ps.get_connections())
+        for conn in unexpected_conns:
+            print '{0} -> {1} ({2})'.format(
+                conn.local_address, conn.remote_address, conn.status)
         assert not unexpected_conns
+
+
+def stop_all(znm_objs, addrs=None):
+    if addrs is None:
+        addrs = []
+    for znm_obj in znm_objs:
+        try:
+            znm_obj.stop()
+        except (RuntimeError, AttributeError):
+            pass
+        if isinstance(znm_obj, zeronimo.Worker):
+            sockets = znm_obj.sockets
+            if isinstance(znm_obj.info, tuple):
+                pull_addr, sub_addr, prefix = znm_obj.info
+                addrs.extend([pull_addr, sub_addr])
+        elif isinstance(znm_obj, zeronimo.Customer):
+            sockets = [znm_obj.socket]
+        elif isinstance(znm_obj, zeronimo.Tunnel):
+            sockets = znm_obj._znm_sockets.values()
+        else:
+            sockets = []
+        for sock in sockets:
+            sock.close()
+    for addr in addrs:
+        wait_to_close(addr)
 
 
 @will
