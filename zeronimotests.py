@@ -208,6 +208,7 @@ def test_reject(customer, worker1, worker2, tunnel_socks, prefix):
 
 @autowork
 def test_subscription(customer, worker1, worker2, tunnel_socks, prefix):
+    pub = [sock for sock in tunnel_socks if sock.socket_type == zmq.PUB][0]
     sub1 = [sock for sock in worker1.sockets if sock.socket_type == zmq.SUB][0]
     sub2 = [sock for sock in worker2.sockets if sock.socket_type == zmq.SUB][0]
     with customer.link(tunnel_socks, prefix) as tunnel:
@@ -217,9 +218,17 @@ def test_subscription(customer, worker1, worker2, tunnel_socks, prefix):
         sub2.set(zmq.UNSUBSCRIBE, prefix)
         with pytest.raises(zeronimo.WorkerNotFound):
             tunnel(fanout=True).simple()
+        worker1.stop()
         sub1.set(zmq.SUBSCRIBE, prefix)
+        sync_pubsub(pub, [sub1], prefix)
+        worker1.start()
         assert len(tunnel(fanout=True).simple()) == 1
+        worker1.stop()
+        worker2.stop()
         sub2.set(zmq.SUBSCRIBE, prefix)
+        sync_pubsub(pub, [sub1, sub2], prefix)
+        worker1.start()
+        worker2.start()
         assert len(tunnel(fanout=True).simple()) == 2
 
 

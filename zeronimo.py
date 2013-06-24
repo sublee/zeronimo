@@ -304,15 +304,12 @@ class Worker(Runner):
         for sock in self.sockets:
             poller.register(sock, zmq.POLLIN)
         while not stopper.is_set():
-            print 'Worker.poll'
             events = poll_or_stopped(poller, stopper)
             if events is True:  # has been stopped
-                print 'Worker.stopped'
                 break
             for sock, event in events:
                 if event & zmq.POLLIN:
                     invocation = Invocation(*recv(sock))
-                    print 'Worker.recv', invocation
                     spawn(self.run_task, invocation, sock.context)
                 if event & zmq.POLLERR:
                     assert 0
@@ -479,17 +476,14 @@ class Customer(Runner):
         poller = zmq.Poller()
         poller.register(self.socket, zmq.POLLIN)
         while not stopper.is_set():
-            print 'Customer.poll'
             events = poll_or_stopped(poller, stopper)
             if events is True:  # has been stopped
-                print 'Customer.stopped'
                 break
             elif not events:  # polling timed out
                 continue
             event = events[0][1]
             if event & zmq.POLLIN:
                 reply = Reply(*recv(self.socket))
-                print 'Customer.recv', reply
                 self.dispatch_reply(reply)
             if event & zmq.POLLERR:
                 assert 0

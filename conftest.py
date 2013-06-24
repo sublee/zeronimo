@@ -22,10 +22,11 @@ import zeronimo
 
 TICK = 0.001
 FEED_DIR = os.path.join(os.path.dirname(__file__), '_feeds')
+WINDOWS = platform.system() == 'Windows'
 
 
 ps = psutil.Process(os.getpid())
-windows = platform.system() == 'Windows'
+config = None
 #gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
@@ -34,7 +35,7 @@ def pytest_addoption(parser):
                      help='tests with all protocols.')
     parser.addoption('--inproc', action='store_true',
                      help='tests with inproc protocol.')
-    ipc_help = 'ignored in windows.' if windows else 'tests with ipc protocol.'
+    ipc_help = 'ignored in windows.' if WINDOWS else 'tests with ipc protocol.'
     parser.addoption('--ipc', action='store_true',
                      help=ipc_help)
     parser.addoption('--tcp', action='store_true',
@@ -45,6 +46,8 @@ def pytest_addoption(parser):
                      help='tests with epgm protocol.')
     parser.addoption('--finding-timeout', action='store', type='float',
                      default=0.01, help='finding timeout in seconds.')
+    parser.addoption('--clear', action='store_true',
+                     help='destroy context at each tests done.')
 
 
 def get_testing_protocols(metafunc):
@@ -63,7 +66,7 @@ def get_testing_protocols(metafunc):
             testing_protocols.append('pgm')
         if metafunc.config.getoption('--epgm'):
             testing_protocols.append('epgm')
-    if windows:
+    if WINDOWS:
         try:
             testing_protocols.remove('ipc')
         except ValueError:
@@ -342,15 +345,6 @@ deferred_prefix = namedtuple('deferred_prefix', [])
 deferred_ctx = namedtuple('deferred_ctx', [])
 
 
-def is_unexpected_conn(conn):
-    ports = [addr[1] if addr else None
-             for addr in (conn.local_address, conn.remote_address)]
-    if windows and 5905 in ports:
-        # libzmq uses TCP port 5905 for the signaler in Windows.
-        return False
-    return conn.status in ('LISTEN', 'ESTABLISHED')
-
-
 @decorator
 def autowork(f, *args):
     """Workers which are yielded by the function will start and stop
@@ -387,8 +381,6 @@ def autowork(f, *args):
             if isinstance(arg, deferred_tunnel_sockets):
                 tunnel_socks = make_tunnel_sockets(ctx, workers)
                 args[x] = tunnel_socks.keys()
-                #for sock, addr in tunnel_socks.iteritems():
-                #    wills.append(sock.close)
     # start all runners
     runners = []
     for arg in args:
@@ -402,12 +394,19 @@ def autowork(f, *args):
     finally:
         for will in wills:
             will()
-        #print 'destroy'
-        #ctx.destroy()
-        if protocol == 'ipc':
-            shutil.rmtree(FEED_DIR)
-        conns = filter(is_unexpected_conn, ps.get_connections())
-        #assert not conns
+        if config.getoption('--clear'):
+            ctx.destroy()
+            if protocol == 'ipc':
+                shutil.rmtree(FEED_DIR)
+            def is_unexpected_conn(conn):
+                ports = [addr[1] if addr else None
+                         for addr in (conn.local_address, conn.remote_address)]
+                if WINDOWS and 5905 in ports:
+                    # libzmq uses TCP port 5905 for the signaler in Windows.
+                    return False
+                return conn.status in ('LISTEN', 'ESTABLISHED')
+            conns = filter(is_unexpected_conn, ps.get_connections())
+            assert not conns
 
 
 def stop_zeronimo(runners):
@@ -423,6 +422,7 @@ def stop_zeronimo(runners):
 
 
 def pytest_configure(config):
+    globals()['config'] = config
     finding_timeout = config.getoption('--finding-timeout')
     invoke = zeronimo.Invoker.invoke
     def patched_invoke(self, *args, **kwargs):
