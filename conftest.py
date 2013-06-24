@@ -58,7 +58,10 @@ def get_testing_protocols(metafunc):
         if metafunc.config.option.epgm:
             testing_protocols.append('epgm')
     if windows:
-        testing_protocols.remove('ipc')
+        try:
+            testing_protocols.remove('ipc')
+        except ValueError:
+            pass
     if not testing_protocols:
         raise RuntimeError('Should specify testing protocols')
     return testing_protocols
