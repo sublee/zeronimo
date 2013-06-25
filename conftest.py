@@ -27,7 +27,7 @@ WINDOWS = platform.system() == 'Windows'
 
 ps = psutil.Process(os.getpid())
 config = None
-#gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
+gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
 def pytest_addoption(parser):
@@ -52,12 +52,16 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     globals()['config'] = config
-    finding_timeout = config.getoption('--finding-timeout')
     invoke = zeronimo.Invoker.invoke
     def patched_invoke(self, *args, **kwargs):
+        finding_timeout = config.getoption('--finding-timeout')
         kwargs.setdefault('finding_timeout', finding_timeout)
         return invoke(self, *args, **kwargs)
     zeronimo.Invoker.invoke = patched_invoke
+
+
+def pytest_unconfigure(config):
+    shutil.rmtree(FEED_DIR)
 
 
 def pytest_generate_tests(metafunc):
@@ -390,7 +394,7 @@ def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
 @decorator
 def green(f, *args, **kwargs):
     """Runs the function within a greenlet."""
-    return gevent.spawn(f, *args, **kwargs).get()
+    return gevent.spawn(f, *args, **kwargs).join()
 
 
 deferred_worker = namedtuple('deferred_worker', ['protocol'])
@@ -402,11 +406,7 @@ deferred_prefix = namedtuple('deferred_prefix', [])
 deferred_ctx = namedtuple('deferred_ctx', [])
 
 
-@decorator
-def resolve_fixtures(f, *args):
-    """Workers which are yielded by the function will start and stop
-    automatically.
-    """
+def make_fixtures(args):
     args = list(args)
     ctx = zmq.Context()
     # process deferred worker, customer, prefix, addr, fanout_addr
@@ -445,22 +445,40 @@ def resolve_fixtures(f, *args):
             arg.start()
             runners.append(arg)
     wills.append(lambda: stop_zeronimo(runners))
+    return protocol, args, wills
+
+
+@decorator
+def resolve_fixtures(f, *args):
+    """Workers which are yielded by the function will start and stop
+    automatically.
+    """
     # run the function
-    try:
-        return green(f)(*args)
-    finally:
-        for will in wills:
-            will()
-        if protocol == 'ipc':
-            shutil.rmtree(FEED_DIR)
-        if config.getoption('--clear'):
-            ctx.destroy()
-            def is_unexpected_conn(conn):
-                ports = [addr[1] if addr else None
-                         for addr in (conn.local_address, conn.remote_address)]
-                if WINDOWS and 5905 in ports:
-                    # libzmq uses TCP port 5905 for the signaler in Windows.
-                    return False
-                return conn.status in ('LISTEN', 'ESTABLISHED')
-            conns = filter(is_unexpected_conn, ps.get_connections())
-            assert not conns
+    @green
+    def run_and_adjust_finding_timeout(*args):
+        while True:
+            protocol, args, wills = make_fixtures(args)
+            try:
+                return f(*args)
+            except zeronimo.WorkerNotEnough, e:
+                config.option.finding_timeout *= 2
+            finally:
+                for will in wills:
+                    will()
+                if config.getoption('--clear'):
+                    ctx.destroy()
+                    def is_unexpected_conn(conn):
+                        addrs = [conn.local_address, conn.remote_address]
+                        ports = [addr[1] if addr else None for addr in addrs]
+                        if WINDOWS and 5905 in ports:
+                            # libzmq uses TCP port 5905 for the signaler in
+                            # Windows.
+                            return False
+                        return conn.status in ('LISTEN', 'ESTABLISHED')
+                    conns = filter(is_unexpected_conn, ps.get_connections())
+                    assert not conns
+    original_finding_timeout = config.option.finding_timeout
+    run_and_adjust_finding_timeout(*args)
+    if original_finding_timeout != config.option.finding_timeout:
+        print 'finding-timeout is adjusted from {0} to {1} seconds.'.format(
+            original_finding_timeout, config.option.finding_timeout)

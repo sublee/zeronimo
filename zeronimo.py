@@ -136,7 +136,12 @@ class ZeronimoException(Exception):
     pass
 
 
-class WorkerNotFound(ZeronimoException, LookupError):
+class WorkerNotEnough(ZeronimoException, LookupError):
+
+    pass
+
+
+class WorkerNotFound(WorkerNotEnough):
 
     pass
 
@@ -626,26 +631,26 @@ class Invoker(object):
     def __getattr__(self, attr):
         return getattr(self.tunnel, '_znm_' + attr)
 
-    def invoke(self, wait=True, fanout=False, as_task=False,
-               finding_timeout=0.1):
+    def invoke(self, wait=True, fanout=False, fanout_min=1, as_task=False,
+               finding_timeout=0.01):
         if not wait:
             return self._invoke_nowait(fanout)
         if self.customer is None:
             raise ValueError(
                 'To wait for a result, the tunnel must have a customer')
         if fanout:
-            return self._invoke_fanout(as_task, finding_timeout)
+            return self._invoke_fanout(as_task, finding_timeout, fanout_min)
         else:
             return self._invoke(as_task, finding_timeout)
 
-    def _invoke_nowait(self, fanout=False):
+    def _invoke_nowait(self, fanout):
         socket_type = zmq.PUB if fanout else zmq.PUSH
         sock = get_socket(self.sockets, socket_type, 'Tunnel')
         invocation = Invocation(
             self.function_name, self.args, self.kwargs, self.id, None)
         send(sock, tuple(invocation), prefix=self.prefix)
 
-    def _invoke(self, as_task=False, finding_timeout=0.01):
+    def _invoke(self, as_task, finding_timeout):
         sock = get_socket(self.sockets, zmq.PUSH, 'Tunnel')
         invocation = Invocation(self.function_name, self.args, self.kwargs,
                                 self.id, self.customer.addr)
@@ -662,6 +667,7 @@ class Invoker(object):
                         rejected += 1
                         # send again
                         send(sock, tuple(invocation), prefix=self.prefix)
+                        reply = None
                         continue
                     elif reply.method == ACCEPT:
                         break
@@ -676,7 +682,8 @@ class Invoker(object):
             elif rejected:
                 errmsg += ', {0} workers rejected'.format(rejected)
             raise WorkerNotFound(errmsg)
-        return self._spawn_task(reply, as_task)
+        else:
+            return self._spawn_task(reply, as_task)
 
     def _spawn_task(self, reply, as_task=False):
         assert reply.method == ACCEPT
@@ -684,7 +691,7 @@ class Invoker(object):
         task = Task(self.customer, reply.task_id, self.id, worker_info)
         return task if as_task else task()
 
-    def _invoke_fanout(self, as_task=False, finding_timeout=0.01):
+    def _invoke_fanout(self, as_task, finding_timeout, fanout_min):
         sock = get_socket(self.sockets, zmq.PUB, 'Tunnel')
         invocation = Invocation(self.function_name, self.args, self.kwargs,
                                 self.id, self.customer.addr)
@@ -702,13 +709,25 @@ class Invoker(object):
                     replies.append(reply)
                 else:
                     assert 0
-        if not replies:
-            errmsg = 'Worker not found'
+        num_replies = len(replies)
+        if num_replies < fanout_min:
             if rejected == 1:
-                errmsg += ', a worker rejected'
+                after_errmsg = ', a worker rejected'
             elif rejected:
-                errmsg += ', {0} workers rejected'.format(rejected)
-            raise WorkerNotFound(errmsg)
+                after_errmsg = ', {0} workers rejected'.format(rejected)
+            else:
+                after_errmsg = ''
+            if num_replies:
+                if num_replies == 1:
+                    errfmt = 'A worker replied but not enough'
+                else:
+                    errfmt = '{0} workers replied but not enough'
+                errmsg = errfmt.format(num_replies)
+                errcls = WorkerNotEnough
+            else:
+                errmsg = 'Worker not found'
+                errcls = WorkerNotFound
+            raise errcls(''.join([errmsg, after_errmsg]))
         return self._spawn_fanout_tasks(replies, as_task)
 
     def _spawn_fanout_tasks(self, replies, as_task=False):

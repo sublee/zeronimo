@@ -273,17 +273,25 @@ def test_slow(customer, worker, tunnel_socks, prefix):
 @resolve_fixtures
 def test_reject(customer, worker1, worker2, tunnel_socks, prefix):
     with customer.link(tunnel_socks, prefix) as tunnel:
-        assert len(tunnel(fanout=True).simple()) == 2
+        assert worker1.accepting
+        assert worker2.accepting
+        assert len(tunnel(fanout=True, fanout_min=2).simple()) == 2
         worker2.reject_all()
+        assert not worker2.accepting
         assert tunnel(as_task=True).simple().worker_info == worker1.info
         assert tunnel(as_task=True).simple().worker_info == worker1.info
         assert len(tunnel(fanout=True).simple()) == 1
         worker1.reject_all()
+        assert not worker1.accepting
+        with pytest.raises(zeronimo.WorkerNotEnough):
+            assert tunnel(fanout=True, fanout_min=2).simple()
         with pytest.raises(zeronimo.WorkerNotFound):
             assert tunnel(fanout=True).simple()
         worker1.accept_all()
+        assert worker1.accepting
         worker2.accept_all()
-        assert len(tunnel(fanout=True).simple()) == 2
+        assert worker2.accepting
+        assert len(tunnel(fanout=True, fanout_min=2).simple()) == 2
 
 
 @resolve_fixtures
@@ -292,7 +300,6 @@ def test_subscription(customer, worker1, worker2, tunnel_socks, prefix):
     sub1 = [sock for sock in worker1.sockets if sock.socket_type == zmq.SUB][0]
     sub2 = [sock for sock in worker2.sockets if sock.socket_type == zmq.SUB][0]
     with customer.link(tunnel_socks, prefix) as tunnel:
-        assert len(tunnel(fanout=True).simple()) == 2
         sub1.set(zmq.UNSUBSCRIBE, prefix)
         assert len(tunnel(fanout=True).simple()) == 1
         sub2.set(zmq.UNSUBSCRIBE, prefix)
@@ -448,17 +455,18 @@ def test_2nd_start(customer, worker):
 
 @resolve_fixtures
 def test_concurrent_tunnels(customer, worker, tunnel_socks, prefix):
+    customer.stop()  # stop customer's auto-running
     done = []
     def test_tunnel():
         with customer.link(tunnel_socks, prefix) as tunnel:
             assert customer.is_running()
+            assert tunnel._znm_customer.is_running()
             assert tunnel.simple() == 'ok'
             assert tunnel(fanout=True).simple() == ['ok']
         done.append(True)
-    customer.stop()  # stop customer's auto-running
     assert not customer.is_running()
     times = 5
-    joinall([spawn(test_tunnel) for x in xrange(times)])
+    joinall([spawn(test_tunnel) for x in xrange(times)], raise_error=True)
     assert len(done) == times
     assert not customer.is_running()
 
