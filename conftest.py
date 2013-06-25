@@ -61,7 +61,8 @@ def pytest_configure(config):
 
 
 def pytest_unconfigure(config):
-    shutil.rmtree(FEED_DIR)
+    if os.path.isdir(FEED_DIR):
+        shutil.rmtree(FEED_DIR)
 
 
 def pytest_generate_tests(metafunc):
