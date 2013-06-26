@@ -476,15 +476,19 @@ def resolve_fixtures(f, *args):
     """Workers which are yielded by the function will start and stop
     automatically.
     """
-    # run the function
     @green
     def run_and_adjust_finding_timeout(*args):
+        max_adjust = 3
+        adjusted = 0
         while True:
             ctx, protocol, resolved_args, wills = make_fixtures(args)
             try:
                 return f(*resolved_args)
             except zeronimo.WorkerNotEnough:
+                if adjusted >= max_adjust:
+                    raise
                 config._adjusted_finding_timeout *= 2
+                adjusted += 1
             finally:
                 for will in wills:
                     will()
@@ -501,6 +505,7 @@ def resolve_fixtures(f, *args):
                         return conn.status in ('LISTEN', 'ESTABLISHED')
                     conns = filter(is_unexpected_conn, ps.get_connections())
                     assert not conns
+    # run the function
     finding_timeout = config.getoption('--finding-timeout')
     config._adjusted_finding_timeout = finding_timeout
     run_and_adjust_finding_timeout(*args)

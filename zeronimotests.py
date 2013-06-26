@@ -253,8 +253,7 @@ def test_fanout(customer, worker1, worker2, tunnel_socks, prefix):
             assert next(rycbar123) == 'remember.'
         with pytest.raises(ZeroDivisionError):
             tunnel(fanout=True).zero_div()
-        failures = tunnel(fanout=True, as_task=True).zero_div()
-        assert len(failures) == 2
+        failures = tunnel(fanout=True, fanout_min=1, as_task=True).zero_div()
         with pytest.raises(ZeroDivisionError):
             failures[0]()
         with pytest.raises(ZeroDivisionError):
@@ -328,7 +327,10 @@ def test_offbeat(request, customer, worker1, worker2, tunnel_socks, prefix):
         tasks = tunnel(fanout=True, as_task=True).sleep_range(base * 3, 2)
         assert len(tasks) == 1
         list(tasks[0]())
-        assert len(tasks) == 2
+        try:
+            assert len(tasks) == 2
+        except AssertionError:
+            raise zeronimo.WorkerNotEnough('--finding-timeout is too fast')
         generous = tunnel(fanout=True, as_task=True, finding_timeout=base * 4)
         assert len(generous.simple()) == 2
 
