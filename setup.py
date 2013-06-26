@@ -102,7 +102,7 @@ setup(
                  'Programming Language :: Python :: 2.7',
                  'Programming Language :: Python :: Implementation :: CPython',
                  'Topic :: Software Development'],
-    install_requires=['distribute', 'gevent', 'pyzmq>=13', 'msgpack'],
+    install_requires=['distribute', 'gevent', 'pyzmq>=13', 'msgpack-python'],
     test_suite='zeronimotests',
     tests_require=['pytest', 'decorator', 'psutil'],
 )
