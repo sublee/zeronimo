@@ -321,9 +321,9 @@ def test_subscription(customer, worker1, worker2, tunnel_socks, prefix):
 @resolve_fixtures
 def test_offbeat(request, customer, worker1, worker2, tunnel_socks, prefix):
     # worker2 sleeps 0.2 seconds before accepting
-    base = max(0.01, request.config._adjusted_finding_timeout)
+    base = request.config._adjusted_finding_timeout
     patch_worker_to_be_slow(worker2, delay=base * 2)
-    with customer.link(tunnel_socks, prefix, finding_timeout=base) as tunnel:
+    with customer.link(tunnel_socks, prefix) as tunnel:
         tasks = tunnel(fanout=True, as_task=True).sleep_range(base * 3, 2)
         assert len(tasks) == 1
         list(tasks[0]())

@@ -478,7 +478,7 @@ def resolve_fixtures(f, *args):
     """
     @green
     def run_and_adjust_finding_timeout(*args):
-        max_adjust = 3
+        max_adjust = 10
         adjusted = 0
         while True:
             ctx, protocol, resolved_args, wills = make_fixtures(args)
