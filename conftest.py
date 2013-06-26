@@ -153,12 +153,12 @@ def tcp():
 
 def pgm():
     """Generates available PGM address."""
-    return 'pgm://127.0.0.1;224.1.1.1:5555'
+    return 'pgm://127.0.0.1;224.0.1.0:5555'
 
 
 def epgm():
     """Generates available Encapsulated PGM address."""
-    return 'epgm://127.0.0.1;224.1.1.1:5555'
+    return 'e' + pgm()
 
 
 protocols = {'inproc': (inproc, inproc),
@@ -325,14 +325,14 @@ def link_sockets(addr, server_sock, client_socks):
 
 
 def wait_to_close(addr, timeout=1):
-    protocol, location = addr.split('://', 1)
+    protocol, endpoint = addr.split('://', 1)
     if protocol == 'inproc':
         gevent.sleep(TICK)
         return
     elif protocol == 'ipc':
-        still_exists = lambda: os.path.exists(location)
+        still_exists = lambda: os.path.exists(endpoint)
     elif protocol == 'tcp':
-        host, port = location.split(':')
+        host, port = endpoint.split(':')
         port = int(port)
         def still_exists():
             for conn in ps.get_connections():
@@ -395,7 +395,7 @@ def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
 @decorator
 def green(f, *args, **kwargs):
     """Runs the function within a greenlet."""
-    return gevent.spawn(f, *args, **kwargs).join()
+    return gevent.joinall([gevent.spawn(f, *args, **kwargs)], raise_error=True)
 
 
 deferred_worker = namedtuple('deferred_worker', ['protocol'])
@@ -461,7 +461,7 @@ def resolve_fixtures(f, *args):
             protocol, args, wills = make_fixtures(args)
             try:
                 return f(*args)
-            except zeronimo.WorkerNotEnough, e:
+            except zeronimo.WorkerNotEnough:
                 config.option.finding_timeout *= 2
             finally:
                 for will in wills:
