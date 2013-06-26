@@ -54,8 +54,7 @@ def pytest_configure(config):
     globals()['config'] = config
     invoke = zeronimo.Invoker.invoke
     def patched_invoke(self, *args, **kwargs):
-        finding_timeout = config.getoption('--finding-timeout')
-        kwargs.setdefault('finding_timeout', finding_timeout)
+        kwargs.setdefault('finding_timeout', config._adjusted_finding_timeout)
         return invoke(self, *args, **kwargs)
     zeronimo.Invoker.invoke = patched_invoke
 
@@ -239,6 +238,7 @@ def make_worker(ctx, protocol, prefix=''):
     sub_addr = make_fanout_addr()
     sub_sock.bind(sub_addr)
     sub_sock.set(zmq.SUBSCRIBE, prefix)
+    sub_sock.set(zmq.RATE, 10000)
     worker_info = (pull_addr, sub_addr, prefix)
     worker = zeronimo.Worker(app, [pull_sock, sub_sock], worker_info)
     return worker
@@ -267,19 +267,28 @@ def make_tunnel_sockets(ctx, workers):
     prefixes = set(worker.info[-1] for worker in workers)
     assert len(prefixes) == 1
     prefix = next(iter(prefixes))
+    assert not ctx.closed
     push = ctx.socket(zmq.PUSH)
+    while push.closed:
+        push = ctx.socket(zmq.PUSH)
+    assert not push.closed
+    assert not ctx.closed
     pub = ctx.socket(zmq.PUB)
+    assert not pub.closed
     subs = []
-    #pgm_addrs = set()
+    # don't connect to same pgm address
+    pgm_addrs = set()
     for worker in workers:
         subs.extend(sock for sock in worker.sockets
                     if sock.socket_type == zmq.SUB)
         push_addr, pub_addr, prefix = worker.info
+        assert not ctx.closed
+        assert not push.closed
         push.connect(push_addr)
-        #if re.match('e?pgm://', pub_addr):
-        #    if pub_addr in pgm_addrs:
-        #        continue
-        #    pgm_addrs.add(pub_addr)
+        if re.match('e?pgm://', pub_addr):
+            if pub_addr in pgm_addrs:
+                continue
+            pgm_addrs.add(pub_addr)
         pub.connect(pub_addr)
     sync_pubsub(pub, subs, prefix)
     return {push: push_addr, pub: pub_addr}
@@ -418,6 +427,7 @@ deferred_ctx = namedtuple('deferred_ctx', [])
 def make_fixtures(args):
     args = list(args)
     ctx = zmq.Context()
+    assert not ctx.closed
     # process deferred worker, customer, prefix, addr, fanout_addr
     prefix = zeronimo.alloc_id()
     protocol = None
@@ -426,10 +436,12 @@ def make_fixtures(args):
         if protocol is None and hasattr(arg, 'protocol'):
             protocol = arg.protocol
         if isinstance(arg, deferred_worker):
+            assert not ctx.closed
             worker = make_worker(ctx, arg.protocol, prefix)
             workers.append(worker)
             args[x] = worker
         elif isinstance(arg, deferred_customer):
+            assert not ctx.closed
             args[x] = make_customer(ctx, arg.protocol)
         elif isinstance(arg, deferred_addr):
             args[x] = protocols[arg.protocol][0]()
@@ -438,6 +450,7 @@ def make_fixtures(args):
         elif isinstance(arg, deferred_prefix):
             args[x] = prefix
         elif isinstance(arg, deferred_ctx):
+            assert not ctx.closed
             args[x] = ctx
     wills = []
     # process deferred tunnel sockets because it should be called before the
@@ -445,6 +458,7 @@ def make_fixtures(args):
     if workers:
         for x, arg in enumerate(args):
             if isinstance(arg, deferred_tunnel_sockets):
+                assert not ctx.closed
                 tunnel_socks = make_tunnel_sockets(ctx, workers)
                 args[x] = tunnel_socks.keys()
     # start all runners
@@ -454,7 +468,7 @@ def make_fixtures(args):
             arg.start()
             runners.append(arg)
     wills.append(lambda: stop_zeronimo(runners))
-    return protocol, args, wills
+    return ctx, protocol, args, wills
 
 
 @decorator
@@ -466,16 +480,17 @@ def resolve_fixtures(f, *args):
     @green
     def run_and_adjust_finding_timeout(*args):
         while True:
-            protocol, args, wills = make_fixtures(args)
+            ctx, protocol, resolved_args, wills = make_fixtures(args)
             try:
-                return f(*args)
+                return f(*resolved_args)
             except zeronimo.WorkerNotEnough:
-                config.option.finding_timeout *= 2
+                config._adjusted_finding_timeout *= 2
             finally:
                 for will in wills:
                     will()
                 if config.getoption('--clear'):
-                    ctx.destroy()
+                    ctx.destroy(0)
+                    gevent.sleep(0.01)
                     def is_unexpected_conn(conn):
                         addrs = [conn.local_address, conn.remote_address]
                         ports = [addr[1] if addr else None for addr in addrs]
@@ -486,8 +501,9 @@ def resolve_fixtures(f, *args):
                         return conn.status in ('LISTEN', 'ESTABLISHED')
                     conns = filter(is_unexpected_conn, ps.get_connections())
                     assert not conns
-    original_finding_timeout = config.option.finding_timeout
+    finding_timeout = config.getoption('--finding-timeout')
+    config._adjusted_finding_timeout = finding_timeout
     run_and_adjust_finding_timeout(*args)
-    if original_finding_timeout != config.option.finding_timeout:
+    if config._adjusted_finding_timeout != finding_timeout:
         print 'finding-timeout is adjusted from {0} to {1} seconds.'.format(
-            original_finding_timeout, config.option.finding_timeout)
+            finding_timeout, config._adjusted_finding_timeout)

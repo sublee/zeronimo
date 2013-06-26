@@ -118,6 +118,7 @@ def send(sock, obj, flags=0, prefix=''):
     assert prefix_sep not in prefix
     serial = msgpack.packb(obj, default=default)
     msg = prefix_sep.join([prefix, serial])
+    assert not sock.closed
     return sock.send(msg, flags)
 
 
@@ -206,8 +207,9 @@ class Runner(object):
                 if starter is not None:
                     starter.set()
                     return
-                raise RuntimeError(
-                    '{0} already running'.format(cls_name(self)))
+                else:
+                    raise RuntimeError(
+                        '{0} already running'.format(cls_name(self)))
             try:
                 with self._running_lock:
                     starter and starter.set()
@@ -217,15 +219,18 @@ class Runner(object):
                     del self._async_running
                 except AttributeError:
                     pass
-                stopper.clear()
+                with self._stopping_lock:
+                    stopper.clear()
             return rv
         obj.run, obj._run = MethodType(run, obj), obj.run
 
     @classmethod
     def _patch_stop(cls, obj, stopper):
+        obj._stopping_lock = Semaphore()
         def stop(self):
-            if not self.is_running():
-                raise RuntimeError('{0} not running'.format(cls_name(self)))
+            with self._stopping_lock:
+                if not self.is_running():
+                    raise RuntimeError('{0} not running'.format(cls_name(self)))
             stopper.set()
             return obj._stop()
         obj.stop, obj._stop = MethodType(stop, obj), obj.stop
