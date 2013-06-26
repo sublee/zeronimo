@@ -395,7 +395,15 @@ def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
 @decorator
 def green(f, *args, **kwargs):
     """Runs the function within a greenlet."""
-    return gevent.joinall([gevent.spawn(f, *args, **kwargs)], raise_error=True)
+    def capture_exc_info(exc_info, *args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except:
+            exc_info.extend(sys.exc_info())
+    exc_info = []
+    gevent.spawn(capture_exc_info, exc_info, *args, **kwargs).join()
+    if exc_info:
+        raise exc_info[0], exc_info[1], exc_info[2]
 
 
 deferred_worker = namedtuple('deferred_worker', ['protocol'])
