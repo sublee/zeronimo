@@ -44,7 +44,7 @@ def pytest_addoption(parser):
                      help='tests with pgm protocol.')
     parser.addoption('--epgm', action='store_true',
                      help='tests with epgm protocol.')
-    parser.addoption('--finding-timeout', action='store', type='float',
+    parser.addoption('--timeout', action='store', type='float',
                      default=0.01, help='finding timeout in seconds.')
     parser.addoption('--clear', action='store_true',
                      help='destroy context at each tests done.')
@@ -54,7 +54,7 @@ def pytest_configure(config):
     globals()['config'] = config
     invoke = zeronimo.Invoker.invoke
     def patched_invoke(self, *args, **kwargs):
-        kwargs.setdefault('finding_timeout', config._adjusted_finding_timeout)
+        kwargs.setdefault('timeout', config._adjusted_timeout)
         return invoke(self, *args, **kwargs)
     zeronimo.Invoker.invoke = patched_invoke
 
@@ -86,8 +86,8 @@ def pytest_generate_tests(metafunc):
                 curargvalues.append(deferred_addr(protocol))
             elif param.startswith('fanout_addr'):
                 curargvalues.append(deferred_fanout_addr(protocol))
-            elif param == 'prefix':
-                curargvalues.append(deferred_prefix())
+            elif param == 'topic':
+                curargvalues.append(deferred_topic())
             elif param == 'ctx':
                 curargvalues.append(deferred_ctx())
             else:
@@ -228,7 +228,7 @@ class Application(object):
 app = Application()
 
 
-def make_worker(ctx, protocol, prefix=''):
+def make_worker(ctx, protocol, topic=''):
     """Creates a :class:`zeronimo.Worker` by the given protocol."""
     make_addr, make_fanout_addr = protocols[protocol]
     pull_sock = ctx.socket(zmq.PULL)
@@ -237,9 +237,9 @@ def make_worker(ctx, protocol, prefix=''):
     sub_sock = ctx.socket(zmq.SUB)
     sub_addr = make_fanout_addr()
     sub_sock.bind(sub_addr)
-    sub_sock.set(zmq.SUBSCRIBE, prefix)
+    sub_sock.set(zmq.SUBSCRIBE, topic)
     sub_sock.set(zmq.RATE, 10000)
-    worker_info = (pull_addr, sub_addr, prefix)
+    worker_info = (pull_addr, sub_addr, topic)
     worker = zeronimo.Worker(app, [pull_sock, sub_sock], worker_info)
     return worker
 
@@ -255,18 +255,18 @@ def make_customer(ctx, protocol):
 
 
 def make_tunnel_sockets(ctx, workers):
-    prefix = None
+    topic = None
     for worker in workers:
-        if prefix is None:
-            prefix = worker.info[-1]
-        elif prefix != worker.info[-1]:
+        if topic is None:
+            topic = worker.info[-1]
+        elif topic != worker.info[-1]:
             raise ValueError('All workers must have same subscription')
         if worker.is_running():
             raise RuntimeError('make_tunnel_sockets must be called before '
                                'workers run')
-    prefixes = set(worker.info[-1] for worker in workers)
-    assert len(prefixes) == 1
-    prefix = next(iter(prefixes))
+    topics = set(worker.info[-1] for worker in workers)
+    assert len(topics) == 1
+    topic = next(iter(topics))
     assert not ctx.closed
     push = ctx.socket(zmq.PUSH)
     while push.closed:
@@ -281,7 +281,7 @@ def make_tunnel_sockets(ctx, workers):
     for worker in workers:
         subs.extend(sock for sock in worker.sockets
                     if sock.socket_type == zmq.SUB)
-        push_addr, pub_addr, prefix = worker.info
+        push_addr, pub_addr, topic = worker.info
         assert not ctx.closed
         assert not push.closed
         push.connect(push_addr)
@@ -290,7 +290,7 @@ def make_tunnel_sockets(ctx, workers):
                 continue
             pgm_addrs.add(pub_addr)
         pub.connect(pub_addr)
-    sync_pubsub(pub, subs, prefix)
+    sync_pubsub(pub, subs, topic)
     return {push: push_addr, pub: pub_addr}
 
 
@@ -304,6 +304,11 @@ def patch_worker_to_be_slow(worker, delay):
         return zeronimo.Worker.send_reply(self, sock, method, *args, **kwargs)
     worker.run_task = functools.partial(run_task, worker)
     worker.send_reply = functools.partial(send_reply, worker)
+
+
+def assert_num_workers(tasks, num):
+    if len(tasks) < num:
+        raise zeronimo.WorkerNotFound('Maybe --timeout is too fast')
 
 
 def stop_zeronimo(runners):
@@ -353,7 +358,7 @@ def wait_to_close(addr, timeout=1):
             gevent.sleep(TICK)
 
 
-def sync_pubsub(pub_sock, sub_socks, prefix=''):
+def sync_pubsub(pub_sock, sub_socks, topic=''):
     """A PUB socket needs to receive subscription messages from the SUB sockets
     for establishing cocnnections. It takes very short time but not
     immediately.
@@ -363,7 +368,7 @@ def sync_pubsub(pub_sock, sub_socks, prefix=''):
 
        >>> sub_sock1.set(zmq.SUBSCRIBE, 'test')
        >>> sub_sock2.set(zmq.SUBSCRIBE, 'test')
-       >>> sync_pubsub(pub_sock, [sub_sock1, sub_sock2], prefix='test')
+       >>> sync_pubsub(pub_sock, [sub_sock1, sub_sock2], topic='test')
     """
     poller = zmq.Poller()
     for sub_sock in sub_socks:
@@ -372,7 +377,7 @@ def sync_pubsub(pub_sock, sub_socks, prefix=''):
     # sync all SUB sockets
     with gevent.Timeout(1, 'Are SUB sockets subscribing?'):
         while to_sync:
-            pub_sock.send(prefix + ':sync')
+            pub_sock.send(topic + ':sync')
             events = dict(poller.poll(timeout=1))
             for sub_sock in sub_socks:
                 if sub_sock in events:
@@ -421,7 +426,7 @@ deferred_customer = namedtuple('deferred_cutomer', ['protocol'])
 deferred_addr = namedtuple('deferred_addr', ['protocol'])
 deferred_fanout_addr = namedtuple('deferred_fanout_addr', ['protocol'])
 deferred_tunnel_sockets = namedtuple('deferred_tunnel_sockets', [])
-deferred_prefix = namedtuple('deferred_prefix', [])
+deferred_topic = namedtuple('deferred_topic', [])
 deferred_ctx = namedtuple('deferred_ctx', [])
 
 
@@ -429,8 +434,8 @@ def make_fixtures(args):
     args = list(args)
     ctx = zmq.Context()
     assert not ctx.closed
-    # process deferred worker, customer, prefix, addr, fanout_addr
-    prefix = zeronimo.alloc_id()
+    # process deferred worker, customer, topic, addr, fanout_addr
+    topic = zeronimo.alloc_id()
     protocol = None
     workers = []
     for x, arg in enumerate(args):
@@ -438,7 +443,7 @@ def make_fixtures(args):
             protocol = arg.protocol
         if isinstance(arg, deferred_worker):
             assert not ctx.closed
-            worker = make_worker(ctx, arg.protocol, prefix)
+            worker = make_worker(ctx, arg.protocol, topic)
             workers.append(worker)
             args[x] = worker
         elif isinstance(arg, deferred_customer):
@@ -448,8 +453,8 @@ def make_fixtures(args):
             args[x] = protocols[arg.protocol][0]()
         elif isinstance(arg, deferred_fanout_addr):
             args[x] = protocols[arg.protocol][1]()
-        elif isinstance(arg, deferred_prefix):
-            args[x] = prefix
+        elif isinstance(arg, deferred_topic):
+            args[x] = topic
         elif isinstance(arg, deferred_ctx):
             assert not ctx.closed
             args[x] = ctx
@@ -478,17 +483,17 @@ def resolve_fixtures(f, *args):
     automatically.
     """
     @green
-    def run_and_adjust_finding_timeout(*args):
+    def run_and_adjust_timeout(*args):
         max_adjust = 10
         adjusted = 0
         while True:
             ctx, protocol, resolved_args, wills = make_fixtures(args)
             try:
                 return f(*resolved_args)
-            except zeronimo.WorkerNotEnough:
+            except zeronimo.WorkerNotFound:
                 if adjusted >= max_adjust:
                     raise
-                config._adjusted_finding_timeout *= 2
+                config._adjusted_timeout *= 2
                 adjusted += 1
             finally:
                 for will in wills:
@@ -507,9 +512,9 @@ def resolve_fixtures(f, *args):
                     conns = filter(is_unexpected_conn, ps.get_connections())
                     assert not conns
     # run the function
-    finding_timeout = config.getoption('--finding-timeout')
-    config._adjusted_finding_timeout = finding_timeout
-    run_and_adjust_finding_timeout(*args)
-    if config._adjusted_finding_timeout != finding_timeout:
-        print 'finding-timeout is adjusted from {0} to {1} seconds.'.format(
-            finding_timeout, config._adjusted_finding_timeout)
+    timeout = config.getoption('--timeout')
+    config._adjusted_timeout = timeout
+    run_and_adjust_timeout(*args)
+    if config._adjusted_timeout != timeout:
+        print '--timeout is adjusted from {0} to ' \
+              '{1} seconds.'.format(timeout, config._adjusted_timeout)

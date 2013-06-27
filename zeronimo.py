@@ -25,13 +25,30 @@ __version__ = '0.0.dev'
 __all__ = ['Worker', 'Customer', 'Tunnel', 'Invoker', 'Task']
 
 
+# reply methods
+
+
+ACCEPT = 1
+REJECT = 0
+RETURN = 100
+RAISE = 101
+YIELD = 102
+BREAK = 103
+
+
+# default settings
+
+
+DEFAULT_TIMEOUT = 0.01
+
+
 # utility functions
 
 
-def alloc_id(exclusive=None):
+def alloc_id(length=6, exclude=None):
     id = None
-    while id is None or exclusive is not None and id in exclusive:
-        id = str(uuid.uuid4())[:6]
+    while id is None or exclude is not None and id in exclude:
+        id = str(uuid.uuid4())[:length]
     return id
 
 
@@ -107,17 +124,24 @@ def object_hook(obj):
     return obj
 
 
-def send(sock, obj, flags=0, prefix=''):
-    """Same with :meth:`zmq.Socket.send_pyobj` but can append prefix for
+def send(sock, obj, flags=0, topic=None):
+    """Same with :meth:`zmq.Socket.send_pyobj` but can append topic for
     filtering subscription.
     """
     serial = msgpack.packb(obj, default=default)
-    return sock.send_multipart([prefix, serial], flags)
+    if topic:
+        return sock.send_multipart([topic, serial], flags)
+    else:
+        return sock.send(serial, flags)
 
 
 def recv(sock, flags=0):
     """Same with :meth:`zmq.Socket.recv_pyobj`."""
-    prefix, serial = sock.recv_multipart(flags)
+    msg = sock.recv_multipart(flags)
+    try:
+        topic, serial = msg
+    except ValueError:
+        serial = msg[0]
     return msgpack.unpackb(serial, object_hook=object_hook)
 
 
@@ -129,12 +153,7 @@ class ZeronimoException(Exception):
     pass
 
 
-class WorkerNotEnough(ZeronimoException, LookupError):
-
-    pass
-
-
-class WorkerNotFound(WorkerNotEnough):
+class WorkerNotFound(ZeronimoException, LookupError):
 
     pass
 
@@ -163,17 +182,6 @@ class Reply(_Reply):
             def __repr__(self):
                 return method
         return make_repr(self, keywords=self._fields, data={'method': M()})
-
-
-# reply methods
-
-
-ACCEPT = 1
-REJECT = 0
-RETURN = 100
-RAISE = 101
-YIELD = 102
-BREAK = 103
 
 
 # models
@@ -211,18 +219,18 @@ class Runner(object):
                     del self._async_running
                 except AttributeError:
                     pass
-                with self._stopping_lock:
-                    stopper.clear()
+                #with self._stopping_lock:
+                stopper.clear()
             return rv
         obj.run, obj._run = MethodType(run, obj), obj.run
 
     @classmethod
     def _patch_stop(cls, obj, stopper):
-        obj._stopping_lock = Semaphore()
+        #obj._stopping_lock = Semaphore()
         def stop(self):
-            with self._stopping_lock:
-                if not self.is_running():
-                    raise RuntimeError('{0} not running'.format(cls_name(self)))
+            #with self._stopping_lock:
+            if not self.is_running():
+                raise RuntimeError('{0} not running'.format(cls_name(self)))
             stopper.set()
             return obj._stop()
         obj.stop, obj._stop = MethodType(stop, obj), obj.stop
@@ -530,33 +538,32 @@ class Tunnel(object):
     :param customer: the :class:`Customer` object or ``None``.
     :param sockets: the sockets which connect to the workers. it should be
                     one or none PUSH socket and one or none PUB socket.
-    :param prefix: the topic the workers are subscribing.
 
     :param wait: (keyword-only) if it's set to ``True``, the workers will
                  reply. Otherwise, the workers just invoke a function without
                  reply. Defaults to ``True``.
     :param fanout: (keyword-only) if it's set to ``True``, all workers will
                    receive an invocation request. Defaults to ``False``.
+    :param topic: (keyword-only) the topic the workers are subscribing.
     :param as_task: (keyword-only) actually, every remote function calls have
                     own :class:`Task` object. if it's set to ``True``, remote
                     functions return a :class:`Task` object instead of result
                     value. Defaults to ``False``.
-    :param finding_timeout: (keyword-only) the seconds to timeout for
+    :param timeout: (keyword-only) the seconds to timeout for
                             collecting workers which accepted the task.
                             Defaults to 0.01 seconds.
     """
 
-    def __init__(self, customer, sockets, prefix='', **invoker_opts):
+    def __init__(self, customer, sockets, **invoker_opts):
         self._znm_customer = customer
         self._znm_sockets = {}
         for sock in sockets:
-            if (sock.socket_type not in (zmq.PUSH, zmq.PUB) or
-                sock.socket_type in self._znm_sockets):
+            if sock.socket_type not in (zmq.PUSH, zmq.PUB) or \
+               sock.socket_type in self._znm_sockets:
                 raise ValueError(
                     'Tunnel allows only one or none PUSH socket and one or '
                     'none PUB socket')
             self._znm_sockets[sock.socket_type] = sock
-        self._znm_prefix = prefix
         self._znm_invoker_opts = invoker_opts
 
     def __getattr__(self, attr):
@@ -569,7 +576,7 @@ class Tunnel(object):
         else:
             if not self._znm_customer.is_running():
                 raise RuntimeError('Customer not running')
-            invoker_id = alloc_id(self._znm_customer.invokers)
+            invoker_id = alloc_id(exclude=self._znm_customer.invokers)
         invoker = Invoker(self, function_name, args, kwargs, invoker_id)
         return invoker.invoke(**self._znm_invoker_opts)
 
@@ -593,14 +600,12 @@ class Tunnel(object):
         invoker_opts = {}
         invoker_opts.update(self._znm_invoker_opts)
         invoker_opts.update(replacing_invoker_opts)
-        customer, prefix = self._znm_customer, self._znm_prefix
-        tunnel = Tunnel(customer, [], prefix, **invoker_opts)
+        tunnel = Tunnel(self._znm_customer, (), **invoker_opts)
         tunnel._znm_sockets = self._znm_sockets
         return tunnel
 
     def __repr__(self):
         params = ['customer', 'sockets']
-        keywords = ['prefix'] + self._znm_invoker_opts.keys()
         data = {attr: getattr(self, '_znm_' + attr) for attr in params}
         data.update(self._znm_invoker_opts)
         return make_repr(self, params, keywords, data)
@@ -628,26 +633,26 @@ class Invoker(object):
     def __getattr__(self, attr):
         return getattr(self.tunnel, '_znm_' + attr)
 
-    def invoke(self, wait=True, fanout=False, fanout_min=1, as_task=False,
-               finding_timeout=0.01):
+    def invoke(self, wait=True, fanout=False, topic=None,
+               as_task=False, timeout=DEFAULT_TIMEOUT):
         if not wait:
-            return self._invoke_nowait(fanout)
+            return self._invoke_nowait(fanout, topic)
         if self.customer is None:
             raise ValueError(
                 'To wait for a result, the tunnel must have a customer')
         if fanout:
-            return self._invoke_fanout(as_task, finding_timeout, fanout_min)
+            return self._invoke_fanout(topic, as_task, timeout)
         else:
-            return self._invoke(as_task, finding_timeout)
+            return self._invoke(as_task, timeout)
 
-    def _invoke_nowait(self, fanout):
+    def _invoke_nowait(self, fanout, topic):
         socket_type = zmq.PUB if fanout else zmq.PUSH
         sock = get_socket(self.sockets, socket_type, 'Tunnel')
         invocation = Invocation(
             self.function_name, self.args, self.kwargs, self.id, None)
-        send(sock, tuple(invocation), prefix=self.prefix)
+        send(sock, tuple(invocation), topic=topic if fanout else None)
 
-    def _invoke(self, as_task, finding_timeout):
+    def _invoke(self, as_task, timeout):
         sock = get_socket(self.sockets, zmq.PUSH, 'Tunnel')
         invocation = Invocation(self.function_name, self.args, self.kwargs,
                                 self.id, self.customer.addr)
@@ -655,15 +660,15 @@ class Invoker(object):
         self.customer.register_invoker(self)
         reply = None
         rejected = 0
-        send(sock, tuple(invocation), prefix=self.prefix)
+        send(sock, tuple(invocation))
         try:
-            with Timeout(finding_timeout, False):
+            with Timeout(timeout, False):
                 while True:
                     reply = self.queue.get()
                     if reply.method == REJECT:
                         rejected += 1
                         # send again
-                        send(sock, tuple(invocation), prefix=self.prefix)
+                        send(sock, tuple(invocation))
                         reply = None
                         continue
                     elif reply.method == ACCEPT:
@@ -682,13 +687,7 @@ class Invoker(object):
         else:
             return self._spawn_task(reply, as_task)
 
-    def _spawn_task(self, reply, as_task=False):
-        assert reply.method == ACCEPT
-        worker_info = reply.data and tuple(reply.data)
-        task = Task(self.customer, reply.task_id, self.id, worker_info)
-        return task if as_task else task()
-
-    def _invoke_fanout(self, as_task, finding_timeout, fanout_min):
+    def _invoke_fanout(self, topic, as_task, timeout):
         sock = get_socket(self.sockets, zmq.PUB, 'Tunnel')
         invocation = Invocation(self.function_name, self.args, self.kwargs,
                                 self.id, self.customer.addr)
@@ -696,8 +695,8 @@ class Invoker(object):
         self.customer.register_invoker(self)
         replies = []
         rejected = 0
-        send(sock, tuple(invocation), prefix=self.prefix)
-        with Timeout(finding_timeout, False):
+        send(sock, tuple(invocation), topic=topic)
+        with Timeout(timeout, False):
             while True:
                 reply = self.queue.get()
                 if reply.method == REJECT:
@@ -706,26 +705,21 @@ class Invoker(object):
                     replies.append(reply)
                 else:
                     assert 0
-        num_replies = len(replies)
-        if num_replies < fanout_min:
+        if not replies:
             if rejected == 1:
                 after_errmsg = ', a worker rejected'
             elif rejected:
                 after_errmsg = ', {0} workers rejected'.format(rejected)
             else:
                 after_errmsg = ''
-            if num_replies:
-                if num_replies == 1:
-                    errfmt = 'A worker replied but not enough'
-                else:
-                    errfmt = '{0} workers replied but not enough'
-                errmsg = errfmt.format(num_replies)
-                errcls = WorkerNotEnough
-            else:
-                errmsg = 'Worker not found'
-                errcls = WorkerNotFound
-            raise errcls(''.join([errmsg, after_errmsg]))
+            raise WorkerNotFound(''.join(['Worker not found', after_errmsg]))
         return self._spawn_fanout_tasks(replies, as_task)
+
+    def _spawn_task(self, reply, as_task=False):
+        assert reply.method == ACCEPT
+        worker_info = reply.data and tuple(reply.data)
+        task = Task(self.customer, reply.task_id, self.id, worker_info)
+        return task if as_task else task()
 
     def _spawn_fanout_tasks(self, replies, as_task=False):
         tasks = []
