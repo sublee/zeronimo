@@ -8,11 +8,17 @@
 """
 from collections import namedtuple, Iterable, Sequence, Set, Mapping
 import functools
+try:
+    from libuuid import uuid4_bytes
+except ImportError:
+    import uuid
+    uuid4_bytes = lambda: uuid.uuid4().get_bytes()
 import msgpack
-import pickle
-import re
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
 from types import MethodType
-import uuid
 
 from gevent import spawn, Timeout
 from gevent.coros import Semaphore
@@ -45,10 +51,10 @@ DEFAULT_TIMEOUT = 0.01
 # utility functions
 
 
-def alloc_id(length=6, exclude=None):
+def alloc_id(exclude=None):
     id = None
     while id is None or exclude is not None and id in exclude:
-        id = str(uuid.uuid4())[:length]
+        id = uuid4_bytes()
     return id
 
 
@@ -137,11 +143,7 @@ def send(sock, obj, flags=0, topic=None):
 
 def recv(sock, flags=0):
     """Same with :meth:`zmq.Socket.recv_pyobj`."""
-    msg = sock.recv_multipart(flags)
-    try:
-        topic, serial = msg
-    except ValueError:
-        serial = msg[0]
+    serial = sock.recv_multipart(flags)[-1]
     return msgpack.unpackb(serial, object_hook=object_hook)
 
 
@@ -542,16 +544,15 @@ class Tunnel(object):
     :param wait: (keyword-only) if it's set to ``True``, the workers will
                  reply. Otherwise, the workers just invoke a function without
                  reply. Defaults to ``True``.
-    :param fanout: (keyword-only) if it's set to ``True``, all workers will
-                   receive an invocation request. Defaults to ``False``.
-    :param topic: (keyword-only) the topic the workers are subscribing.
+    :param fanout: (keyword-only) if it's set to the fanout topic (PUB/SUB
+                   prefix), all proper workers will receive an invocation
+                   request. Defaults to ``False``.
     :param as_task: (keyword-only) actually, every remote function calls have
                     own :class:`Task` object. if it's set to ``True``, remote
                     functions return a :class:`Task` object instead of result
                     value. Defaults to ``False``.
-    :param timeout: (keyword-only) the seconds to timeout for
-                            collecting workers which accepted the task.
-                            Defaults to 0.01 seconds.
+    :param timeout: (keyword-only) the seconds to timeout for collecting
+                    workers which accepted the task. Defaults to 0.01 seconds.
     """
 
     def __init__(self, customer, sockets, **invoker_opts):
@@ -633,24 +634,28 @@ class Invoker(object):
     def __getattr__(self, attr):
         return getattr(self.tunnel, '_znm_' + attr)
 
-    def invoke(self, wait=True, fanout=False, topic=None,
-               as_task=False, timeout=DEFAULT_TIMEOUT):
+    def invoke(self, wait=True, fanout=False, as_task=False,
+               timeout=DEFAULT_TIMEOUT):
+        if fanout is False:
+            should_fanout, topic = False, None
+        else:
+            should_fanout, topic = True, fanout
         if not wait:
-            return self._invoke_nowait(fanout, topic)
+            return self._invoke_nowait(should_fanout, topic)
         if self.customer is None:
             raise ValueError(
                 'To wait for a result, the tunnel must have a customer')
-        if fanout:
+        if should_fanout:
             return self._invoke_fanout(topic, as_task, timeout)
         else:
             return self._invoke(as_task, timeout)
 
-    def _invoke_nowait(self, fanout, topic):
-        socket_type = zmq.PUB if fanout else zmq.PUSH
+    def _invoke_nowait(self, should_fanout, topic):
+        socket_type = zmq.PUB if should_fanout else zmq.PUSH
         sock = get_socket(self.sockets, socket_type, 'Tunnel')
         invocation = Invocation(
             self.function_name, self.args, self.kwargs, self.id, None)
-        send(sock, tuple(invocation), topic=topic if fanout else None)
+        send(sock, tuple(invocation), topic=topic)
 
     def _invoke(self, as_task, timeout):
         sock = get_socket(self.sockets, zmq.PUSH, 'Tunnel')

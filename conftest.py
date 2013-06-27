@@ -10,6 +10,7 @@ import shutil
 import socket
 import sys
 import types
+import uuid
 
 from decorator import decorator
 import gevent
@@ -126,9 +127,13 @@ def get_testing_protocols(metafunc):
     return testing_protocols
 
 
+def rand_str(length=6):
+    return str(uuid.uuid4())[:length]
+
+
 def inproc():
     """Generates random in-process address."""
-    return 'inproc://{0}'.format(zeronimo.alloc_id())
+    return 'inproc://{0}'.format(rand_str())
 
 
 def ipc():
@@ -137,7 +142,7 @@ def ipc():
         os.mkdir(FEED_DIR)
     pipe = None
     while pipe is None or os.path.exists(pipe):
-        pipe = os.path.join(FEED_DIR, zeronimo.alloc_id())
+        pipe = os.path.join(FEED_DIR, rand_str())
     return 'ipc://{0}'.format(pipe)
 
 
@@ -435,7 +440,7 @@ def make_fixtures(args):
     ctx = zmq.Context()
     assert not ctx.closed
     # process deferred worker, customer, topic, addr, fanout_addr
-    topic = zeronimo.alloc_id()
+    topic = rand_str()
     protocol = None
     workers = []
     for x, arg in enumerate(args):
