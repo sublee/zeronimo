@@ -141,7 +141,7 @@ def test_basic_zeronimo(ctx, addr, fanout_addr, addr_customer, topic):
     # zeronimo!
     tunnel = customer.link([tunnel_push, tunnel_pub])
     assert tunnel.simple() == 'ok'
-    assert tunnel(fanout=topic).simple() == ['ok']
+    assert tunnel(fanout_to=topic).simple() == ['ok']
     stop_zeronimo([worker, customer])
 
 
@@ -149,7 +149,7 @@ def test_basic_zeronimo(ctx, addr, fanout_addr, addr_customer, topic):
 def test_fixtures(customer, worker, tunnel_socks, topic):
     tunnel = customer.link(tunnel_socks)
     assert tunnel.simple() == 'ok'
-    assert tunnel(fanout=topic).simple() == ['ok']
+    assert tunnel(fanout_to=topic).simple() == ['ok']
 
 
 @resolve_fixtures
@@ -157,7 +157,7 @@ def test_tunnel_context(customer, worker, tunnel_socks, topic):
     assert not customer.tunnels
     with customer.link(tunnel_socks) as tunnel:
         assert tunnel.simple() == 'ok'
-        assert tunnel(fanout=topic).simple() == ['ok']
+        assert tunnel(fanout_to=topic).simple() == ['ok']
 
 
 @resolve_fixtures
@@ -243,7 +243,7 @@ def test_fanout(customer, worker1, worker2, tunnel_socks, topic):
     with customer.link(tunnel_socks) as tunnel:
         assert list(tunnel.rycbar123()) == \
             'run, you clever boy; and remember.'.split()
-        for rycbar123 in tunnel(fanout=topic).rycbar123():
+        for rycbar123 in tunnel(fanout_to=topic).rycbar123():
             assert next(rycbar123) == 'run,'
             assert next(rycbar123) == 'you'
             assert next(rycbar123) == 'clever'
@@ -251,8 +251,8 @@ def test_fanout(customer, worker1, worker2, tunnel_socks, topic):
             assert next(rycbar123) == 'and'
             assert next(rycbar123) == 'remember.'
         with pytest.raises(ZeroDivisionError):
-            tunnel(fanout=topic).zero_div()
-        failures = tunnel(fanout=topic, as_task=True).zero_div()
+            tunnel(fanout_to=topic).zero_div()
+        failures = tunnel(fanout_to=topic, as_task=True).zero_div()
         assert_num_workers(failures, 2)
         with pytest.raises(ZeroDivisionError):
             failures[0]()
@@ -274,21 +274,21 @@ def test_reject(customer, worker1, worker2, tunnel_socks, topic):
     with customer.link(tunnel_socks) as tunnel:
         assert worker1.accepting
         assert worker2.accepting
-        assert_num_workers(tunnel(fanout=topic).simple(), 2)
+        assert_num_workers(tunnel(fanout_to=topic).simple(), 2)
         worker2.reject_all()
         assert not worker2.accepting
         assert tunnel(as_task=True).simple().worker_info == worker1.info
         assert tunnel(as_task=True).simple().worker_info == worker1.info
-        assert_num_workers(tunnel(fanout=topic).simple(), 1)
+        assert_num_workers(tunnel(fanout_to=topic).simple(), 1)
         worker1.reject_all()
         assert not worker1.accepting
         with pytest.raises(zeronimo.WorkerNotFound):
-            assert tunnel(fanout=topic).simple()
+            assert tunnel(fanout_to=topic).simple()
         worker1.accept_all()
         assert worker1.accepting
         worker2.accept_all()
         assert worker2.accepting
-        assert_num_workers(tunnel(fanout=topic).simple(), 2)
+        assert_num_workers(tunnel(fanout_to=topic).simple(), 2)
 
 
 @resolve_fixtures
@@ -298,22 +298,22 @@ def test_subscription(customer, worker1, worker2, tunnel_socks, topic):
     sub2 = [sock for sock in worker2.sockets if sock.socket_type == zmq.SUB][0]
     with customer.link(tunnel_socks) as tunnel:
         sub1.set(zmq.UNSUBSCRIBE, topic)
-        assert len(tunnel(fanout=topic).simple()) == 1
+        assert len(tunnel(fanout_to=topic).simple()) == 1
         sub2.set(zmq.UNSUBSCRIBE, topic)
         with pytest.raises(zeronimo.WorkerNotFound):
-            tunnel(fanout=topic).simple()
+            tunnel(fanout_to=topic).simple()
         worker1.stop()
         sub1.set(zmq.SUBSCRIBE, topic)
         sync_pubsub(pub, [sub1], topic)
         worker1.start()
-        assert len(tunnel(fanout=topic).simple()) == 1
+        assert len(tunnel(fanout_to=topic).simple()) == 1
         worker1.stop()
         worker2.stop()
         sub2.set(zmq.SUBSCRIBE, topic)
         sync_pubsub(pub, [sub1, sub2], topic)
         worker1.start()
         worker2.start()
-        assert len(tunnel(fanout=topic).simple()) == 2
+        assert len(tunnel(fanout_to=topic).simple()) == 2
 
 
 @resolve_fixtures
@@ -322,11 +322,11 @@ def test_offbeat(request, customer, worker1, worker2, tunnel_socks, topic):
     base = request.config._adjusted_timeout
     patch_worker_to_be_slow(worker2, delay=base * 2)
     with customer.link(tunnel_socks) as tunnel:
-        tasks = tunnel(fanout=topic, as_task=True).sleep_range(base * 3, 2)
+        tasks = tunnel(fanout_to=topic, as_task=True).sleep_range(base * 3, 2)
         assert len(tasks) == 1
         list(tasks[0]())
         assert_num_workers(tasks, 2)
-        generous = tunnel(fanout=topic, as_task=True, timeout=base * 4)
+        generous = tunnel(fanout_to=topic, as_task=True, timeout=base * 4)
         assert_num_workers(generous.simple(), 2)
 
 
@@ -375,8 +375,8 @@ def test_device(ctx, customer1, customer2, topic, addr1, addr2, addr3, addr4):
          customer2.link([tunnel_push, tunnel_pub]) as tunnel2:
         assert tunnel1.simple() == 'ok'
         assert tunnel2.simple() == 'ok'
-        assert tunnel1(fanout=topic).simple() == ['ok', 'ok']
-        assert tunnel2(fanout=topic).simple() == ['ok', 'ok']
+        assert tunnel1(fanout_to=topic).simple() == ['ok', 'ok']
+        assert tunnel2(fanout_to=topic).simple() == ['ok', 'ok']
 
 
 @pytest.mark.xfail('zmq.zmq_version_info() < (3, 2)')
@@ -407,8 +407,8 @@ def test_forwarder(ctx, customer1, customer2, topic, addr1, addr2):
     worker2.start()
     yield resolve_fixtures.will_stop(worker2)
     # zeronimo!
-    with customer1.link([tunnel_pub], fanout=topic) as tunnel1, \
-         customer2.link([tunnel_pub], fanout=topic) as tunnel2:
+    with customer1.link([tunnel_pub], fanout_to=topic) as tunnel1, \
+         customer2.link([tunnel_pub], fanout_to=topic) as tunnel2:
         assert tunnel1.simple() == ['ok', 'ok']
         assert tunnel2.simple() == ['ok', 'ok']
 
@@ -433,7 +433,7 @@ def test_simple(ctx, addr1, addr2):
     with customer.link([tunnel_sock]) as tunnel:
         assert tunnel.simple() == 'ok'
         with pytest.raises(KeyError):
-            tunnel(fanout=topic).simple()
+            tunnel(fanout_to=topic).simple()
 
 
 @resolve_fixtures
@@ -459,7 +459,7 @@ def test_concurrent_tunnels(customer, worker, tunnel_socks, topic):
             assert customer.is_running()
             assert tunnel._znm_customer.is_running()
             assert tunnel.simple() == 'ok'
-            assert tunnel(fanout=topic).simple() == ['ok']
+            assert tunnel(fanout_to=topic).simple() == ['ok']
         done.append(True)
     assert not customer.is_running()
     times = 5
@@ -486,11 +486,11 @@ def test_proxied_customer(ctx, worker, tunnel_socks, addr1, addr2):
 def test_tunnel_without_customer(worker, tunnel_socks, topic):
     tunnel = zeronimo.Tunnel(None, tunnel_socks)
     tunnel(wait=False).simple()
-    tunnel(wait=False, fanout=topic).simple()
+    tunnel(wait=False, fanout_to=topic).simple()
     with pytest.raises(ValueError):
         tunnel.simple()
     with pytest.raises(ValueError):
-        tunnel(fanout=topic).simple()
+        tunnel(fanout_to=topic).simple()
 
 
 @resolve_fixtures
@@ -500,13 +500,13 @@ def test_timeout(customer, worker, tunnel_socks, topic):
         with pytest.raises(zeronimo.WorkerNotFound):
             tunnel(timeout=0).simple()
         with pytest.raises(zeronimo.WorkerNotFound):
-            tunnel(fanout=topic, timeout=0).simple()
+            tunnel(fanout_to=topic, timeout=0).simple()
         with pytest.raises(zeronimo.WorkerNotFound):
             tunnel(timeout=0.01).simple()
         with pytest.raises(zeronimo.WorkerNotFound):
-            tunnel(fanout=topic, timeout=0.01).simple()
+            tunnel(fanout_to=topic, timeout=0.01).simple()
         assert tunnel(timeout=0.1).simple() == 'ok'
-        assert tunnel(fanout=topic, timeout=0.1).simple() == ['ok']
+        assert tunnel(fanout_to=topic, timeout=0.1).simple() == ['ok']
 
 
 @resolve_fixtures

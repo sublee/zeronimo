@@ -544,9 +544,9 @@ class Tunnel(object):
     :param wait: (keyword-only) if it's set to ``True``, the workers will
                  reply. Otherwise, the workers just invoke a function without
                  reply. Defaults to ``True``.
-    :param fanout: (keyword-only) if it's set to the fanout topic (PUB/SUB
-                   prefix), all proper workers will receive an invocation
-                   request. Defaults to ``False``.
+    :param fanout_to: (keyword-only) if it's set to the fanout topic (PUB/SUB
+                      prefix), all proper workers will receive an invocation
+                      request. Defaults to ``False``.
     :param as_task: (keyword-only) actually, every remote function calls have
                     own :class:`Task` object. if it's set to ``True``, remote
                     functions return a :class:`Task` object instead of result
@@ -634,12 +634,12 @@ class Invoker(object):
     def __getattr__(self, attr):
         return getattr(self.tunnel, '_znm_' + attr)
 
-    def invoke(self, wait=True, fanout=False, as_task=False,
+    def invoke(self, wait=True, fanout_to=False, as_task=False,
                timeout=DEFAULT_TIMEOUT):
-        if fanout is False:
+        if fanout_to is False:
             should_fanout, topic = False, None
         else:
-            should_fanout, topic = True, fanout
+            should_fanout, topic = True, fanout_to
         if not wait:
             return self._invoke_nowait(should_fanout, topic)
         if self.customer is None:
