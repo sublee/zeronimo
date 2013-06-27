@@ -277,8 +277,8 @@ def test_reject(customer, worker1, worker2, tunnel_socks, topic):
         assert_num_workers(tunnel(fanout=topic).simple(), 2)
         worker2.reject_all()
         assert not worker2.accepting
-        assert tunnel(as_task=True).simple().worker_info == worker1.info
-        assert tunnel(as_task=True).simple().worker_info == worker1.info
+        assert tunnel(as_task=True).simple().worker_info == list(worker1.info)
+        assert tunnel(as_task=True).simple().worker_info == list(worker1.info)
         assert_num_workers(tunnel(fanout=topic).simple(), 1)
         worker1.reject_all()
         assert not worker1.accepting

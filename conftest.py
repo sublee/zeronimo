@@ -26,9 +26,13 @@ FEED_DIR = os.path.join(os.path.dirname(__file__), '_feeds')
 WINDOWS = platform.system() == 'Windows'
 
 
+if not __debug__:
+    # don't print exception
+    gevent.hub.get_hub().print_exception = lambda *a, **k: 0
+
+
 ps = psutil.Process(os.getpid())
 config = None
-gevent.hub.get_hub().print_exception = lambda *a, **k: 'do not print exception'
 
 
 def pytest_addoption(parser):
@@ -300,14 +304,14 @@ def make_tunnel_sockets(ctx, workers):
 
 
 def patch_worker_to_be_slow(worker, delay):
-    def run_task(self, invocation, context):
+    def work(self, invocation, context):
         self._slow = invocation.function_name != '_znm_test'
-        return zeronimo.Worker.run_task(self, invocation, context)
+        return zeronimo.Worker.work(self, invocation, context)
     def send_reply(self, sock, method, *args, **kwargs):
         if self._slow and method == zeronimo.ACCEPT:
             gevent.sleep(delay)
         return zeronimo.Worker.send_reply(self, sock, method, *args, **kwargs)
-    worker.run_task = functools.partial(run_task, worker)
+    worker.work = functools.partial(work, worker)
     worker.send_reply = functools.partial(send_reply, worker)
 
 

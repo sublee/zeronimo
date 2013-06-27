@@ -9,16 +9,27 @@
 from collections import namedtuple, Iterable, Sequence, Set, Mapping
 import functools
 try:
-    from libuuid import uuid4_bytes
-except ImportError:
-    import uuid
-    uuid4_bytes = lambda: uuid.uuid4().get_bytes()
-import msgpack
-try:
     import cPickle as pickle
 except ImportError:
     import pickle
 from types import MethodType
+import warnings
+
+try:
+    from lru import LRU
+except ImportError:
+    try:
+        from lru import LRUCache as LRU
+    except ImportError:
+        LRU = dict
+        warnings.warn('To use LRU cache for reply sockets of worker, install '
+                      'lru-dict or lru.', ImportWarning)
+import msgpack
+try:
+    from libuuid import uuid4_bytes
+except ImportError:
+    import uuid
+    uuid4_bytes = lambda: uuid.uuid4().get_bytes()
 
 from gevent import spawn, Timeout
 from gevent.coros import Semaphore
@@ -221,16 +232,13 @@ class Runner(object):
                     del self._async_running
                 except AttributeError:
                     pass
-                #with self._stopping_lock:
                 stopper.clear()
             return rv
         obj.run, obj._run = MethodType(run, obj), obj.run
 
     @classmethod
     def _patch_stop(cls, obj, stopper):
-        #obj._stopping_lock = Semaphore()
         def stop(self):
-            #with self._stopping_lock:
             if not self.is_running():
                 raise RuntimeError('{0} not running'.format(cls_name(self)))
             stopper.set()
@@ -288,7 +296,7 @@ class Worker(Runner):
     sockets = None
     info = None
 
-    def __init__(self, obj, sockets, info=None):
+    def __init__(self, obj, sockets, info=None, cache_reply_sockets=128):
         super(Worker, self).__init__()
         self.obj = obj
         socket_types = set(sock.socket_type for sock in sockets)
@@ -297,6 +305,7 @@ class Worker(Runner):
         self.sockets = sockets
         self.info = info
         self.accept_all()
+        self._cached_reply_sockets = LRU(cache_reply_sockets)
 
     def accept_all(self):
         """After calling this, the worker will accept all invocations. This
@@ -321,12 +330,16 @@ class Worker(Runner):
                 break
             for sock, event in events:
                 if event & zmq.POLLIN:
-                    invocation = Invocation(*recv(sock))
-                    spawn(self.run_task, invocation, sock.context)
-                if event & zmq.POLLERR:
+                    try:
+                        invocation = Invocation(*recv(sock))
+                    except msgpack.UnpackException:
+                        # TODO: warning
+                        continue
+                    spawn(self.work, invocation, sock.context)
+                else:
                     assert 0
 
-    def run_task(self, invocation, context):
+    def work(self, invocation, context):
         """Invokes a function and send results to the customer. It supports
         all of function actions. A function could return, yield, raise any
         picklable objects.
@@ -336,36 +349,40 @@ class Worker(Runner):
         args = invocation.args
         kwargs = invocation.kwargs
         sock = False
-        try:
-            if invocation.customer_addr is not None:
+        if invocation.customer_addr is not None:
+            try:
+                sock = self._cached_reply_sockets[invocation.customer_addr]
+            except KeyError:
                 sock = context.socket(zmq.PUSH)
                 sock.connect(invocation.customer_addr)
-                channel = (invocation.invoker_id, task_id)
-                method = ACCEPT if self.accepting else REJECT
-                sock and self.send_reply(sock, method, self.info, *channel)
-            if not self.accepting:
-                return
+                self._cached_reply_sockets[invocation.customer_addr] = sock
+            channel = (invocation.invoker_id, task_id)
+            method = ACCEPT if self.accepting else REJECT
+            self.send_reply(sock, method, self.info, *channel)
+        if not self.accepting:
+            return
+        try:
+            val = getattr(self.obj, function_name)(*args, **kwargs)
+        except Exception as error:
+            # raise
+            sock and self.send_reply(sock, RAISE, error, *channel)
+            raise
+        if should_yield(val):
+            # yield, yield, ..., break
             try:
-                val = getattr(self.obj, function_name)(*args, **kwargs)
+                for item in val:
+                    sock and self.send_reply(sock, YIELD, item, *channel)
             except Exception as error:
                 sock and self.send_reply(sock, RAISE, error, *channel)
-                raise
-            if should_yield(val):
-                try:
-                    for item in val:
-                        sock and self.send_reply(sock, YIELD, item, *channel)
-                except Exception as error:
-                    sock and self.send_reply(sock, RAISE, error, *channel)
-                else:
-                    sock and self.send_reply(sock, BREAK, None, *channel)
             else:
-                sock and self.send_reply(sock, RETURN, val, *channel)
-        finally:
-            sock and sock.close()
+                sock and self.send_reply(sock, BREAK, None, *channel)
+        else:
+            # return
+            sock and self.send_reply(sock, RETURN, val, *channel)
 
     def send_reply(self, sock, method, data, task_id, run_id):
         reply = Reply(method, data, task_id, run_id)
-        return send(sock, tuple(reply))
+        return send(sock, reply)
 
     def __repr__(self):
         keywords = ['info'] if self.info is not None else []
@@ -655,7 +672,7 @@ class Invoker(object):
         sock = get_socket(self.sockets, socket_type, 'Tunnel')
         invocation = Invocation(
             self.function_name, self.args, self.kwargs, self.id, None)
-        send(sock, tuple(invocation), topic=topic)
+        send(sock, invocation, topic=topic)
 
     def _invoke(self, as_task, timeout):
         sock = get_socket(self.sockets, zmq.PUSH, 'Tunnel')
@@ -665,7 +682,7 @@ class Invoker(object):
         self.customer.register_invoker(self)
         reply = None
         rejected = 0
-        send(sock, tuple(invocation))
+        send(sock, invocation)
         try:
             with Timeout(timeout, False):
                 while True:
@@ -673,7 +690,7 @@ class Invoker(object):
                     if reply.method == REJECT:
                         rejected += 1
                         # send again
-                        send(sock, tuple(invocation))
+                        send(sock, invocation)
                         reply = None
                         continue
                     elif reply.method == ACCEPT:
@@ -700,7 +717,7 @@ class Invoker(object):
         self.customer.register_invoker(self)
         replies = []
         rejected = 0
-        send(sock, tuple(invocation), topic=topic)
+        send(sock, invocation, topic=topic)
         with Timeout(timeout, False):
             while True:
                 reply = self.queue.get()
@@ -722,7 +739,7 @@ class Invoker(object):
 
     def _spawn_task(self, reply, as_task=False):
         assert reply.method == ACCEPT
-        worker_info = reply.data and tuple(reply.data)
+        worker_info = reply.data
         task = Task(self.customer, reply.task_id, self.id, worker_info)
         return task if as_task else task()
 
@@ -734,7 +751,7 @@ class Invoker(object):
                 if reply is StopIteration:
                     break
                 assert reply.method == ACCEPT
-                worker_info = reply.data and tuple(reply.data)
+                worker_info = reply.data
                 task = Task(self.customer, reply.task_id, self.id, worker_info)
                 tasks.append(task if as_task else task())
         collect_tasks(iter_replies.next)
