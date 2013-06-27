@@ -370,16 +370,17 @@ def sync_pubsub(pub_sock, sub_socks, prefix=''):
         poller.register(sub_sock, zmq.POLLIN)
     to_sync = sub_socks[:]
     # sync all SUB sockets
-    while to_sync:
-        pub_sock.send(prefix + ':sync')
-        events = dict(poller.poll(timeout=1))
-        for sub_sock in sub_socks:
-            if sub_sock in events:
-                assert sub_sock.recv().endswith(':sync')
-                try:
-                    to_sync.remove(sub_sock)
-                except ValueError:
-                    pass
+    with gevent.Timeout(1, 'Are SUB sockets subscribing?'):
+        while to_sync:
+            pub_sock.send(prefix + ':sync')
+            events = dict(poller.poll(timeout=1))
+            for sub_sock in sub_socks:
+                if sub_sock in events:
+                    assert sub_sock.recv().endswith(':sync')
+                    try:
+                        to_sync.remove(sub_sock)
+                    except ValueError:
+                        pass
     # discard garbage sync messges
     while True:
         events = poller.poll(timeout=1)

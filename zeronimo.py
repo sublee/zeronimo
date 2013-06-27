@@ -59,7 +59,7 @@ def should_yield(val):
     return (isinstance(val, Iterable) and not isinstance(val, serializable))
 
 
-def read_socket_type(socket_type):
+def repr_socket_type(socket_type):
     return {
         zmq.PAIR: 'PAIR', zmq.PUB: 'PUB', zmq.SUB: 'SUB', zmq.REQ: 'REQ',
         zmq.REP: 'REP', zmq.DEALER: 'DEALER', zmq.ROUTER: 'ROUTER',
@@ -71,7 +71,7 @@ def get_socket(sockets, socket_type, name=None):
     try:
         return sockets[socket_type]
     except KeyError:
-        msg = 'no {0} socket'.format(read_socket_type(socket_type))
+        msg = 'no {0} socket'.format(repr_socket_type(socket_type))
         if name is None:
             msg = 'There\'s ' + msg
         else:
@@ -97,10 +97,6 @@ def cls_name(obj):
 # wrapped ZMQ functions
 
 
-prefix_sep = chr(0)
-prefix_pattern = re.compile(r'^[^{0}]*{0}'.format(prefix_sep))
-
-
 def default(obj):
     return {'pickle': pickle.dumps(obj)}
 
@@ -115,17 +111,13 @@ def send(sock, obj, flags=0, prefix=''):
     """Same with :meth:`zmq.Socket.send_pyobj` but can append prefix for
     filtering subscription.
     """
-    assert prefix_sep not in prefix
     serial = msgpack.packb(obj, default=default)
-    msg = prefix_sep.join([prefix, serial])
-    assert not sock.closed
-    return sock.send(msg, flags)
+    return sock.send_multipart([prefix, serial], flags)
 
 
 def recv(sock, flags=0):
     """Same with :meth:`zmq.Socket.recv_pyobj`."""
-    msg = sock.recv(flags)
-    serial = prefix_pattern.sub('', msg)
+    prefix, serial = sock.recv_multipart(flags)
     return msgpack.unpackb(serial, object_hook=object_hook)
 
 
