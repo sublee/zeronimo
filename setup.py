@@ -89,7 +89,7 @@ setup(
     author='Heungsub Lee',
     author_email=re.sub('((sub).)(.*)', r'\2@\1.\3', 'sublee'),
     url='http://github.com/sublee/zeronimo/',
-    description='A distributed RPC solution based on ZeroMQ',
+    description='RPC between distributed workers',
     long_description=__doc__,
     platforms='any',
     py_module=['zeronimo'],
