@@ -21,9 +21,7 @@ except ImportError:
     try:
         from lru import LRUCache as LRU
     except ImportError:
-        LRU = dict
-        warnings.warn('To use LRU cache for reply sockets of worker, install '
-                      'lru-dict or lru.', ImportWarning)
+        LRU = None
 import msgpack
 try:
     from libuuid import uuid4_bytes
@@ -57,6 +55,7 @@ BREAK = 103
 
 
 DEFAULT_TIMEOUT = 0.01
+DEFAULT_CACHE_REPLY_SOCKETS = 128
 
 
 # utility functions
@@ -296,7 +295,7 @@ class Worker(Runner):
     sockets = None
     info = None
 
-    def __init__(self, obj, sockets, info=None, cache_reply_sockets=128):
+    def __init__(self, obj, sockets, info=None, cache_reply_sockets=None):
         super(Worker, self).__init__()
         self.obj = obj
         socket_types = set(sock.socket_type for sock in sockets)
@@ -305,7 +304,15 @@ class Worker(Runner):
         self.sockets = sockets
         self.info = info
         self.accept_all()
-        self._cached_reply_sockets = LRU(cache_reply_sockets)
+        if cache_reply_sockets is None and LRU is not None:
+            cache_reply_sockets = DEFAULT_CACHE_REPLY_SOCKETS
+        if cache_reply_sockets:
+            if LRU is None:
+                raise ImportError('Install lru or lru-dict to cache reply '
+                                  'sockets')
+            self._cached_reply_sockets = LRU(cache_reply_sockets)
+        else:
+            self._cached_reply_sockets = None
 
     def accept_all(self):
         """After calling this, the worker will accept all invocations. This
@@ -332,7 +339,7 @@ class Worker(Runner):
                 if event & zmq.POLLIN:
                     try:
                         invocation = Invocation(*recv(sock))
-                    except msgpack.UnpackException:
+                    except (TypeError, msgpack.ExtraData):
                         # TODO: warning
                         continue
                     spawn(self.work, invocation, sock.context)
@@ -352,10 +359,11 @@ class Worker(Runner):
         if invocation.customer_addr is not None:
             try:
                 sock = self._cached_reply_sockets[invocation.customer_addr]
-            except KeyError:
+            except (KeyError, TypeError):
                 sock = context.socket(zmq.PUSH)
                 sock.connect(invocation.customer_addr)
-                self._cached_reply_sockets[invocation.customer_addr] = sock
+                if self._cached_reply_sockets is not None:
+                    self._cached_reply_sockets[invocation.customer_addr] = sock
             channel = (invocation.invoker_id, task_id)
             method = ACCEPT if self.accepting else REJECT
             self.send_reply(sock, method, self.info, *channel)
@@ -585,7 +593,8 @@ class Tunnel(object):
         self._znm_invoker_opts = invoker_opts
 
     def __getattr__(self, attr):
-        return functools.partial(self._znm_invoke, attr)
+        self.__dict__[attr] = functools.partial(self._znm_invoke, attr)
+        return self.__dict__[attr]
 
     def _znm_invoke(self, function_name, *args, **kwargs):
         """Invokes a remote function."""
