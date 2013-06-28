@@ -304,6 +304,7 @@ class Worker(Runner):
         self.sockets = sockets
         self.info = info
         self.accept_all()
+        self._sending_lock = Semaphore()
         if cache_reply_sockets is None and LRU is not None:
             cache_reply_sockets = DEFAULT_CACHE_REPLY_SOCKETS
         if cache_reply_sockets:
@@ -390,7 +391,8 @@ class Worker(Runner):
 
     def send_reply(self, sock, method, data, task_id, run_id):
         reply = Reply(method, data, task_id, run_id)
-        return send(sock, reply)
+        with self._sending_lock:
+            return send(sock, reply)
 
     def __repr__(self):
         keywords = ['info'] if self.info is not None else []
