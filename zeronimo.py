@@ -643,13 +643,17 @@ class Invoker(object):
     """
 
     def __init__(self, tunnel, function_name, args, kwargs):
+        self.tunnel = tunnel
         self.function_name = function_name
         self.args = args
         self.kwargs = kwargs
-        self.tunnel = tunnel
 
     def __getattr__(self, attr):
         return getattr(self.tunnel, '_znm_' + attr)
+
+    def make_invocation(self, wait=True):
+        return Invocation(self.function_name, self.args, self.kwargs,
+                          id(self), self.customer.addr if wait else None)
 
     def invoke(self, wait=True, fanout=False, as_task=False,
                timeout=DEFAULT_TIMEOUT):
@@ -657,34 +661,33 @@ class Invoker(object):
             publish, topic = False, None
         else:
             publish, topic = True, fanout
-        if not wait:
-            return self.invoke_nowait(publish, topic)
-        if self.customer is None:
-            raise ValueError(
-                'To wait for a result, the tunnel must have a customer')
-        self.queue = Queue()
-        if publish:
-            return self.invoke_fanout(topic, as_task, timeout)
+        if wait:
+            if self.customer is None:
+                raise ValueError(
+                    'To wait for a result, the tunnel must have a customer')
+            self.queue = Queue()
+            self.customer.register_invoker(self)
+            # invoke_fanout or _once will unregieter itself at the end
+            if publish:
+                self.invoke_fanout(topic, as_task, timeout)
+            else:
+                self.invoke_once(as_task, timeout)
         else:
-            return self.invoke_once(as_task, timeout)
+            self.invoke_nowait(publish, topic)
 
     def invoke_nowait(self, publish, topic):
         socket_type = zmq.PUB if publish else zmq.PUSH
         sock = get_socket(self.sockets, socket_type, 'Tunnel')
-        invocation = Invocation(
-            self.function_name, self.args, self.kwargs, id(self), None)
-        send(sock, invocation, topic=topic)
+        send(sock, self.make_invocation(False), topic=topic)
 
     def invoke_once(self, as_task, timeout):
         if not self.customer.is_running():
             raise RuntimeError('Customer not running')
         sock = get_socket(self.sockets, zmq.PUSH, 'Tunnel')
-        invocation = Invocation(self.function_name, self.args, self.kwargs,
-                                id(self), self.customer.addr)
         # find one worker
-        self.customer.register_invoker(self)
         reply = None
         rejected = 0
+        invocation = self.make_invocation()
         send(sock, invocation)
         try:
             with Timeout(timeout, False):
@@ -716,13 +719,10 @@ class Invoker(object):
         if not self.customer.is_running():
             raise RuntimeError('Customer not running')
         sock = get_socket(self.sockets, zmq.PUB, 'Tunnel')
-        invocation = Invocation(self.function_name, self.args, self.kwargs,
-                                id(self), self.customer.addr)
         # find one or more workers
-        self.customer.register_invoker(self)
         replies = []
         rejected = 0
-        send(sock, invocation, topic=topic)
+        send(sock, self.make_invocation(), topic=topic)
         with Timeout(timeout, False):
             while True:
                 reply = self.queue.get()
