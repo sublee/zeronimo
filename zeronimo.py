@@ -663,27 +663,27 @@ class Invoker(object):
     def invoke(self, wait=True, fanout=False, as_task=False,
                timeout=DEFAULT_TIMEOUT):
         if fanout is False:
-            should_fanout, topic = False, None
+            publish, topic = False, None
         else:
-            should_fanout, topic = True, fanout
+            publish, topic = True, fanout
         if not wait:
-            return self._invoke_nowait(should_fanout, topic)
+            return self.invoke_nowait(publish, topic)
         if self.customer is None:
             raise ValueError(
                 'To wait for a result, the tunnel must have a customer')
-        if should_fanout:
-            return self._invoke_fanout(topic, as_task, timeout)
+        if publish:
+            return self.invoke_fanout(topic, as_task, timeout)
         else:
-            return self._invoke(as_task, timeout)
+            return self.invoke_once(as_task, timeout)
 
-    def _invoke_nowait(self, should_fanout, topic):
-        socket_type = zmq.PUB if should_fanout else zmq.PUSH
+    def invoke_nowait(self, publish, topic):
+        socket_type = zmq.PUB if publish else zmq.PUSH
         sock = get_socket(self.sockets, socket_type, 'Tunnel')
         invocation = Invocation(
             self.function_name, self.args, self.kwargs, self.id, None)
         send(sock, invocation, topic=topic)
 
-    def _invoke(self, as_task, timeout):
+    def invoke_once(self, as_task, timeout):
         sock = get_socket(self.sockets, zmq.PUSH, 'Tunnel')
         invocation = Invocation(self.function_name, self.args, self.kwargs,
                                 self.id, self.customer.addr)
@@ -716,9 +716,9 @@ class Invoker(object):
                 errmsg += ', {0} workers rejected'.format(rejected)
             raise WorkerNotFound(errmsg)
         else:
-            return self._spawn_task(reply, as_task)
+            return self.spawn_task(reply, as_task)
 
-    def _invoke_fanout(self, topic, as_task, timeout):
+    def invoke_fanout(self, topic, as_task, timeout):
         sock = get_socket(self.sockets, zmq.PUB, 'Tunnel')
         invocation = Invocation(self.function_name, self.args, self.kwargs,
                                 self.id, self.customer.addr)
@@ -744,15 +744,15 @@ class Invoker(object):
             else:
                 after_errmsg = ''
             raise WorkerNotFound(''.join(['Worker not found', after_errmsg]))
-        return self._spawn_fanout_tasks(replies, as_task)
+        return self.spawn_fanout_tasks(replies, as_task)
 
-    def _spawn_task(self, reply, as_task=False):
+    def spawn_task(self, reply, as_task=False):
         assert reply.method == ACCEPT
         worker_info = reply.data
         task = Task(self.customer, reply.task_id, self.id, worker_info)
         return task if as_task else task()
 
-    def _spawn_fanout_tasks(self, replies, as_task=False):
+    def spawn_fanout_tasks(self, replies, as_task=False):
         tasks = []
         iter_replies = iter(replies)
         def collect_tasks(getter):
