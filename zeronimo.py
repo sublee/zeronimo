@@ -661,7 +661,9 @@ class Invoker(object):
             publish, topic = False, None
         else:
             publish, topic = True, fanout
-        if wait:
+        if not wait:
+            self.invoke_nowait(publish, topic)
+        else:
             if self.customer is None:
                 raise ValueError(
                     'To wait for a result, the tunnel must have a customer')
@@ -669,11 +671,9 @@ class Invoker(object):
             self.customer.register_invoker(self)
             # invoke_fanout or _once will unregieter itself at the end
             if publish:
-                self.invoke_fanout(topic, as_task, timeout)
+                return self.invoke_fanout(topic, as_task, timeout)
             else:
-                self.invoke_once(as_task, timeout)
-        else:
-            self.invoke_nowait(publish, topic)
+                return self.invoke_once(as_task, timeout)
 
     def invoke_nowait(self, publish, topic):
         socket_type = zmq.PUB if publish else zmq.PUSH
