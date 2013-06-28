@@ -601,8 +601,6 @@ class Tunnel(object):
         if self._znm_customer is None:
             invoker_id = None
         else:
-            if not self._znm_customer.is_running():
-                raise RuntimeError('Customer not running')
             invoker_id = alloc_id(exclude=self._znm_customer.invokers)
         invoker = Invoker(self, function_name, args, kwargs, invoker_id)
         return invoker.invoke(**self._znm_invoker_opts)
@@ -684,6 +682,8 @@ class Invoker(object):
         send(sock, invocation, topic=topic)
 
     def invoke_once(self, as_task, timeout):
+        if not self.customer.is_running():
+            raise RuntimeError('Customer not running')
         sock = get_socket(self.sockets, zmq.PUSH, 'Tunnel')
         invocation = Invocation(self.function_name, self.args, self.kwargs,
                                 self.id, self.customer.addr)
@@ -719,6 +719,8 @@ class Invoker(object):
             return self.spawn_task(reply, as_task)
 
     def invoke_fanout(self, topic, as_task, timeout):
+        if not self.customer.is_running():
+            raise RuntimeError('Customer not running')
         sock = get_socket(self.sockets, zmq.PUB, 'Tunnel')
         invocation = Invocation(self.function_name, self.args, self.kwargs,
                                 self.id, self.customer.addr)
