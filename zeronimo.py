@@ -455,7 +455,7 @@ class Customer(Runner):
 
         :returns: the invoker registry.
         """
-        self.invokers[invoker.id] = invoker
+        self.invokers[id(invoker)] = invoker
         return self.invokers
 
     def unregister_invoker(self, invoker):
@@ -464,7 +464,7 @@ class Customer(Runner):
 
         :returns: the invoker registry.
         """
-        assert self.invokers.pop(invoker.id) is invoker
+        assert self.invokers.pop(id(invoker)) is invoker
         invoker.queue.put(StopIteration)
         return self.invokers
 
@@ -475,31 +475,31 @@ class Customer(Runner):
         :returns: the task registry related to the same invoker.
         """
         try:
-            self.tasks[task.invoker_id][task.id] = task
+            self.tasks[id(task.invoker)][task.id] = task
         except KeyError:
-            self.tasks[task.invoker_id] = {task.id: task}
+            self.tasks[id(task.invoker)] = {task.id: task}
         self._restore_missing_messages(task)
-        return self.tasks[task.invoker_id]
+        return self.tasks[id(task.invoker)]
 
     def unregister_task(self, task):
         """Unregisters a :class:`Task` object.
 
         :returns: the task registry related to the same invoker.
         """
-        tasks = self.tasks[task.invoker_id]
+        tasks = self.tasks[id(task.invoker)]
         assert tasks.pop(task.id) is task
         if not tasks:
-            del self.tasks[task.invoker_id]
+            del self.tasks[id(task.invoker)]
         return tasks
 
     def _restore_missing_messages(self, task):
         """Restores kept missing messages for the task."""
         try:
-            missing = self._missings[task.invoker_id].pop(task.id)
+            missing = self._missings[id(task.invoker)].pop(task.id)
         except KeyError:
             return
-        if not self._missings[task.invoker_id]:
-            del self._missings[task.invoker_id]
+        if not self._missings[id(task.invoker)]:
+            del self._missings[id(task.invoker)]
         try:
             while missing.queue:
                 task.queue.put(missing.get(block=False))
@@ -598,11 +598,7 @@ class Tunnel(object):
 
     def _znm_invoke(self, function_name, *args, **kwargs):
         """Invokes a remote function."""
-        if self._znm_customer is None:
-            invoker_id = None
-        else:
-            invoker_id = alloc_id(exclude=self._znm_customer.invokers)
-        invoker = Invoker(self, function_name, args, kwargs, invoker_id)
+        invoker = Invoker(self, function_name, args, kwargs)
         return invoker.invoke(**self._znm_invoker_opts)
 
     def __enter__(self):
@@ -644,16 +640,13 @@ class Invoker(object):
     :param function_name: the function name.
     :param args: the tuple of the arguments.
     :param kwargs: the dictionary of the keyword arguments.
-    :param id: the identifier.
     """
 
-    def __init__(self, tunnel, function_name, args, kwargs, id):
+    def __init__(self, tunnel, function_name, args, kwargs):
         self.function_name = function_name
         self.args = args
         self.kwargs = kwargs
         self.tunnel = tunnel
-        self.id = id
-        self.queue = Queue()
 
     def __getattr__(self, attr):
         return getattr(self.tunnel, '_znm_' + attr)
@@ -669,6 +662,7 @@ class Invoker(object):
         if self.customer is None:
             raise ValueError(
                 'To wait for a result, the tunnel must have a customer')
+        self.queue = Queue()
         if publish:
             return self.invoke_fanout(topic, as_task, timeout)
         else:
@@ -678,7 +672,7 @@ class Invoker(object):
         socket_type = zmq.PUB if publish else zmq.PUSH
         sock = get_socket(self.sockets, socket_type, 'Tunnel')
         invocation = Invocation(
-            self.function_name, self.args, self.kwargs, self.id, None)
+            self.function_name, self.args, self.kwargs, id(self), None)
         send(sock, invocation, topic=topic)
 
     def invoke_once(self, as_task, timeout):
@@ -686,7 +680,7 @@ class Invoker(object):
             raise RuntimeError('Customer not running')
         sock = get_socket(self.sockets, zmq.PUSH, 'Tunnel')
         invocation = Invocation(self.function_name, self.args, self.kwargs,
-                                self.id, self.customer.addr)
+                                id(self), self.customer.addr)
         # find one worker
         self.customer.register_invoker(self)
         reply = None
@@ -723,7 +717,7 @@ class Invoker(object):
             raise RuntimeError('Customer not running')
         sock = get_socket(self.sockets, zmq.PUB, 'Tunnel')
         invocation = Invocation(self.function_name, self.args, self.kwargs,
-                                self.id, self.customer.addr)
+                                id(self), self.customer.addr)
         # find one or more workers
         self.customer.register_invoker(self)
         replies = []
@@ -751,7 +745,7 @@ class Invoker(object):
     def spawn_task(self, reply, as_task=False):
         assert reply.method == ACCEPT
         worker_info = reply.data
-        task = Task(self.customer, reply.task_id, self.id, worker_info)
+        task = Task(reply.task_id, self.customer, self, worker_info)
         return task if as_task else task()
 
     def spawn_fanout_tasks(self, replies, as_task=False):
@@ -763,7 +757,7 @@ class Invoker(object):
                     break
                 assert reply.method == ACCEPT
                 worker_info = reply.data
-                task = Task(self.customer, reply.task_id, self.id, worker_info)
+                task = Task(reply.task_id, self.customer, self, worker_info)
                 tasks.append(task if as_task else task())
         collect_tasks(iter_replies.next)
         spawn(collect_tasks, self.queue.get)
@@ -782,10 +776,10 @@ class Task(object):
     :param worker_info: the value the worker sent at accepting.
     """
 
-    def __init__(self, customer, id, invoker_id, worker_info=None):
-        self.customer = customer
+    def __init__(self, id, customer, invoker, worker_info=None):
         self.id = id
-        self.invoker_id = invoker_id
+        self.customer = customer
+        self.invoker = invoker
         self.worker_info = worker_info
         self.queue = Queue()
 
@@ -797,11 +791,9 @@ class Task(object):
         if reply.method in (RETURN, RAISE):
             if not self.customer.unregister_task(self):
                 try:
-                    invoker = self.customer.invokers[self.invoker_id]
+                    self.customer.unregister_invoker(self.invoker)
                 except KeyError:
                     pass
-                else:
-                    self.customer.unregister_invoker(invoker)
         if reply.method == RETURN:
             return reply.data
         elif reply.method == RAISE:
