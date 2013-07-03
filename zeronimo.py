@@ -13,148 +13,19 @@ try:
 except ImportError:
     import pickle
 from types import MethodType
-import warnings
 
-try:
-    from lru import LRU
-except ImportError:
-    try:
-        from lru import LRUCache as LRU
-    except ImportError:
-        LRU = None
-import msgpack
-try:
-    from libuuid import uuid4_bytes
-except ImportError:
-    import uuid
-    uuid4_bytes = lambda: uuid.uuid4().get_bytes()
-
+import gevent
 from gevent import spawn, Timeout
 from gevent.coros import Semaphore
 from gevent.event import Event, AsyncResult
-from gevent.queue import Queue, Empty
+from gevent.queue import Empty, Queue
+from libuuid import uuid4_bytes
+import msgpack
 import zmq.green as zmq
 
 
 __version__ = '0.0.dev'
-__all__ = ['Worker', 'Customer', 'Tunnel', 'Invoker', 'Task']
-
-
-# reply methods
-
-
-ACCEPT = 1
-REJECT = 0
-RETURN = 100
-RAISE = 101
-YIELD = 102
-BREAK = 103
-
-
-# default settings
-
-
-DEFAULT_TIMEOUT = 0.01
-DEFAULT_CACHE_REPLY_SOCKETS = 128
-
-
-# utility functions
-
-
-def alloc_id(exclude=None):
-    id = None
-    while id is None or exclude is not None and id in exclude:
-        id = uuid4_bytes()
-    return id
-
-
-def poll_or_stopped(poller, stopper):
-    waiting_stop = spawn(stopper.wait)
-    try:
-        waiting_stop.get(block=False)
-    except Timeout:
-        pass
-    else:
-        return True
-    async_result = AsyncResult()
-    waiting_stop.link(async_result)
-    polling = spawn(poller.poll)
-    polling.link(async_result)
-    try:
-        return async_result.get()
-    finally:
-        polling.kill()
-        waiting_stop.kill()
-
-
-def should_yield(val):
-    serializable = (Sequence, Set, Mapping)
-    return (isinstance(val, Iterable) and not isinstance(val, serializable))
-
-
-def repr_socket_type(socket_type):
-    return {
-        zmq.PAIR: 'PAIR', zmq.PUB: 'PUB', zmq.SUB: 'SUB', zmq.REQ: 'REQ',
-        zmq.REP: 'REP', zmq.DEALER: 'DEALER', zmq.ROUTER: 'ROUTER',
-        zmq.PULL: 'PULL', zmq.PUSH: 'PUSH', zmq.XPUB: 'XPUB', zmq.XSUB: 'XSUB'
-    }[socket_type]
-
-
-def get_socket(sockets, socket_type, name=None):
-    try:
-        return sockets[socket_type]
-    except KeyError:
-        msg = 'no {0} socket'.format(repr_socket_type(socket_type))
-        if name is None:
-            msg = 'There\'s ' + msg
-        else:
-            msg = '{0} has {1}'.format(name, msg)
-        raise KeyError(msg)
-
-
-def make_repr(obj, params=[], keywords=[], data={}):
-    get = lambda attr: data[attr] if attr in data else getattr(obj, attr)
-    opts = []
-    if params:
-        opts.append(', '.join([repr(get(attr)) for attr in params]))
-    if keywords:
-        opts.append(', '.join(
-            ['{0}={1!r}'.format(attr, get(attr)) for attr in keywords]))
-    return '{0}({1})'.format(cls_name(obj), ', '.join(opts))
-
-
-def cls_name(obj):
-    return type(obj).__name__
-
-
-# wrapped ZMQ functions
-
-
-def default(obj):
-    return {'pickle': pickle.dumps(obj)}
-
-
-def object_hook(obj):
-    if 'pickle' in obj:
-        return pickle.loads(obj['pickle'])
-    return obj
-
-
-def send(sock, obj, flags=0, topic=None):
-    """Same with :meth:`zmq.Socket.send_pyobj` but can append topic for
-    filtering subscription.
-    """
-    serial = msgpack.packb(obj, default=default)
-    if topic:
-        return sock.send_multipart([topic, serial], flags)
-    else:
-        return sock.send(serial, flags)
-
-
-def recv(sock, flags=0):
-    """Same with :meth:`zmq.Socket.recv_pyobj`."""
-    serial = sock.recv_multipart(flags)[-1]
-    return msgpack.unpackb(serial, object_hook=object_hook)
+__all__ = ['Worker', 'Customer', 'Collector', 'Task']
 
 
 # exceptions
@@ -170,15 +41,55 @@ class WorkerNotFound(ZeronimoException, LookupError):
     pass
 
 
+def make_worker_not_found(rejected):
+    errmsg = ['Worker not found']
+    if rejected == 1:
+        errmsg.append('a worker rejected')
+    elif rejected:
+        errmsg.append('{0} workers rejected'.format(rejected))
+    return WorkerNotFound(', '.join(errmsg))
+
+
+# utility functions
+
+
+def should_yield(val):
+    serializable = (Sequence, Set, Mapping)
+    return (isinstance(val, Iterable) and not isinstance(val, serializable))
+
+
+def cls_name(obj):
+    return type(obj).__name__
+
+
+def make_repr(obj, params=[], keywords=[], data={}):
+    get = lambda attr: data[attr] if attr in data else getattr(obj, attr)
+    opts = []
+    if params:
+        opts.append(', '.join([repr(get(attr)) for attr in params]))
+    if keywords:
+        opts.append(', '.join(
+            ['{0}={1!r}'.format(attr, get(attr)) for attr in keywords]))
+    return '{0}({1})'.format(cls_name(obj), ', '.join(opts))
+
+
 # message frames
 
 
-_Invocation = namedtuple('Invocation', ['function_name', 'args', 'kwargs',
-                                        'invoker_id', 'customer_addr'])
-_Reply = namedtuple('Reply', ['method', 'data', 'invoker_id', 'task_id'])
+ACCEPT = 1
+REJECT = 0
+RETURN = 100
+RAISE = 101
+YIELD = 102
+BREAK = 103
 
 
-class Invocation(_Invocation):
+_Call = namedtuple('Call', ['function_name', 'args', 'kwargs',
+                            'call_id', 'collector_address'])
+_Reply = namedtuple('Reply', ['method', 'data', 'call_id', 'work_id'])
+
+
+class Call(_Call):
 
     def __repr__(self):
         return make_repr(self, keywords=self._fields)
@@ -196,7 +107,37 @@ class Reply(_Reply):
         return make_repr(self, keywords=self._fields, data={'method': M()})
 
 
-# models
+# transmission of python objects
+
+
+def default(obj):
+    return {'pickle': pickle.dumps(obj)}
+
+
+def object_hook(obj):
+    if 'pickle' in obj:
+        return pickle.loads(obj['pickle'])
+    return obj
+
+
+def send(socket, obj, flags=0, topic=None):
+    """Same with :meth:`zmq.Socket.send_pyobj` but can append topic for
+    filtering subscription.
+    """
+    serial = msgpack.packb(obj, default=default)
+    if topic:
+        return socket.send_multipart([topic, serial], flags)
+    else:
+        return socket.send(serial, flags)
+
+
+def recv(socket, flags=0):
+    """Same with :meth:`zmq.Socket.recv_pyobj`."""
+    serial = socket.recv_multipart(flags)[-1]
+    return msgpack.unpackb(serial, object_hook=object_hook)
+
+
+# components
 
 
 class Runner(object):
@@ -206,77 +147,56 @@ class Runner(object):
 
     def __new__(cls, *args, **kwargs):
         obj = super(Runner, cls).__new__(cls)
-        stopper = Event()
-        cls._patch_run(obj, stopper)
-        cls._patch_stop(obj, stopper)
+        cls._patch(obj)
         return obj
 
     @classmethod
-    def _patch_run(cls, obj, stopper):
-        obj._running_lock = Semaphore()
-        def run(self, starter=None):
-            if self.is_running():
-                if starter is not None:
-                    starter.set()
-                    return
-                else:
-                    raise RuntimeError(
-                        '{0} already running'.format(cls_name(self)))
+    def _patch(cls, obj):
+        obj._running = None
+        def run_and_clean(self):
             try:
-                with self._running_lock:
-                    starter and starter.set()
-                    rv = obj._run(stopper)
+                cls.run(self)
+            except gevent.GreenletExit:
+                pass
             finally:
-                try:
-                    del self._async_running
-                except AttributeError:
-                    pass
-                stopper.clear()
-            return rv
-        obj.run, obj._run = MethodType(run, obj), obj.run
+                self._running = None
+        def start(self):
+            if self.is_running():
+                raise RuntimeError('{0} already running'.format(cls_name(self)))
+            self._running = spawn(run_and_clean, self)
+        def run(self):
+            self.start()
+            return self._running.get()
+        obj.start, obj.run = MethodType(start, obj), MethodType(run, obj)
 
-    @classmethod
-    def _patch_stop(cls, obj, stopper):
-        def stop(self):
-            if not self.is_running():
-                raise RuntimeError('{0} not running'.format(cls_name(self)))
-            stopper.set()
-            return obj._stop()
-        obj.stop, obj._stop = MethodType(stop, obj), obj.stop
-
-    def run(self, stopper):
+    def run(self):
         raise NotImplementedError(
             '{0} has not implementation to run'.format(cls_name(self)))
 
-    def stop(self):
-        self.wait()
-
-    def is_running(self):
-        return self._running_lock.locked()
-
     def start(self):
-        if self.is_running():
-            raise RuntimeError('{0} already running'.format(cls_name(self)))
-        starter = Event()
-        self._async_running = spawn(self.run, starter=starter)
-        starter.wait()
+        pass
 
-    def join(self, block=True, timeout=None):
+    def stop(self):
         try:
-            return self._async_running.get(block, timeout)
+            self._running.kill()
         except AttributeError:
-            raise RuntimeError(
-                '{0} running in foreground'.format(cls_name(self)))
+            raise RuntimeError('{0} not running'.format(cls_name(self)))
 
     def wait(self, timeout=None):
-        self._running_lock.wait(timeout)
+        try:
+            self._running.wait(timeout)
+        except AttributeError:
+            raise RuntimeError('{0} not running'.format(cls_name(self)))
+
+    def is_running(self):
+        return self._running is not None
 
 
 class Worker(Runner):
     """The worker object runs an RPC service of an object through ZMQ sockets.
     The ZMQ sockets should be PULL or SUB socket type. The PULL sockets receive
-    Round-robin invocations; the SUB sockets receive Publish-subscribe
-    (fan-out) invocations.
+    Round-robin calls; the SUB sockets receive Publish-subscribe
+    (fan-out) calls.
 
     ::
 
@@ -287,490 +207,264 @@ class Worker(Runner):
     :param obj: the object to be shared by an RPC service.
     :param sockets: the ZMQ sockets of PULL or SUB socket type.
     :param info: (optional) the worker will send this value to customers at
-                 accepting an invocation. it might be identity of the worker to
+                 accepting an call. it might be identity of the worker to
                  let the customer's know what worker accepted.
     """
 
     obj = None
     sockets = None
     info = None
+    accepting = True
 
-    def __init__(self, obj, sockets, info=None, cache_reply_sockets=None):
+    def __init__(self, obj, sockets, info=None):
         super(Worker, self).__init__()
         self.obj = obj
-        socket_types = set(sock.socket_type for sock in sockets)
-        if socket_types.difference([zmq.PULL, zmq.SUB]):
+        if set(s.socket_type for s in sockets).difference([zmq.PULL, zmq.SUB]):
             raise ValueError('Worker socket should be PULL or SUB')
         self.sockets = sockets
         self.info = info
-        self.accept_all()
-        if cache_reply_sockets is None and LRU is not None:
-            cache_reply_sockets = DEFAULT_CACHE_REPLY_SOCKETS
-        if cache_reply_sockets:
-            if LRU is None:
-                raise ImportError('Install lru or lru-dict to cache reply '
-                                  'sockets')
-            self._cached_reply_sockets = LRU(cache_reply_sockets)
-        else:
-            self._cached_reply_sockets = None
+        self._cached_reply_sockets = {}
 
     def accept_all(self):
-        """After calling this, the worker will accept all invocations. This
+        """After calling this, the worker will accept all calls. This
         will be called at the initialization of the worker.
         """
         self.accepting = True
 
     def reject_all(self):
-        """After calling this, the worker will reject all invocations. If the
+        """After calling this, the worker will reject all calls. If the
         worker is busy, it will be helpful.
         """
         self.accepting = False
 
-    def run(self, stopper):
+    def run(self):
         """Runs the worker. While running, an RPC service is online."""
         poller = zmq.Poller()
-        for sock in self.sockets:
-            poller.register(sock, zmq.POLLIN)
-        while not stopper.is_set():
-            events = poll_or_stopped(poller, stopper)
-            if events is True:  # has been stopped
-                break
-            for sock, event in events:
-                if event & zmq.POLLIN:
-                    try:
-                        invocation = Invocation(*recv(sock))
-                    except (TypeError, msgpack.ExtraData):
-                        # TODO: warning
-                        continue
-                    spawn(self.work, invocation, sock.context)
-                else:
-                    assert 0
+        for socket in self.sockets:
+            poller.register(socket, zmq.POLLIN)
+        while True:
+            for socket, event in poller.poll():
+                assert event & zmq.POLLIN
+                try:
+                    call = Call(*recv(socket))
+                except (TypeError, msgpack.ExtraData):
+                    # TODO: warning
+                    continue
+                spawn(self.work, call, socket.context)
 
-    def work(self, invocation, context):
+    def call(self, call):
+        return getattr(self.obj, call.function_name)(*call.args, **call.kwargs)
+
+    def work(self, call, context):
         """Invokes a function and send results to the customer. It supports
         all of function actions. A function could return, yield, raise any
         picklable objects.
         """
-        task_id = alloc_id()
-        function_name = invocation.function_name
-        args = invocation.args
-        kwargs = invocation.kwargs
-        sock = False
-        if invocation.customer_addr is not None:
-            try:
-                sock = self._cached_reply_sockets[invocation.customer_addr]
-            except (KeyError, TypeError):
-                sock = context.socket(zmq.PUSH)
-                sock.connect(invocation.customer_addr)
-                if self._cached_reply_sockets is not None:
-                    self._cached_reply_sockets[invocation.customer_addr] = sock
-            channel = (invocation.invoker_id, task_id)
+        work_id = uuid4_bytes()
+        socket = None
+        if call.collector_address is not None:
+            socket = self.get_reply_socket(call.collector_address, context)
+            channel = (call.call_id, work_id)
             method = ACCEPT if self.accepting else REJECT
-            self.send_reply(sock, method, self.info, *channel)
+            self.send_reply(socket, method, self.info, *channel)
         if not self.accepting:
             return
         try:
-            val = getattr(self.obj, function_name)(*args, **kwargs)
+            val = self.call(call)
         except Exception as error:
             # raise
-            sock and self.send_reply(sock, RAISE, error, *channel)
+            socket and self.send_reply(socket, RAISE, error, *channel)
             raise
         if should_yield(val):
             # yield, yield, ..., break
             try:
                 for item in val:
-                    sock and self.send_reply(sock, YIELD, item, *channel)
+                    socket and self.send_reply(socket, YIELD, item, *channel)
             except Exception as error:
-                sock and self.send_reply(sock, RAISE, error, *channel)
+                socket and self.send_reply(socket, RAISE, error, *channel)
             else:
-                sock and self.send_reply(sock, BREAK, None, *channel)
+                socket and self.send_reply(socket, BREAK, None, *channel)
         else:
             # return
-            sock and self.send_reply(sock, RETURN, val, *channel)
+            socket and self.send_reply(socket, RETURN, val, *channel)
 
-    def send_reply(self, sock, method, data, task_id, run_id):
-        reply = Reply(method, data, task_id, run_id)
-        return send(sock, reply)
+    def get_reply_socket(self, address, context):
+        try:
+            sockets = self._cached_reply_sockets[context]
+        except KeyError:
+            sockets = {}
+            self._cached_reply_sockets[context] = sockets
+        try:
+            return sockets[address]
+        except KeyError:
+            socket = context.socket(zmq.PUSH)
+            socket.connect(address)
+            sockets[address] = socket
+            return socket
+
+    def send_reply(self, socket, method, data, call_id, work_id):
+        reply = Reply(method, data, call_id, work_id)
+        return send(socket, reply)
 
     def __repr__(self):
         keywords = ['info'] if self.info is not None else []
         return make_repr(self, ['obj', 'sockets'], keywords)
 
 
-class Customer(Runner):
-    """The customer object makes a tunnel which links to workers and collects
-    workers' replies.
+class Customer(object):
 
-    A customer has a PULL type socket to collect worker's replies and its
-    public address what workers can connect.
-
-    ::
-
-       customer = Customer(socket_which_receive_replies, public_address)
-       with customer.link([socket_which_connects_to_workers]) as tunnel:
-           print tunnel.hello()
-
-    :param socket: the ZMQ socket of PULL socket type.
-    :param addr: the public address of the socket what workers can connect.
-    """
-
-    socket = None
-    addr = None
-    tunnels = None
-    tasks = None
-
-    def __init__(self, socket, addr):
-        super(Customer, self).__init__()
-        if socket.socket_type != zmq.PULL:
-            raise ValueError('Customer socket should be PULL')
+    def __init__(self, socket, collector=None):
+        if socket.type not in (zmq.PUSH, zmq.PUB):
+            raise ValueError('Customer socket should be PUSH or PUB')
         self.socket = socket
-        self.addr = addr
-        self.tunnels = set()
-        self.tasks = {}
-        self.invokers = {}
-        self._missings = {}
-
-    def link(self, *args, **kwargs):
-        """Creates a tunnel which uses the customer as a linked customer."""
-        return Tunnel(self, *args, **kwargs)
-
-    def register_tunnel(self, tunnel):
-        """Registers a :class:`Tunnel` object.
-
-        :returns: the tunnel registry.
-        """
-        self.tunnels.add(tunnel)
-        return self.tunnels
-
-    def unregister_tunnel(self, tunnel):
-        """Unregisters a :class:`Tunnel` object.
-
-        :returns: the tunnel registry.
-        """
-        self.tunnels.remove(tunnel)
-        return self.tunnels
-
-    def register_invoker(self, invoker):
-        """Registers a :class:`Invoker` object.
-
-        :returns: the invoker registry.
-        """
-        self.invokers[invoker.id] = invoker
-        return self.invokers
-
-    def unregister_invoker(self, invoker):
-        """Unregisters a :class:`Invoker` object. It puts :exc:`StopIteration`
-        to the invoker queue.
-
-        :returns: the invoker registry.
-        """
-        assert self.invokers.pop(invoker.id) is invoker
-        invoker.queue.put(StopIteration)
-        return self.invokers
-
-    def register_task(self, task):
-        """Registers a :class:`Task` object. If there're missing messages for
-        the task, it restores them.
-
-        :returns: the task registry related to the same invoker.
-        """
-        try:
-            self.tasks[task.invoker_id][task.id] = task
-        except KeyError:
-            self.tasks[task.invoker_id] = {task.id: task}
-        self._restore_missing_messages(task)
-        return self.tasks[task.invoker_id]
-
-    def unregister_task(self, task):
-        """Unregisters a :class:`Task` object.
-
-        :returns: the task registry related to the same invoker.
-        """
-        tasks = self.tasks[task.invoker_id]
-        assert tasks.pop(task.id) is task
-        if not tasks:
-            del self.tasks[task.invoker_id]
-        return tasks
-
-    def _restore_missing_messages(self, task):
-        """Restores kept missing messages for the task."""
-        try:
-            missing = self._missings[task.invoker_id].pop(task.id)
-        except KeyError:
-            return
-        if not self._missings[task.invoker_id]:
-            del self._missings[task.invoker_id]
-        try:
-            while missing.queue:
-                task.queue.put(missing.get(block=False))
-        except Empty:
-            pass
-
-    def run(self, stopper):
-        """Runs the customer. While running, it receives replies from the
-        socket and dispatch them to put to the proper queue.
-        """
-        poller = zmq.Poller()
-        poller.register(self.socket, zmq.POLLIN)
-        while not stopper.is_set():
-            events = poll_or_stopped(poller, stopper)
-            if events is True:  # has been stopped
-                break
-            elif not events:  # polling timed out
-                continue
-            event = events[0][1]
-            if event & zmq.POLLIN:
-                reply = Reply(*recv(self.socket))
-                self.dispatch_reply(reply)
-            if event & zmq.POLLERR:
-                assert 0
-
-    def dispatch_reply(self, reply):
-        """Puts a reply to the proper queue."""
-        invoker_id = reply.invoker_id
-        task_id = reply.task_id
-        if reply.method in (ACCEPT, REJECT):
-            try:
-                queue = self.invokers[invoker_id].queue
-            except KeyError:
-                # drop message
-                return
-            # prepare collections for task messages
-            if invoker_id not in self.tasks:
-                self.tasks[invoker_id] = {}
-            try:
-                self._missings[invoker_id][task_id] = Queue()
-            except KeyError:
-                self._missings[invoker_id] = {task_id: Queue()}
-        else:
-            try:
-                tasks = self.tasks[invoker_id]
-            except KeyError:
-                # drop message
-                return
-            try:
-                queue = tasks[task_id].queue
-            except KeyError:
-                queue = self._missings[invoker_id][task_id]
-        queue.put(reply)
-
-    def __repr__(self):
-        return make_repr(self, ['socket', 'addr'])
-
-
-class Tunnel(object):
-    """A session between the customer and the distributed workers. It can send
-    a request of RPC through sockets on the customer's context.
-
-    :param customer: the :class:`Customer` object or ``None``.
-    :param sockets: the sockets which connect to the workers. it should be
-                    one or none PUSH socket and one or none PUB socket.
-
-    :param wait: (keyword-only) if it's set to ``True``, the workers will
-                 reply. Otherwise, the workers just invoke a function without
-                 reply. Defaults to ``True``.
-    :param fanout: (keyword-only) if it's set to the fanout topic (PUB/SUB
-                   prefix), all proper workers will receive an invocation
-                   request. Defaults to ``False``.
-    :param as_task: (keyword-only) actually, every remote function calls have
-                    own :class:`Task` object. if it's set to ``True``, remote
-                    functions return a :class:`Task` object instead of result
-                    value. Defaults to ``False``.
-    :param timeout: (keyword-only) the seconds to timeout for collecting
-                    workers which accepted the task. Defaults to 0.01 seconds.
-    """
-
-    def __init__(self, customer, sockets, **invoker_opts):
-        self._znm_customer = customer
-        self._znm_sockets = {}
-        for sock in sockets:
-            if sock.socket_type not in (zmq.PUSH, zmq.PUB) or \
-               sock.socket_type in self._znm_sockets:
-                raise ValueError(
-                    'Tunnel allows only one or none PUSH socket and one or '
-                    'none PUB socket')
-            self._znm_sockets[sock.socket_type] = sock
-        self._znm_invoker_opts = invoker_opts
+        self.collector = collector
 
     def __getattr__(self, attr):
-        self.__dict__[attr] = functools.partial(self._znm_invoke, attr)
+        emit = self.__emit__ if self.collector else self.__emit_nowait__
+        self.__dict__[attr] = functools.partial(emit, attr)
         return self.__dict__[attr]
 
-    def _znm_invoke(self, function_name, *args, **kwargs):
-        """Invokes a remote function."""
-        if self._znm_customer is None:
-            invoker_id = None
-        else:
-            invoker_id = alloc_id(exclude=self._znm_customer.invokers)
-        invoker = Invoker(self, function_name, args, kwargs, invoker_id)
-        return invoker.invoke(**self._znm_invoker_opts)
+    def __emit__(self, function_name, *args, **kwargs):
+        """Allocates a call id and emit."""
+        call_id = uuid4_bytes()
+        # normal tuple is faster than namedtuple
+        call = (function_name, args, kwargs, call_id, self.collector.address)
+        send_call = functools.partial(send, self.socket, call)
+        #lambda: send(self.socket, call)
+        send_call()
+        if not self.collector.is_running():
+            self.collector.start()
+        limit = None if self.socket.type == zmq.PUB else 1
+        tasks = self.collector.establish(call_id, retry=send_call, limit=limit)
+        return tasks[0] if limit == 1 else tasks
 
-    def __enter__(self):
-        customer = self._znm_customer
-        if customer is not None:
-            if customer.register_tunnel(self) and not customer.is_running():
-                customer.start()
-        return self
-
-    def __exit__(self, error, error_type, traceback):
-        customer = self._znm_customer
-        if customer is not None:
-            if not customer.unregister_tunnel(self):
-                customer.stop()
-
-    def __call__(self, **replacing_invoker_opts):
-        """Creates a :class:`Tunnel` object which follows same consumer and
-        workers but replaced invoker options.
-        """
-        invoker_opts = {}
-        invoker_opts.update(self._znm_invoker_opts)
-        invoker_opts.update(replacing_invoker_opts)
-        tunnel = Tunnel(self._znm_customer, (), **invoker_opts)
-        tunnel._znm_sockets = self._znm_sockets
-        return tunnel
-
-    def __repr__(self):
-        params = ['customer', 'sockets']
-        data = {attr: getattr(self, '_znm_' + attr) for attr in params}
-        data.update(self._znm_invoker_opts)
-        return make_repr(self, params, keywords, data)
+    def __emit_nowait__(self, function_name, *args, **kwargs):
+        """Sends a call without call id allocation. It doesn't wait replies."""
+        # normal tuple is faster than namedtuple
+        call = (function_name, args, kwargs, None, None)
+        send(self.socket, call)
 
 
-class Invoker(object):
-    """The invoker object sends an invocation message to the workers which the
-    tunnel connected.
+class Collector(Runner):
 
-    :param tunnel: the tunnel object.
-    :param function_name: the function name.
-    :param args: the tuple of the arguments.
-    :param kwargs: the dictionary of the keyword arguments.
-    :param id: the identifier.
-    """
+    def __init__(self, socket, address, timeout=0.01, as_task=False):
+        if socket.type != zmq.PULL:
+            raise ValueError('Collector socket should be PULL')
+        self.socket = socket
+        self.address = address
+        self.timeout = timeout
+        self.as_task = as_task
+        self.reply_queues = {}
+        self.missing_queues = {}
 
-    def __init__(self, tunnel, function_name, args, kwargs, id):
-        self.function_name = function_name
-        self.args = args
-        self.kwargs = kwargs
-        self.tunnel = tunnel
-        self.id = id
-        self.queue = Queue()
+    def run(self):
+        while True:
+            try:
+                reply = Reply(*recv(self.socket))
+            except (TypeError, msgpack.ExtraData):
+                # TODO: warning
+                continue
+            self.dispatch_reply(reply)
 
-    def __getattr__(self, attr):
-        return getattr(self.tunnel, '_znm_' + attr)
-
-    def invoke(self, wait=True, fanout=False, as_task=False,
-               timeout=DEFAULT_TIMEOUT):
-        if fanout is False:
-            publish, topic = False, None
-        else:
-            publish, topic = True, fanout
-        if not wait:
-            return self.invoke_nowait(publish, topic)
-        if self.customer is None:
-            raise ValueError(
-                'To wait for a result, the tunnel must have a customer')
-        if publish:
-            return self.invoke_fanout(topic, as_task, timeout)
-        else:
-            return self.invoke_once(as_task, timeout)
-
-    def invoke_nowait(self, publish, topic):
-        socket_type = zmq.PUB if publish else zmq.PUSH
-        sock = get_socket(self.sockets, socket_type, 'Tunnel')
-        invocation = Invocation(
-            self.function_name, self.args, self.kwargs, self.id, None)
-        send(sock, invocation, topic=topic)
-
-    def invoke_once(self, as_task, timeout):
-        if not self.customer.is_running():
-            raise RuntimeError('Customer not running')
-        sock = get_socket(self.sockets, zmq.PUSH, 'Tunnel')
-        invocation = Invocation(self.function_name, self.args, self.kwargs,
-                                self.id, self.customer.addr)
-        # find one worker
-        self.customer.register_invoker(self)
-        reply = None
-        rejected = 0
-        send(sock, invocation)
+    def dispatch_reply(self, reply):
+        if reply.method in (ACCEPT, REJECT):
+            self.reply_queues[reply.call_id][None].put(reply)
+            return
+        reply_queues = self.reply_queues[reply.call_id]
         try:
-            with Timeout(timeout, False):
+            reply_queue = reply_queues[reply.work_id]
+        except KeyError:
+            try:
+                missing_queues = self.missing_queues[reply.call_id]
+            except KeyError:
+                missing_queues = {}
+                self.missing_queues[reply.call_id] = missing_queues
+            reply_queue = Queue()
+            try:
+                reply_queue = missing_queues[reply.work_id]
+            except KeyError:
+                reply_queue = Queue()
+                missing_queues[reply.work_id] = reply_queue
+        reply_queue.put(reply)
+
+    def establish(self, call_id, retry, limit=None):
+        accepts = self.wait_accepts(call_id, limit)
+        tasks = self.collect_tasks(accepts, call_id, limit)
+        return tasks if self.as_task else [task() for task in tasks]
+
+    def wait_accepts(self, call_id, limit=None):
+        ack_queue = Queue()
+        self.reply_queues[call_id] = {None: ack_queue}
+        accepts = []
+        rejected = 0
+        try:
+            with Timeout(self.timeout, False):
                 while True:
-                    reply = self.queue.get()
+                    reply = ack_queue.get()
                     if reply.method == REJECT:
                         rejected += 1
-                        # send again
-                        send(sock, invocation)
-                        reply = None
+                        retry()
                         continue
                     elif reply.method == ACCEPT:
-                        break
-                    else:
-                        assert 0
+                        accepts.append(reply)
+                        if limit is None:
+                            continue
+                        elif len(accepts) == limit:
+                            break
         finally:
-            self.customer.unregister_invoker(self)
-        if reply is None:
-            errmsg = 'Worker not found'
-            if rejected == 1:
-                errmsg += ', a worker rejected'
-            elif rejected:
-                errmsg += ', {0} workers rejected'.format(rejected)
-            raise WorkerNotFound(errmsg)
-        else:
-            return self.spawn_task(reply, as_task)
+            if limit is not None:
+                del self.reply_queues[call_id][None]
+        if not accepts:
+            del self.reply_queues[call_id]
+            raise make_worker_not_found(rejected)
+        return accepts
 
-    def invoke_fanout(self, topic, as_task, timeout):
-        if not self.customer.is_running():
-            raise RuntimeError('Customer not running')
-        sock = get_socket(self.sockets, zmq.PUB, 'Tunnel')
-        invocation = Invocation(self.function_name, self.args, self.kwargs,
-                                self.id, self.customer.addr)
-        # find one or more workers
-        self.customer.register_invoker(self)
-        replies = []
-        rejected = 0
-        send(sock, invocation, topic=topic)
-        with Timeout(timeout, False):
-            while True:
-                reply = self.queue.get()
-                if reply.method == REJECT:
-                    rejected += 1
-                elif reply.method == ACCEPT:
-                    replies.append(reply)
-                else:
-                    assert 0
-        if not replies:
-            if rejected == 1:
-                after_errmsg = ', a worker rejected'
-            elif rejected:
-                after_errmsg = ', {0} workers rejected'.format(rejected)
-            else:
-                after_errmsg = ''
-            raise WorkerNotFound(''.join(['Worker not found', after_errmsg]))
-        return self.spawn_fanout_tasks(replies, as_task)
-
-    def spawn_task(self, reply, as_task=False):
-        assert reply.method == ACCEPT
-        worker_info = reply.data
-        task = Task(self.customer, reply.task_id, self.id, worker_info)
-        return task if as_task else task()
-
-    def spawn_fanout_tasks(self, replies, as_task=False):
+    def collect_tasks(self, accepts, call_id, limit=None):
         tasks = []
-        iter_replies = iter(replies)
-        def collect_tasks(getter):
-            for reply in iter(getter, None):
-                if reply is StopIteration:
-                    break
-                assert reply.method == ACCEPT
-                worker_info = reply.data
-                task = Task(self.customer, reply.task_id, self.id, worker_info)
-                tasks.append(task if as_task else task())
-        collect_tasks(iter_replies.next)
-        spawn(collect_tasks, self.queue.get)
+        self._collect_more_tasks(tasks, iter(accepts).next, call_id, limit)
+        try:
+            ack_queue = self.reply_queues[call_id][None]
+        except KeyError:
+            pass
+        else:
+            spawn(self._collect_more_tasks,
+                  tasks, ack_queue.get, call_id, limit)
         return tasks
 
-    def __repr__(self):
-        return make_repr(self, ['function_name', 'args', 'kwargs'])
+    def _collect_more_tasks(self, tasks, get_reply, call_id, limit=None):
+        iterator = iter(get_reply, None)
+        while limit is None or len(tasks) < limit:
+            try:
+                reply = next(iterator)
+            except StopIteration:
+                break
+            if reply is StopIteration:
+                break
+            assert reply.method == ACCEPT
+            assert reply.call_id == call_id
+            reply_queue = Queue()
+            work_id = reply.work_id
+            worker_info = reply.data
+            self.reply_queues[call_id][work_id] = reply_queue
+            # recover missing replies
+            try:
+                missing_queue = self.missing_queues[call_id].pop(work_id)
+            except KeyError:
+                pass
+            else:
+                try:
+                    while True:
+                        reply_queue.put(missing_queue.get(block=False))
+                except Empty:
+                    pass
+            task = Task(self, reply_queue, call_id, work_id, worker_info)
+            tasks.append(task)
+
+    def task_done(self, task):
+        reply_queues = self.reply_queues[task.call_id]
+        del reply_queues[task.work_id]
+        if not reply_queues:
+            del self.reply_queues[task.call_id]
 
 
 class Task(object):
@@ -782,39 +476,33 @@ class Task(object):
     :param worker_info: the value the worker sent at accepting.
     """
 
-    def __init__(self, customer, id, invoker_id, worker_info=None):
-        self.customer = customer
-        self.id = id
-        self.invoker_id = invoker_id
+    def __init__(self, collector, reply_queue, call_id, work_id,
+                 worker_info=None):
+        self.collector = collector
+        self.reply_queue = reply_queue
+        self.call_id = call_id
+        self.work_id = work_id
         self.worker_info = worker_info
-        self.queue = Queue()
 
     def __call__(self):
         """Gets the result."""
-        self.customer.register_task(self)
-        reply = self.queue.get()
+        reply = self.reply_queue.get()
         assert reply.method not in (ACCEPT, REJECT)
         if reply.method in (RETURN, RAISE):
-            if not self.customer.unregister_task(self):
-                try:
-                    invoker = self.customer.invokers[self.invoker_id]
-                except KeyError:
-                    pass
-                else:
-                    self.customer.unregister_invoker(invoker)
+            self.collector.task_done(self)
         if reply.method == RETURN:
             return reply.data
         elif reply.method == RAISE:
             raise reply.data
         elif reply.method == YIELD:
-            return self.remote_iterator(reply)
+            return self.itertor(reply)
         elif reply.method == BREAK:
             return iter([])
 
-    def remote_iterator(self, first_reply):
+    def iterator(self, first_reply):
         yield first_reply.data
         while True:
-            reply = self.queue.get()
+            reply = self.reply_queue.get()
             assert reply.method not in (ACCEPT, REJECT, RETURN)
             if reply.method == YIELD:
                 yield reply.data
@@ -825,4 +513,4 @@ class Task(object):
 
     def __repr__(self):
         return make_repr(
-            self, ['customer', 'id'], ['invoker_id', 'worker_info'])
+            self, None, ['call_id', 'work_id', 'worker_info'])
