@@ -37,32 +37,64 @@ class ZeronimoException(Exception):
 
 
 class WorkerNotFound(ZeronimoException, LookupError):
+    """Occurs by a collector which failed to find any worker accepted within
+    the timeout.
+    """
 
     pass
 
 
-def make_worker_not_found(rejected):
+def make_worker_not_found(rejected=0):
+    """Generates an error message by the count of workers rejected for
+    :exc:`WorkerNotFound`.
+
+        >>> make_worker_not_found(rejected=0)
+        WorkerNotFound('Worker not found',)
+        >>> make_worker_not_found(rejected=1)
+        WorkerNotFound('Worker not found, a worker rejected',)
+        >>> make_worker_not_found(rejected=10)
+        WorkerNotFound('Worker not found, 10 workers rejected',)
+    """
     errmsg = ['Worker not found']
     if rejected == 1:
         errmsg.append('a worker rejected')
     elif rejected:
         errmsg.append('{0} workers rejected'.format(rejected))
-    return WorkerNotFound(', '.join(errmsg))
+    err = WorkerNotFound(', '.join(errmsg))
+    err.rejected = rejected
+    return err
 
 
 # utility functions
 
 
-def should_yield(val):
+def should_yield(obj):
+    """Returns ``True`` if the object is iterable but not serializable."""
     serializable = (Sequence, Set, Mapping)
-    return (isinstance(val, Iterable) and not isinstance(val, serializable))
+    return (isinstance(obj, Iterable) and not isinstance(obj, serializable))
 
 
 def cls_name(obj):
+    """Returns the class name of the object."""
     return type(obj).__name__
 
 
 def make_repr(obj, params=[], keywords=[], data={}):
+    """Generates a string of object initialization code style. It is useful
+    for custom __repr__ methods.
+
+        class Example(object):
+
+            def __init__(self, param, keyword=None):
+                self.param = param
+                self.keyword = keyword
+
+            def __repr__(self):
+                return make_repr(self, ['param'], ['keyword'])
+
+        >>> Example('hello', keyword='world')
+        Example('hello', keyword='world')
+    """
     get = lambda attr: data[attr] if attr in data else getattr(obj, attr)
     opts = []
     if params:
@@ -313,36 +345,47 @@ class Worker(Runner):
 
 class Customer(object):
 
+    _znm_socket = None
+    _znm_collector = None
+    _znm_topic = None
+
     def __init__(self, socket, collector=None):
         if socket.type not in (zmq.PUSH, zmq.PUB):
             raise ValueError('Customer socket should be PUSH or PUB')
-        self.socket = socket
-        self.collector = collector
+        self._znm_socket = socket
+        self._znm_collector = collector
+
+    def __getitem__(self, topic):
+        cls = type(self)
+        customer = cls(self._znm_socket, self._znm_collector)
+        customer._znm_topic = topic
+        return customer
 
     def __getattr__(self, attr):
-        emit = self.__emit__ if self.collector else self.__emit_nowait__
+        emit = self._znm_emit if self._znm_collector else self._znm_emit_nowait
         self.__dict__[attr] = functools.partial(emit, attr)
         return self.__dict__[attr]
 
-    def __emit__(self, function_name, *args, **kwargs):
-        """Allocates a call id and emit."""
-        call_id = uuid4_bytes()
-        # normal tuple is faster than namedtuple
-        call = (function_name, args, kwargs, call_id, self.collector.address)
-        send_call = functools.partial(send, self.socket, call)
-        #lambda: send(self.socket, call)
-        send_call()
-        if not self.collector.is_running():
-            self.collector.start()
-        limit = None if self.socket.type == zmq.PUB else 1
-        tasks = self.collector.establish(call_id, retry=send_call, limit=limit)
-        return tasks[0] if limit == 1 else tasks
-
-    def __emit_nowait__(self, function_name, *args, **kwargs):
+    def _znm_emit_nowait(self, function_name, *args, **kwargs):
         """Sends a call without call id allocation. It doesn't wait replies."""
         # normal tuple is faster than namedtuple
         call = (function_name, args, kwargs, None, None)
-        send(self.socket, call)
+        send(self._znm_socket, call, topic=self._znm_topic)
+
+    def _znm_emit(self, function_name, *args, **kwargs):
+        """Allocates a call id and emit."""
+        call_id = uuid4_bytes()
+        collector_address = self._znm_collector.address
+        # normal tuple is faster than namedtuple
+        call = (function_name, args, kwargs, call_id, collector_address)
+        send_call = functools.partial(send, self._znm_socket, call,
+                                      topic=self._znm_topic)
+        send_call()
+        if not self._znm_collector.is_running():
+            self._znm_collector.start()
+        limit = None if self._znm_socket.type == zmq.PUB else 1
+        tasks = self._znm_collector.establish(call_id, send_call, limit)
+        return tasks[0] if limit == 1 else tasks
 
 
 class Collector(Runner):
