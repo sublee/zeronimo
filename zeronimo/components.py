@@ -1,180 +1,36 @@
 # -*- coding: utf-8 -*-
 """
-    zeronimo
-    ~~~~~~~~
+    zeronimo.components
+    ~~~~~~~~~~~~~~~~~~~
 
     :copyright: (c) 2013 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
-from collections import namedtuple, Iterable, Sequence, Set, Mapping
+from __future__ import absolute_import
+from collections import Iterable, Sequence, Set, Mapping
 import functools
-try:
-    import cPickle as pickle
-except ImportError:
-    import pickle
 from types import MethodType
 
-import gevent
-from gevent import spawn, Timeout
-from gevent.coros import Semaphore
-from gevent.event import Event, AsyncResult
+from gevent import GreenletExit, spawn, Timeout
 from gevent.queue import Empty, Queue
 from libuuid import uuid4_bytes
-import msgpack
+from msgpack import ExtraData
 import zmq.green as zmq
 
-
-__version__ = '0.0.dev'
-__all__ = ['Worker', 'Customer', 'Collector', 'Task']
-
-
-# exceptions
-
-
-class ZeronimoException(Exception):
-
-    pass
+from .exceptions import make_worker_not_found
+from .helpers import cls_name, make_repr
+from .messaging import (
+    ACK, DONE, ACCEPT, REJECT, RETURN, RAISE, YIELD, BREAK,
+    Call, Reply, send, recv)
 
 
-class WorkerNotFound(ZeronimoException, LookupError):
-    """Occurs by a collector which failed to find any worker accepted within
-    the timeout.
-    """
-
-    pass
-
-
-def make_worker_not_found(rejected=0):
-    """Generates an error message by the count of workers rejected for
-    :exc:`WorkerNotFound`.
-
-        >>> make_worker_not_found(rejected=0)
-        WorkerNotFound('Worker not found',)
-        >>> make_worker_not_found(rejected=1)
-        WorkerNotFound('Worker not found, a worker rejected',)
-        >>> make_worker_not_found(rejected=10)
-        WorkerNotFound('Worker not found, 10 workers rejected',)
-    """
-    errmsg = ['Worker not found']
-    if rejected == 1:
-        errmsg.append('a worker rejected')
-    elif rejected:
-        errmsg.append('{0} workers rejected'.format(rejected))
-    err = WorkerNotFound(', '.join(errmsg))
-    err.rejected = rejected
-    return err
-
-
-# utility functions
+__all__ = ['Runner', 'Worker', 'Customer', 'Collector', 'Task']
 
 
 def should_yield(obj):
     """Returns ``True`` if the object is iterable but not serializable."""
     serializable = (Sequence, Set, Mapping)
     return (isinstance(obj, Iterable) and not isinstance(obj, serializable))
-
-
-def cls_name(obj):
-    """Returns the class name of the object."""
-    return type(obj).__name__
-
-
-def make_repr(obj, params=[], keywords=[], data={}):
-    """Generates a string of object initialization code style. It is useful
-    for custom __repr__ methods.
-
-        class Example(object):
-
-            def __init__(self, param, keyword=None):
-                self.param = param
-                self.keyword = keyword
-
-            def __repr__(self):
-                return make_repr(self, ['param'], ['keyword'])
-
-        >>> Example('hello', keyword='world')
-        Example('hello', keyword='world')
-    """
-    get = lambda attr: data[attr] if attr in data else getattr(obj, attr)
-    opts = []
-    if params:
-        opts.append(', '.join([repr(get(attr)) for attr in params]))
-    if keywords:
-        opts.append(', '.join(
-            ['{0}={1!r}'.format(attr, get(attr)) for attr in keywords]))
-    return '{0}({1})'.format(cls_name(obj), ', '.join(opts))
-
-
-# message frames
-
-
-# masks
-ACK = 0b10000000
-DONE = 0b01000000
-ITER = 0b00100000
-# methods
-ACCEPT = ACK | 0b01
-REJECT = ACK | 0b10
-RETURN = DONE | 0b01
-RAISE = DONE | 0b10
-YIELD = ITER | 0b01
-BREAK = ITER | 0b10
-
-
-_Call = namedtuple('Call', ['function_name', 'args', 'kwargs',
-                            'call_id', 'collector_address'])
-_Reply = namedtuple('Reply', ['method', 'data', 'call_id', 'work_id'])
-
-
-class Call(_Call):
-
-    def __repr__(self):
-        return make_repr(self, keywords=self._fields)
-
-
-class Reply(_Reply):
-
-    def __repr__(self):
-        method = {1: 'ACCEPT', 0: 'REJECT',
-                  100: 'RETURN', 101: 'RAISE',
-                  102: 'YIELD', 103: 'BREAK'}[self.method]
-        class M(object):
-            def __repr__(self):
-                return method
-        return make_repr(self, keywords=self._fields, data={'method': M()})
-
-
-# transmission of python objects
-
-
-def default(obj):
-    return {'pickle': pickle.dumps(obj)}
-
-
-def object_hook(obj):
-    if 'pickle' in obj:
-        return pickle.loads(obj['pickle'])
-    return obj
-
-
-def send(socket, obj, flags=0, topic=None):
-    """Same with :meth:`zmq.Socket.send_pyobj` but can append topic for
-    filtering subscription.
-    """
-    serial = msgpack.packb(obj, default=default)
-    if topic:
-        return socket.send_multipart([topic, serial], flags)
-    else:
-        return socket.send(serial, flags)
-
-
-def recv(socket, flags=0):
-    """Same with :meth:`zmq.Socket.recv_pyobj`."""
-    serial = socket.recv_multipart(flags)[-1]
-    return msgpack.unpackb(serial, object_hook=object_hook)
-
-
-# components
 
 
 class Runner(object):
@@ -193,7 +49,7 @@ class Runner(object):
         def run_and_clean(self):
             try:
                 cls.run(self)
-            except gevent.GreenletExit:
+            except GreenletExit:
                 pass
             finally:
                 self._running = None
@@ -284,7 +140,7 @@ class Worker(Runner):
                 assert event & zmq.POLLIN
                 try:
                     call = Call(*recv(socket))
-                except (TypeError, msgpack.ExtraData):
+                except (TypeError, ExtraData):
                     # TODO: warning
                     continue
                 spawn(self.work, call, socket.context)
@@ -409,7 +265,7 @@ class Collector(Runner):
         while True:
             try:
                 reply = Reply(*recv(self.socket))
-            except (TypeError, msgpack.ExtraData):
+            except (TypeError, ExtraData):
                 # TODO: warning
                 continue
             self.dispatch_reply(reply)
