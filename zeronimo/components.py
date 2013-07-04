@@ -7,7 +7,6 @@
     :license: BSD, see LICENSE for more details.
 """
 from __future__ import absolute_import
-from collections import Iterable, Sequence, Set, Mapping
 import functools
 from types import MethodType
 
@@ -27,10 +26,12 @@ from .messaging import (
 __all__ = ['Runner', 'Worker', 'Customer', 'Collector', 'Task']
 
 
-def should_yield(obj):
-    """Returns ``True`` if the object is iterable but not serializable."""
-    serializable = (Sequence, Set, Mapping)
-    return (isinstance(obj, Iterable) and not isinstance(obj, serializable))
+def is_generator(func):
+    """Snipped from py.test."""
+    try:
+        return (func.func_code.co_flags & 32)  # generator function
+    except AttributeError:  # c / builtin functions have no func_code
+        return False
 
 
 class Runner(object):
@@ -46,28 +47,27 @@ class Runner(object):
     @classmethod
     def _patch(cls, obj):
         obj._running = None
-        def run_and_clean(self):
+        def clean_run(self):
             try:
                 cls.run(self)
             except GreenletExit:
                 pass
             finally:
                 self._running = None
-        def start(self):
-            if self.is_running():
-                raise RuntimeError('{0} already running'.format(cls_name(self)))
-            self._running = spawn(run_and_clean, self)
         def run(self):
             self.start()
             return self._running.get()
-        obj.start, obj.run = MethodType(start, obj), MethodType(run, obj)
+        obj._clean_run = MethodType(clean_run, obj)
+        obj.run = MethodType(run, obj)
 
     def run(self):
         raise NotImplementedError(
             '{0} has not implementation to run'.format(cls_name(self)))
 
     def start(self):
-        pass
+        if self.is_running():
+            raise RuntimeError('{0} already running'.format(cls_name(self)))
+        self._running = spawn(self._clean_run)
 
     def stop(self):
         try:
@@ -77,7 +77,7 @@ class Runner(object):
 
     def wait(self, timeout=None):
         try:
-            self._running.wait(timeout)
+            self._running.join(timeout)
         except AttributeError:
             raise RuntimeError('{0} not running'.format(cls_name(self)))
 
@@ -145,9 +145,6 @@ class Worker(Runner):
                     continue
                 spawn(self.work, call, socket.context)
 
-    def call(self, call):
-        return getattr(self.obj, call.function_name)(*call.args, **call.kwargs)
-
     def work(self, call, context):
         """Invokes a function and send results to the customer. It supports
         all of function actions. A function could return, yield, raise any
@@ -162,24 +159,20 @@ class Worker(Runner):
             self.send_reply(socket, method, self.info, *channel)
         if not self.accepting:
             return
+        func = getattr(self.obj, call.function_name)
+        args = call.args
+        kwargs = call.kwargs
         try:
-            val = self.call(call)
+            if is_generator(func):
+                for val in func(*args, **kwargs):
+                    socket and self.send_reply(socket, YIELD, val, *channel)
+                socket and self.send_reply(socket, BREAK, None, *channel)
+            else:
+                val = func(*args, **kwargs)
+                socket and self.send_reply(socket, RETURN, val, *channel)
         except Exception as error:
-            # raise
             socket and self.send_reply(socket, RAISE, error, *channel)
             raise
-        if should_yield(val):
-            # yield, yield, ..., break
-            try:
-                for item in val:
-                    socket and self.send_reply(socket, YIELD, item, *channel)
-            except Exception as error:
-                socket and self.send_reply(socket, RAISE, error, *channel)
-            else:
-                socket and self.send_reply(socket, BREAK, None, *channel)
-        else:
-            # return
-            socket and self.send_reply(socket, RETURN, val, *channel)
 
     def get_reply_socket(self, address, context):
         try:
@@ -251,13 +244,13 @@ class Customer(object):
 
 class Collector(Runner):
 
-    def __init__(self, socket, address, timeout=0.01, as_task=False):
+    def __init__(self, socket, address, as_task=False, timeout=0.01):
         if socket.type != zmq.PULL:
             raise ValueError('Collector socket should be PULL')
         self.socket = socket
         self.address = address
-        self.timeout = timeout
         self.as_task = as_task
+        self.timeout = timeout
         self.reply_queues = {}
         self.missing_queues = {}
 

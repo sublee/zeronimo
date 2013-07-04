@@ -10,8 +10,9 @@ from __future__ import absolute_import
 
 from .components import Worker, Customer, Collector, Task
 from .exceptions import ZeronimoException, WorkerNotFound
+from .messaging import send, recv
 
 
-__version__ = '0.0.dev'
-__all__ = ['Worker', 'Customer', 'Collector', 'Task',
-           'ZeronimoException', 'WorkerNotFound']
+__version__ = '0.1.dev'
+__all__ = ['Worker', 'Customer', 'Collector', 'Task', 'ZeronimoException',
+           'WorkerNotFound', 'send', 'recv']
