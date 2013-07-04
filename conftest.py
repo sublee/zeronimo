@@ -1,38 +1,92 @@
 # -*- coding: utf-8 -*-
 from collections import namedtuple
+from fnmatch import fnmatch
 import functools
-import itertools
+import inspect
 import os
 import platform
-import random
-import re
-import shutil
-import socket
-import sys
-import types
-import uuid
+from types import FunctionType
 
-from decorator import decorator
-import gevent
-import psutil
-import pytest
 import zmq.green as zmq
 
 import zeronimo
 
 
-TICK = 0.001
 FEED_DIR = os.path.join(os.path.dirname(__file__), '_feeds')
 WINDOWS = platform.system() == 'Windows'
 
 
-if not __debug__:
-    # don't print exception
-    gevent.hub.get_hub().print_exception = lambda *a, **k: 0
+# deferred fixtures
 
 
-ps = psutil.Process(os.getpid())
-config = None
+make_deferred_fixture = lambda name: namedtuple(name, ['protocol'])
+will_be_worker = make_deferred_fixture('will_be_worker')
+will_be_customer = make_deferred_fixture('will_be_customer')
+will_be_fanout_customer = make_deferred_fixture('will_be_fanout_customer')
+will_be_collector = make_deferred_fixture('will_be_collector')
+will_be_addr = make_deferred_fixture('will_be_addr')
+will_be_fanout_addr = make_deferred_fixture('will_be_fanout_addr')
+will_be_topic = make_deferred_fixture('will_be_topic')
+will_be_ctx = make_deferred_fixture('will_be_ctx')
+deferred_fixtures = {
+    'worker*': will_be_worker,
+    'customer*': will_be_customer,
+    'fanout_customer*': will_be_fanout_customer,
+    'collector*': will_be_collector,
+    'addr*': will_be_addr,
+    'fanout_addr*': will_be_fanout_addr,
+    'topic*': will_be_topic,
+    'ctx': will_be_ctx,
+}
+
+
+# addressing
+
+
+def rand_str(size=6):
+    import random
+    import string
+    return ''.join(random.choice(string.ascii_lowercase) for x in xrange(size))
+
+
+class AddressGenerator(object):
+
+    @classmethod
+    def inproc(cls):
+        """Generates random in-process address."""
+        return 'inproc://{0}'.format(rand_str())
+
+    @classmethod
+    def ipc(cls):
+        """Generates available IPC address."""
+        if not os.path.isdir(FEED_DIR):
+            os.mkdir(FEED_DIR)
+        pipe = None
+        while pipe is None or os.path.exists(pipe):
+            pipe = os.path.join(FEED_DIR, rand_str())
+        return 'ipc://{0}'.format(pipe)
+
+    @classmethod
+    def tcp(cls):
+        """Generates available TCP address."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(('127.0.0.1', 0))
+        addr = 'tcp://{0}:{1}'.format(*sock.getsockname())
+        sock.close()
+        return addr
+
+    @classmethod
+    def pgm(cls):
+        """Generates available PGM address."""
+        return 'pgm://127.0.0.1;224.0.1.0:5555'
+
+    @classmethod
+    def epgm(cls):
+        """Generates available Encapsulated PGM address."""
+        return 'e' + cls.pgm()
+
+
+gen_addr = lambda protocol: getattr(AddressGenerator, protocol)()
 
 
 def pytest_addoption(parser):
@@ -57,11 +111,11 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     globals()['config'] = config
-    invoke = zeronimo.Invoker.invoke
-    def patched_invoke(self, *args, **kwargs):
+    init_collector = zeronimo.Collector.__init__
+    def patched_init_collector(self, *args, **kwargs):
         kwargs.setdefault('timeout', config._adjusted_timeout)
-        return invoke(self, *args, **kwargs)
-    zeronimo.Invoker.invoke = patched_invoke
+        init_collector(self, *args, **kwargs)
+    zeronimo.Collector.__init__ = init_collector
 
 
 def pytest_unconfigure(config):
@@ -78,23 +132,10 @@ def pytest_generate_tests(metafunc):
         curargvalues = []
         tunnel_socks = []
         for param in metafunc.fixturenames:
-            if param.startswith('worker'):
-                # defer making a worker in resolve_fixtures
-                curargvalues.append(deferred_worker(protocol))
-            elif param.startswith('customer'):
-                # defer making a customer in resolve_fixtures
-                curargvalues.append(deferred_customer(protocol))
-            elif re.match('tunnel_sock(et)?s', param):
-                # defer making tunnel sockets which connect to the workers
-                curargvalues.append(deferred_tunnel_sockets())
-            elif param.startswith('addr'):
-                curargvalues.append(deferred_addr(protocol))
-            elif param.startswith('fanout_addr'):
-                curargvalues.append(deferred_fanout_addr(protocol))
-            elif param == 'topic':
-                curargvalues.append(deferred_topic())
-            elif param == 'ctx':
-                curargvalues.append(deferred_ctx())
+            for pattern, deferred_fixture in deferred_fixtures.iteritems():
+                if fnmatch(param, pattern):
+                    curargvalues.append(deferred_fixture(protocol))
+                    break
             else:
                 continue
             if not ids:
@@ -131,205 +172,41 @@ def get_testing_protocols(metafunc):
     return testing_protocols
 
 
-def rand_str(length=6):
-    return str(uuid.uuid4())[:length]
+def resolve_fixtures(f, protocol):
+    @functools.wraps(f)
+    def fixture_resolved(**kwargs):
+        ctx = zmq.Context()
+        resolved_kwargs = {}
+        for param, val in kwargs.iteritems():
+            if isinstance(val, will_be_worker):
+                val = 'Worker'
+            elif isinstance(val, will_be_addr):
+                val = gen_addr(protocol)
+            elif isinstance(val, will_be_topic):
+                val = rand_str()
+            elif isinstance(val, will_be_ctx):
+                val = ctx
+            kwargs[param] = val
+        return f(**kwargs)
+    return fixture_resolved
 
 
-def inproc():
-    """Generates random in-process address."""
-    return 'inproc://{0}'.format(rand_str())
-
-
-def ipc():
-    """Generates available IPC address."""
-    if not os.path.isdir(FEED_DIR):
-        os.mkdir(FEED_DIR)
-    pipe = None
-    while pipe is None or os.path.exists(pipe):
-        pipe = os.path.join(FEED_DIR, rand_str())
-    return 'ipc://{0}'.format(pipe)
-
-
-def tcp():
-    """Generates available TCP address."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(('127.0.0.1', 0))
-    addr = 'tcp://{0}:{1}'.format(*sock.getsockname())
-    sock.close()
-    return addr
-
-
-def pgm():
-    """Generates available PGM address."""
-    return 'pgm://127.0.0.1;224.0.1.0:5555'
-
-
-def epgm():
-    """Generates available Encapsulated PGM address."""
-    return 'e' + pgm()
-
-
-protocols = {'inproc': (inproc, inproc),
-             'ipc': (ipc, ipc),
-             'tcp': (tcp, tcp),
-             'pgm': (tcp, pgm),  # addresses for direct and fanout
-             'epgm': (tcp, epgm)}
-
-
-class Application(object):
-    """The sample application."""
-
-    def simple(self):
-        return 'ok'
-
-    def add(self, a, b):
-        """a + b."""
-        return a + b
-
-    def jabberwocky(self):
-        yield 'Twas brillig, and the slithy toves'
-        yield 'Did gyre and gimble in the wabe;'
-        yield 'All mimsy were the borogoves,'
-        yield 'And the mome raths outgrabe.'
-
-    def xrange(self):
-        return xrange(5)
-
-    def dict_view(self):
-        return dict(zip(xrange(5), xrange(5))).viewkeys()
-
-    def dont_yield(self):
-        if False:
-            yield 'it should\'t be sent'
-            assert 0
-
-    def zero_div(self):
-        0/0      /0/0 /0/0    /0/0   /0/0/0/0   /0/0
-        0/0  /0  /0/0 /0/0    /0/0 /0/0    /0/0     /0
-        0/0/0/0/0/0/0 /0/0/0/0/0/0 /0/0    /0/0   /0
-        0/0/0/0/0/0/0 /0/0    /0/0 /0/0    /0/0
-        0/0  /0  /0/0 /0/0    /0/0   /0/0/0/0     /0
-
-    def launch_rocket(self):
-        yield 3
-        yield 2
-        yield 1
-        raise RuntimeError('Launch!')
-
-    def rycbar123(self):
-        for word in 'run, you clever boy; and remember.'.split():
-            yield word
-
-    def sleep(self):
-        gevent.sleep(0.1)
-        return 'slept'
-
-    def sleep_range(self, sleep, start, stop=None, step=1):
-        if stop is None:
-            start, stop = 0, start
-        sequence = range(start, stop, step)
-        for x, val in enumerate(sequence):
-            yield val
-            if x < len(sequence) - 1:
-                gevent.sleep(sleep)
-
-
-app = Application()
-
-
-def make_worker(ctx, protocol, topic=''):
-    """Creates a :class:`zeronimo.Worker` by the given protocol."""
-    make_addr, make_fanout_addr = protocols[protocol]
-    pull_sock = ctx.socket(zmq.PULL)
-    pull_addr = make_addr()
-    pull_sock.bind(pull_addr)
-    sub_sock = ctx.socket(zmq.SUB)
-    sub_addr = make_fanout_addr()
-    sub_sock.bind(sub_addr)
-    sub_sock.set(zmq.SUBSCRIBE, topic)
-    sub_sock.set(zmq.RATE, 10000)
-    worker_info = (pull_addr, sub_addr, topic)
-    worker = zeronimo.Worker(app, [pull_sock, sub_sock], worker_info)
-    return worker
-
-
-def make_customer(ctx, protocol):
-    """Creates a :class:`zeronimo.Customer` by the given protocol."""
-    make_addr, __ = protocols[protocol]
-    addr = make_addr()
-    sock = ctx.socket(zmq.PULL)
-    sock.bind(addr)
-    customer = zeronimo.Customer(sock, addr)
-    return customer
-
-
-def make_tunnel_sockets(ctx, workers):
-    topic = None
-    for worker in workers:
-        if topic is None:
-            topic = worker.info[-1]
-        elif topic != worker.info[-1]:
-            raise ValueError('All workers must have same subscription')
-        if worker.is_running():
-            raise RuntimeError('make_tunnel_sockets must be called before '
-                               'workers run')
-    topics = set(worker.info[-1] for worker in workers)
-    assert len(topics) == 1
-    topic = next(iter(topics))
-    assert not ctx.closed
-    push = ctx.socket(zmq.PUSH)
-    while push.closed:
-        push = ctx.socket(zmq.PUSH)
-    assert not push.closed
-    assert not ctx.closed
-    pub = ctx.socket(zmq.PUB)
-    assert not pub.closed
-    subs = []
-    # don't connect to same pgm address
-    pgm_addrs = set()
-    for worker in workers:
-        subs.extend(sock for sock in worker.sockets
-                    if sock.socket_type == zmq.SUB)
-        push_addr, pub_addr, topic = worker.info
-        assert not ctx.closed
-        assert not push.closed
-        push.connect(push_addr)
-        if re.match('e?pgm://', pub_addr):
-            if pub_addr in pgm_addrs:
-                continue
-            pgm_addrs.add(pub_addr)
-        pub.connect(pub_addr)
-    sync_pubsub(pub, subs, topic)
-    return {push: push_addr, pub: pub_addr}
-
-
-def patch_worker_to_be_slow(worker, delay):
-    def work(self, invocation, context):
-        self._slow = invocation.function_name != '_znm_test'
-        return zeronimo.Worker.work(self, invocation, context)
-    def send_reply(self, sock, method, *args, **kwargs):
-        if self._slow and method == zeronimo.ACCEPT:
-            gevent.sleep(delay)
-        return zeronimo.Worker.send_reply(self, sock, method, *args, **kwargs)
-    worker.work = functools.partial(work, worker)
-    worker.send_reply = functools.partial(send_reply, worker)
-
-
-def assert_num_workers(tasks, num):
-    if len(tasks) < num:
-        raise zeronimo.WorkerNotFound('Maybe --timeout is too fast')
-
-
-def stop_zeronimo(runners):
-    def ignore_runtimeerror(f):
+# decorate functions which use deferred fixtures with resolve_fixtures
+# automatically.
+import _pytest.python
+genfunctions = _pytest.python.PyCollector._genfunctions
+def patched_genfunctions(*args, **kwargs):
+    for function in genfunctions(*args, **kwargs):
         try:
-            return f()
-        except RuntimeError:
+            callspec = function.callspec
+        except AttributeError:
             pass
-    stoppings = []
-    for runner in runners:
-        stoppings.append(gevent.spawn(ignore_runtimeerror, runner.stop))
-    gevent.joinall(stoppings, raise_error=True)
+        else:
+            if callspec._idlist:
+                protocol = callspec._idlist[0]
+                function.obj = resolve_fixtures(function.obj, protocol)
+        yield function
+_pytest.python.PyCollector._genfunctions = patched_genfunctions
 
 
 # zmq helpers
@@ -414,116 +291,3 @@ def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
     finally:
         in_sock.close()
         out_sock.close()
-
-
-@decorator
-def green(f, *args, **kwargs):
-    """Runs the function within a greenlet."""
-    def capture_exc_info(exc_info, *args, **kwargs):
-        try:
-            return f(*args, **kwargs)
-        except:
-            exc_info.extend(sys.exc_info())
-    exc_info = []
-    gevent.spawn(capture_exc_info, exc_info, *args, **kwargs).join()
-    if exc_info:
-        raise exc_info[0], exc_info[1], exc_info[2]
-
-
-deferred_worker = namedtuple('deferred_worker', ['protocol'])
-deferred_customer = namedtuple('deferred_cutomer', ['protocol'])
-deferred_addr = namedtuple('deferred_addr', ['protocol'])
-deferred_fanout_addr = namedtuple('deferred_fanout_addr', ['protocol'])
-deferred_tunnel_sockets = namedtuple('deferred_tunnel_sockets', [])
-deferred_topic = namedtuple('deferred_topic', [])
-deferred_ctx = namedtuple('deferred_ctx', [])
-
-
-def make_fixtures(args):
-    args = list(args)
-    ctx = zmq.Context()
-    assert not ctx.closed
-    # process deferred worker, customer, topic, addr, fanout_addr
-    topic = rand_str()
-    protocol = None
-    workers = []
-    for x, arg in enumerate(args):
-        if protocol is None and hasattr(arg, 'protocol'):
-            protocol = arg.protocol
-        if isinstance(arg, deferred_worker):
-            assert not ctx.closed
-            worker = make_worker(ctx, arg.protocol, topic)
-            workers.append(worker)
-            args[x] = worker
-        elif isinstance(arg, deferred_customer):
-            assert not ctx.closed
-            args[x] = make_customer(ctx, arg.protocol)
-        elif isinstance(arg, deferred_addr):
-            args[x] = protocols[arg.protocol][0]()
-        elif isinstance(arg, deferred_fanout_addr):
-            args[x] = protocols[arg.protocol][1]()
-        elif isinstance(arg, deferred_topic):
-            args[x] = topic
-        elif isinstance(arg, deferred_ctx):
-            assert not ctx.closed
-            args[x] = ctx
-    wills = []
-    # process deferred tunnel sockets because it should be called before the
-    # workers start
-    if workers:
-        for x, arg in enumerate(args):
-            if isinstance(arg, deferred_tunnel_sockets):
-                assert not ctx.closed
-                tunnel_socks = make_tunnel_sockets(ctx, workers)
-                args[x] = tunnel_socks.keys()
-    # start all runners
-    runners = []
-    for arg in args:
-        if isinstance(arg, zeronimo.Runner):
-            arg.start()
-            runners.append(arg)
-    wills.append(lambda: stop_zeronimo(runners))
-    return ctx, protocol, args, wills
-
-
-@decorator
-def resolve_fixtures(f, *args):
-    """Workers which are yielded by the function will start and stop
-    automatically.
-    """
-    @green
-    def run_and_adjust_timeout(*args):
-        max_adjust = 10
-        adjusted = 0
-        while True:
-            ctx, protocol, resolved_args, wills = make_fixtures(args)
-            try:
-                return f(*resolved_args)
-            except zeronimo.WorkerNotFound:
-                if adjusted >= max_adjust:
-                    raise
-                config._adjusted_timeout *= 2
-                adjusted += 1
-            finally:
-                for will in wills:
-                    will()
-                if config.getoption('--clear'):
-                    ctx.destroy(0)
-                    gevent.sleep(0.01)
-                    def is_unexpected_conn(conn):
-                        addrs = [conn.local_address, conn.remote_address]
-                        ports = [addr[1] if addr else None for addr in addrs]
-                        if WINDOWS and 5905 in ports:
-                            # libzmq uses TCP port 5905 for the signaler in
-                            # Windows.
-                            return False
-                        return conn.status in ('LISTEN', 'ESTABLISHED')
-                    conns = filter(is_unexpected_conn, ps.get_connections())
-                    assert not conns
-    # run the function
-    timeout = config.getoption('--timeout')
-    config._adjusted_timeout = timeout
-    run_and_adjust_timeout(*args)
-    if config._adjusted_timeout != timeout:
-        print '--timeout is adjusted from {0} to ' \
-              '{1} seconds.'.format(timeout, config._adjusted_timeout)
