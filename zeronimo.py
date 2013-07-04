@@ -108,12 +108,17 @@ def make_repr(obj, params=[], keywords=[], data={}):
 # message frames
 
 
-ACCEPT = 1
-REJECT = 0
-RETURN = 100
-RAISE = 101
-YIELD = 102
-BREAK = 103
+# masks
+ACK = 0b10000000
+DONE = 0b01000000
+ITER = 0b00100000
+# methods
+ACCEPT = ACK | 0b01
+REJECT = ACK | 0b10
+RETURN = DONE | 0b01
+RAISE = DONE | 0b10
+YIELD = ITER | 0b01
+BREAK = ITER | 0b10
 
 
 _Call = namedtuple('Call', ['function_name', 'args', 'kwargs',
@@ -410,7 +415,7 @@ class Collector(Runner):
             self.dispatch_reply(reply)
 
     def dispatch_reply(self, reply):
-        if reply.method in (ACCEPT, REJECT):
+        if reply.method & ACK:
             self.reply_queues[reply.call_id][None].put(reply)
             return
         reply_queues = self.reply_queues[reply.call_id]
@@ -530,15 +535,15 @@ class Task(object):
     def __call__(self):
         """Gets the result."""
         reply = self.reply_queue.get()
-        assert reply.method not in (ACCEPT, REJECT)
-        if reply.method in (RETURN, RAISE):
+        assert not reply.method & ACK
+        if reply.method == DONE:
             self.collector.task_done(self)
         if reply.method == RETURN:
             return reply.data
         elif reply.method == RAISE:
             raise reply.data
         elif reply.method == YIELD:
-            return self.itertor(reply)
+            return self.iterator(reply)
         elif reply.method == BREAK:
             return iter([])
 
@@ -546,9 +551,9 @@ class Task(object):
         yield first_reply.data
         while True:
             reply = self.reply_queue.get()
-            assert reply.method not in (ACCEPT, REJECT, RETURN)
+            assert not reply.method & ACK and reply.method != RETURN
             if reply.method == YIELD:
-                yield reply.data
+                yield reply.daa
             elif reply.method == RAISE:
                 raise reply.data
             elif reply.method == BREAK:
