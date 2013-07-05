@@ -269,7 +269,11 @@ class Collector(Runnable):
             except (TypeError, ExtraData):
                 # TODO: warning
                 continue
-            self.dispatch_reply(reply)
+            try:
+                self.dispatch_reply(reply)
+            except KeyError:
+                # TODO: warning
+                continue
 
     def dispatch_reply(self, reply):
         if reply.method & ACK:

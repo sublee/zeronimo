@@ -21,6 +21,9 @@ FEED_DIR = os.path.join(os.path.dirname(__file__), '_feeds')
 WINDOWS = platform.system() == 'Windows'
 
 
+config = NotImplemented
+
+
 # deferred fixtures
 
 
@@ -119,11 +122,6 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     globals()['config'] = config
-    init_collector = zeronimo.Collector.__init__
-    def patched_init_collector(self, *args, **kwargs):
-        kwargs.setdefault('timeout', config._adjusted_timeout)
-        init_collector(self, *args, **kwargs)
-    zeronimo.Collector.__init__ = init_collector
 
 
 def pytest_unconfigure(config):
@@ -212,7 +210,8 @@ def resolve_fixtures(f, protocol):
                 pull_addr = gen_address(protocol)
                 pull_sock.bind(pull_addr)
                 as_task = isinstance(val, will_be_task_collector)
-                val = zeronimo.Collector(pull_sock, pull_addr, as_task)
+                val = zeronimo.Collector(pull_sock, pull_addr, as_task,
+                                         config.option.timeout)
                 runners.add(val)
             elif isinstance(val, will_be_address):
                 val = gen_address(protocol)
