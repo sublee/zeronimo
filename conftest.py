@@ -179,12 +179,29 @@ def get_testing_protocols(metafunc):
     return testing_protocols
 
 
+def adjust_timeout(f):
+    @functools.wraps(f)
+    def timeout_adjusted(**kwargs):
+        timeout = config.option.timeout
+        for x in xrange(10):
+            kwargs['timeout'] = timeout
+            try:
+                return f(**kwargs)
+            except zeronimo.WorkerNotFound:
+                timeout *= 2
+        raise zeronimo.WorkerNotFound('Maybe --timeout={0} is too '
+                                      'fast'.format(config.option.timeout))
+    return timeout_adjusted
+
+
 def resolve_fixtures(f, protocol):
     @functools.wraps(f)
+    @adjust_timeout
     def fixture_resolved(**kwargs):
         ctx = zmq.Context()
         topic = rand_str()
         app = Application()
+        timeout = kwargs.pop('timeout', config.option.timeout)
         pull_addrs = set()
         sub_addrs = set()
         sub_socks = set()
@@ -211,7 +228,7 @@ def resolve_fixtures(f, protocol):
                 pull_sock.bind(pull_addr)
                 as_task = isinstance(val, will_be_task_collector)
                 val = zeronimo.Collector(pull_sock, pull_addr, as_task,
-                                         config.option.timeout)
+                                         timeout)
                 runners.add(val)
             elif isinstance(val, will_be_address):
                 val = gen_address(protocol)
