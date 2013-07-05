@@ -27,6 +27,7 @@ WINDOWS = platform.system() == 'Windows'
 make_deferred_fixture = lambda name: namedtuple(name, ['protocol'])
 will_be_worker = make_deferred_fixture('will_be_worker')
 will_be_collector = make_deferred_fixture('will_be_collector')
+will_be_task_collector = make_deferred_fixture('will_be_task_collector')
 will_be_push_socket = make_deferred_fixture('will_be_push_socket')
 will_be_pub_socket = make_deferred_fixture('will_be_pub_socket')
 will_be_address = make_deferred_fixture('will_be_address')
@@ -36,6 +37,7 @@ will_be_context = make_deferred_fixture('will_be_context')
 deferred_fixtures = {
     'worker*': will_be_worker,
     'collector*': will_be_collector,
+    'task_collector*': will_be_task_collector,
     'push*': will_be_push_socket,
     'pub*': will_be_pub_socket,
     'addr*': will_be_address,
@@ -202,13 +204,15 @@ def resolve_fixtures(f, protocol):
                 sub_sock.bind(sub_addr)
                 sub_addrs.add(sub_addr)
                 sub_socks.add(sub_sock)
-                val = zeronimo.Worker(app, [pull_sock, sub_sock])
+                worker_info = (pull_addr, sub_addr, topic)
+                val = zeronimo.Worker(app, [pull_sock, sub_sock], worker_info)
                 runners.add(val)
-            elif isinstance(val, will_be_collector):
+            elif isinstance(val, (will_be_collector, will_be_task_collector)):
                 pull_sock = ctx.socket(zmq.PULL)
                 pull_addr = gen_address(protocol)
                 pull_sock.bind(pull_addr)
-                val = zeronimo.Collector(pull_sock, pull_addr)
+                as_task = isinstance(val, will_be_task_collector)
+                val = zeronimo.Collector(pull_sock, pull_addr, as_task)
                 runners.add(val)
             elif isinstance(val, will_be_address):
                 val = gen_address(protocol)

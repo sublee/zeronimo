@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import gevent
+from gevent import joinall, spawn
 import pytest
 import zmq.green as zmq
 
@@ -131,3 +132,23 @@ def test_fanout_raise(worker1, worker2, collector, pub, topic):
     customer = zeronimo.Customer(pub, collector)
     with pytest.raises(ZeroDivisionError):
         customer[topic].zero_div()
+
+
+def test_2to1(worker, collector, push1, push2):
+    customer1 = zeronimo.Customer(push1, collector)
+    customer2 = zeronimo.Customer(push2, collector)
+    def test(customer):
+        assert customer.add(1, 1) == 2
+        assert len(list(customer.rycbar123())) == 6
+        with pytest.raises(ZeroDivisionError):
+            tunnel.zero_div()
+    joinall([spawn(test, customer1), spawn(test, customer2)])
+
+
+def test_1to2(worker1, worker2, task_collector, push):
+    customer = zeronimo.Customer(push, task_collector)
+    task1 = customer.add(1, 1)
+    task2 = customer.add(2, 2)
+    assert task1() == 2
+    assert task2() == 4
+    assert task1.worker_info != task2.worker_info
