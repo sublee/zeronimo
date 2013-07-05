@@ -10,6 +10,7 @@ import shutil
 import string
 from types import FunctionType
 
+import gevent
 from gevent import socket
 import zmq.green as zmq
 
@@ -186,6 +187,7 @@ def resolve_fixtures(f, protocol):
         app = Application()
         pull_addrs = set()
         sub_addrs = set()
+        sub_socks = set()
         runners = set()
         socket_params = set()
         for param, val in kwargs.iteritems():
@@ -195,9 +197,11 @@ def resolve_fixtures(f, protocol):
                 pull_sock.bind(pull_addr)
                 pull_addrs.add(pull_addr)
                 sub_sock = ctx.socket(zmq.SUB)
+                sub_sock.set(zmq.SUBSCRIBE, topic)
                 sub_addr = gen_address(protocol, fanout=True)
                 sub_sock.bind(sub_addr)
                 sub_addrs.add(sub_addr)
+                sub_socks.add(sub_sock)
                 val = zeronimo.Worker(app, [pull_sock, sub_sock])
                 runners.add(val)
             elif isinstance(val, will_be_collector):
@@ -228,6 +232,8 @@ def resolve_fixtures(f, protocol):
             sock = ctx.socket(sock_type)
             for addr in addrs:
                 sock.connect(addr)
+            if sock_type == zmq.PUB:
+                sync_pubsub(sock, sub_socks, topic)
             kwargs[param] = sock
         for runner in runners:
             runner.start()
@@ -307,7 +313,7 @@ def sync_pubsub(pub_sock, sub_socks, topic=''):
     poller = zmq.Poller()
     for sub_sock in sub_socks:
         poller.register(sub_sock, zmq.POLLIN)
-    to_sync = sub_socks[:]
+    to_sync = list(sub_socks)
     # sync all SUB sockets
     with gevent.Timeout(1, 'Are SUB sockets subscribing?'):
         while to_sync:

@@ -65,21 +65,30 @@ def test_nowait(worker, push):
     assert worker.obj.counter['zeronimo'] == 5
 
 
-def test_return(worker, push, collector):
+def test_fanout_nowait(worker, worker2, worker3, worker4, worker5, pub, topic):
+    customer = zeronimo.Customer(pub)
+    assert worker.obj.counter['zeronimo'] == 0
+    v = customer[topic].zeronimo()
+    assert worker.obj.counter['zeronimo'] == 0
+    gevent.sleep(0.01)
+    assert worker.obj.counter['zeronimo'] == 5
+
+
+def test_return(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
     assert customer.zeronimo() == 'zeronimo'
     assert customer.add(100, 200) == 300
     assert customer.add('100', '200') == '100200'
 
 
-def test_yield(worker, push, collector):
+def test_yield(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
     assert ' '.join(customer.rycbar123()) == \
            'run, you clever boy; and remember.'
     assert list(customer.dont_yield()) == []
 
 
-def test_raise(worker, push, collector):
+def test_raise(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
     with pytest.raises(ZeroDivisionError):
         customer.zero_div()
@@ -94,7 +103,31 @@ def test_raise(worker, push, collector):
         next(g)
 
 
-def test_iterator(worker, push, collector):
+def test_iterator(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
     assert list(customer.xrange(1, 100, 10)) == range(1, 100, 10)
     assert set(customer.dict_view(1, 100, 10)) == set(range(1, 100, 10))
+
+
+def test_fanout_return(worker1, worker2, collector, pub, topic):
+    customer = zeronimo.Customer(pub, collector)
+    assert customer[topic].zeronimo() == ['zeronimo', 'zeronimo']
+    assert customer[topic].add(100, 200) == [300, 300]
+    assert customer[topic].add('100', '200') == ['100200', '100200']
+
+
+def test_fanout_yield(worker1, worker2, collector, pub, topic):
+    customer = zeronimo.Customer(pub, collector)
+    for g in customer[topic].rycbar123():
+        assert next(g) == 'run,'
+        assert next(g) == 'you'
+        assert next(g) == 'clever'
+        assert next(g) == 'boy;'
+        assert next(g) == 'and'
+        assert next(g) == 'remember.'
+
+
+def test_fanout_raise(worker1, worker2, collector, pub, topic):
+    customer = zeronimo.Customer(pub, collector)
+    with pytest.raises(ZeroDivisionError):
+        customer[topic].zero_div()
