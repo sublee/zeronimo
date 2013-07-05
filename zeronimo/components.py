@@ -68,6 +68,7 @@ class Runnable(object):
         if self.is_running():
             raise RuntimeError('{0} already running'.format(cls_name(self)))
         self._running = spawn(self._clean_run)
+        return self._running
 
     def stop(self):
         try:
