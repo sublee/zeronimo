@@ -8,8 +8,8 @@ from conftest import link_sockets
 
 
 def test_running():
-    from zeronimo.components import Runner
-    class NullRunner(Runner):
+    from zeronimo.components import Runnable
+    class NullRunner(Runnable):
         def run(self):
             pass
     runner = NullRunner()

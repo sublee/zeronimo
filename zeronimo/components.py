@@ -23,7 +23,7 @@ from .messaging import (
     Call, Reply, send, recv)
 
 
-__all__ = ['Runner', 'Worker', 'Customer', 'Collector', 'Task']
+__all__ = ['Runnable', 'Worker', 'Customer', 'Collector', 'Task']
 
 
 def is_generator(func):
@@ -34,13 +34,13 @@ def is_generator(func):
         return False
 
 
-class Runner(object):
-    """A runner should implement :meth:`run`. :attr:`running` is ensured to be
-    ``True`` while :meth:`run` is runnig.
+class Runnable(object):
+    """A runnable object should implement :meth:`run`. :attr:`running` is
+    ensured to be ``True`` while :meth:`run` is runnig.
     """
 
     def __new__(cls, *args, **kwargs):
-        obj = super(Runner, cls).__new__(cls)
+        obj = super(Runnable, cls).__new__(cls)
         cls._patch(obj)
         return obj
 
@@ -85,7 +85,7 @@ class Runner(object):
         return self._running is not None
 
 
-class Worker(Runner):
+class Worker(Runnable):
     """The worker object runs an RPC service of an object through ZMQ sockets.
     The ZMQ sockets should be PULL or SUB socket type. The PULL sockets receive
     Round-robin calls; the SUB sockets receive Publish-subscribe
@@ -242,7 +242,7 @@ class Customer(object):
         return tasks[0] if limit == 1 else tasks
 
 
-class Collector(Runner):
+class Collector(Runnable):
 
     def __init__(self, socket, address, as_task=False, timeout=0.01):
         if socket.type != zmq.PULL:
