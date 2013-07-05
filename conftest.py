@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
-from collections import namedtuple
+from collections import Counter, namedtuple
 from fnmatch import fnmatch
 import functools
 import inspect
 import os
 import platform
+import random
+import shutil
+import string
 from types import FunctionType
 
+from gevent import socket
 import zmq.green as zmq
 
 import zeronimo
@@ -21,22 +25,20 @@ WINDOWS = platform.system() == 'Windows'
 
 make_deferred_fixture = lambda name: namedtuple(name, ['protocol'])
 will_be_worker = make_deferred_fixture('will_be_worker')
-will_be_customer = make_deferred_fixture('will_be_customer')
-will_be_fanout_customer = make_deferred_fixture('will_be_fanout_customer')
+will_be_customer_sockets = make_deferred_fixture('will_be_customer_sockets')
 will_be_collector = make_deferred_fixture('will_be_collector')
-will_be_addr = make_deferred_fixture('will_be_addr')
-will_be_fanout_addr = make_deferred_fixture('will_be_fanout_addr')
+will_be_address = make_deferred_fixture('will_be_address')
+will_be_fanout_address = make_deferred_fixture('will_be_fanout_address')
 will_be_topic = make_deferred_fixture('will_be_topic')
-will_be_ctx = make_deferred_fixture('will_be_ctx')
+will_be_context = make_deferred_fixture('will_be_context')
 deferred_fixtures = {
     'worker*': will_be_worker,
-    'customer*': will_be_customer,
-    'fanout_customer*': will_be_fanout_customer,
+    'customer_socks*': will_be_customer_sockets,
     'collector*': will_be_collector,
-    'addr*': will_be_addr,
-    'fanout_addr*': will_be_fanout_addr,
-    'topic*': will_be_topic,
-    'ctx': will_be_ctx,
+    'addr*': will_be_address,
+    'fanout_addr*': will_be_fanout_address,
+    'topic': will_be_topic,
+    'ctx': will_be_context,
 }
 
 
@@ -44,8 +46,6 @@ deferred_fixtures = {
 
 
 def rand_str(size=6):
-    import random
-    import string
     return ''.join(random.choice(string.ascii_lowercase) for x in xrange(size))
 
 
@@ -86,7 +86,10 @@ class AddressGenerator(object):
         return 'e' + cls.pgm()
 
 
-gen_addr = lambda protocol: getattr(AddressGenerator, protocol)()
+def gen_address(protocol, fanout=False):
+    if not fanout and protocol.endswith('pgm'):
+        protocol = 'tcp'
+    return getattr(AddressGenerator, protocol)()
 
 
 def pytest_addoption(parser):
@@ -137,6 +140,7 @@ def pytest_generate_tests(metafunc):
                     curargvalues.append(deferred_fixture(protocol))
                     break
             else:
+                t
                 continue
             if not ids:
                 argnames.append(param)
@@ -176,18 +180,56 @@ def resolve_fixtures(f, protocol):
     @functools.wraps(f)
     def fixture_resolved(**kwargs):
         ctx = zmq.Context()
-        resolved_kwargs = {}
+        topic = rand_str()
+        app = Application()
+        pull_addrs = set()
+        sub_addrs = set()
+        runners = set()
+        params_will_be_customer_sockets = set()
         for param, val in kwargs.iteritems():
             if isinstance(val, will_be_worker):
-                val = 'Worker'
-            elif isinstance(val, will_be_addr):
-                val = gen_addr(protocol)
+                pull_sock = ctx.socket(zmq.PULL)
+                pull_addr = gen_address(protocol)
+                pull_sock.bind(pull_addr)
+                pull_addrs.add(pull_addr)
+                sub_sock = ctx.socket(zmq.SUB)
+                sub_addr = gen_address(protocol, fanout=True)
+                sub_sock.bind(sub_addr)
+                sub_addrs.add(sub_addr)
+                val = zeronimo.Worker(app, [pull_sock, sub_sock])
+                runners.add(val)
+            elif isinstance(val, will_be_collector):
+                pull_sock = ctx.socket(zmq.PULL)
+                pull_addr = gen_address(protocol)
+                pull_sock.bind(pull_addr)
+                val = zeronimo.Collector(pull_sock, pull_addr)
+                runners.add(val)
+            elif isinstance(val, will_be_address):
+                val = gen_address(protocol)
+            elif isinstance(val, will_be_fanout_address):
+                val = gen_address(protocol, fanout=True)
             elif isinstance(val, will_be_topic):
-                val = rand_str()
-            elif isinstance(val, will_be_ctx):
+                val = topic
+            elif isinstance(val, will_be_context):
                 val = ctx
+            elif isinstance(val, will_be_customer_sockets):
+                params_will_be_customer_sockets.add(param)
             kwargs[param] = val
-        return f(**kwargs)
+        for param in params_will_be_customer_sockets:
+            push_sock = ctx.socket(zmq.PUSH)
+            pub_sock = ctx.socket(zmq.PUB)
+            for addr in pull_addrs:
+                push_sock.connect(addr)
+            for addr in sub_addrs:
+                pub_sock.connect(addr)
+            kwargs[param] = {zmq.PUSH: push_sock, zmq.PUB: pub_sock}
+        for runner in runners:
+            runner.start()
+        try:
+            return f(**kwargs)
+        finally:
+            for runner in runners:
+                runner.stop()
     return fixture_resolved
 
 
@@ -291,3 +333,77 @@ def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
     finally:
         in_sock.close()
         out_sock.close()
+
+
+class Application(object):
+    """The sample application."""
+
+    def __new__(cls):
+        obj = super(Application, cls).__new__(cls)
+        counter = Counter()
+        def count(f):
+            @functools.wraps(f)
+            def wrapped(*args, **kwargs):
+                counter[f.__name__] += 1
+                return f(*args, **kwargs)
+            return wrapped
+        for attr in dir(obj):
+            if attr.endswith('__'):
+                continue
+            setattr(obj, attr, count(getattr(obj, attr)))
+        obj.counter = counter
+        return obj
+
+    def simple(self):
+        return 'ok'
+
+    def add(self, a, b):
+        """a + b."""
+        return a + b
+
+    def jabberwocky(self):
+        yield 'Twas brillig, and the slithy toves'
+        yield 'Did gyre and gimble in the wabe;'
+        yield 'All mimsy were the borogoves,'
+        yield 'And the mome raths outgrabe.'
+
+    def xrange(self):
+        return xrange(5)
+
+    def dict_view(self):
+        return dict(zip(xrange(5), xrange(5))).viewkeys()
+
+    def dont_yield(self):
+        if False:
+            yield 'it should\'t be sent'
+            assert 0
+
+    def zero_div(self):
+        0/0      /0/0 /0/0    /0/0   /0/0/0/0   /0/0
+        0/0  /0  /0/0 /0/0    /0/0 /0/0    /0/0     /0
+        0/0/0/0/0/0/0 /0/0/0/0/0/0 /0/0    /0/0   /0
+        0/0/0/0/0/0/0 /0/0    /0/0 /0/0    /0/0
+        0/0  /0  /0/0 /0/0    /0/0   /0/0/0/0     /0
+
+    def launch_rocket(self):
+        yield 3
+        yield 2
+        yield 1
+        raise RuntimeError('Launch!')
+
+    def rycbar123(self):
+        for word in 'run, you clever boy; and remember.'.split():
+            yield word
+
+    def sleep(self):
+        gevent.sleep(0.1)
+        return 'slept'
+
+    def sleep_range(self, sleep, start, stop=None, step=1):
+        if stop is None:
+            start, stop = 0, start
+        sequence = range(start, stop, step)
+        for x, val in enumerate(sequence):
+            yield val
+            if x < len(sequence) - 1:
+                gevent.sleep(sleep)
