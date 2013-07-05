@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import gevent
+import pytest
 import zmq.green as zmq
 
 import zeronimo
@@ -39,10 +40,11 @@ def test_messaging(ctx, addr, topic):
         assert isinstance(zeronimo.recv(pull), Exception)
 
 
-def test_fixtures(worker, customer_socks, collector, addr1, addr2, ctx):
+def test_fixtures(worker, push, pub, collector, addr1, addr2, ctx):
     assert isinstance(worker, zeronimo.Worker)
-    assert zmq.PUSH in customer_socks
-    assert zmq.PUB in customer_socks
+    assert len(worker.sockets) == 2
+    assert push.type == zmq.PUSH
+    assert pub.type == zmq.PUB
     assert isinstance(collector, zeronimo.Collector)
     assert addr1 != addr2
     assert isinstance(ctx, zmq.Context)
@@ -50,14 +52,49 @@ def test_fixtures(worker, customer_socks, collector, addr1, addr2, ctx):
     assert collector.is_running()
 
 
-def test_emit_nowait(worker, customer_socks):
-    customer = zeronimo.Customer(customer_socks[zmq.PUSH])
-    assert worker.obj.counter['simple'] == 0
-    customer.simple()
-    customer.simple()
-    customer.simple()
-    customer.simple()
-    customer.simple()
-    assert worker.obj.counter['simple'] == 0
+def test_nowait(worker, push):
+    customer = zeronimo.Customer(push)
+    assert worker.obj.counter['zeronimo'] == 0
+    customer.zeronimo()
+    customer.zeronimo()
+    customer.zeronimo()
+    customer.zeronimo()
+    customer.zeronimo()
+    assert worker.obj.counter['zeronimo'] == 0
     gevent.sleep(0.01)
-    assert worker.obj.counter['simple'] == 5
+    assert worker.obj.counter['zeronimo'] == 5
+
+
+def test_return(worker, push, collector):
+    customer = zeronimo.Customer(push, collector)
+    assert customer.zeronimo() == 'zeronimo'
+    assert customer.add(100, 200) == 300
+    assert customer.add('100', '200') == '100200'
+
+
+def test_yield(worker, push, collector):
+    customer = zeronimo.Customer(push, collector)
+    assert ' '.join(customer.rycbar123()) == \
+           'run, you clever boy; and remember.'
+    assert list(customer.dont_yield()) == []
+
+
+def test_raise(worker, push, collector):
+    customer = zeronimo.Customer(push, collector)
+    with pytest.raises(ZeroDivisionError):
+        customer.zero_div()
+    g = customer.rycbar123_and_zero_div()
+    assert next(g) == 'run,'
+    assert next(g) == 'you'
+    assert next(g) == 'clever'
+    assert next(g) == 'boy;'
+    assert next(g) == 'and'
+    assert next(g) == 'remember.'
+    with pytest.raises(ZeroDivisionError):
+        next(g)
+
+
+def test_iterator(worker, push, collector):
+    customer = zeronimo.Customer(push, collector)
+    assert list(customer.xrange(1, 100, 10)) == range(1, 100, 10)
+    assert set(customer.dict_view(1, 100, 10)) == set(range(1, 100, 10))

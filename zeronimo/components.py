@@ -7,6 +7,7 @@
     :license: BSD, see LICENSE for more details.
 """
 from __future__ import absolute_import
+from collections import Iterable, Mapping, Sequence, Set
 import functools
 from types import MethodType
 
@@ -26,12 +27,9 @@ from .messaging import (
 __all__ = ['Runnable', 'Worker', 'Customer', 'Collector', 'Task']
 
 
-def is_generator(func):
-    """Snipped from py.test."""
-    try:
-        return (func.func_code.co_flags & 32)  # generator function
-    except AttributeError:  # c / builtin functions have no func_code
-        return False
+def is_iterator(obj):
+    serializable = (Sequence, Set, Mapping)
+    return (isinstance(obj, Iterable) and not isinstance(obj, serializable))
 
 
 class Runnable(object):
@@ -160,20 +158,25 @@ class Worker(Runnable):
             self.send_reply(socket, method, self.info, *channel)
         if not self.accepting:
             return
-        func = getattr(self.obj, call.function_name)
-        args = call.args
-        kwargs = call.kwargs
         try:
-            if is_generator(func):
-                for val in func(*args, **kwargs):
-                    socket and self.send_reply(socket, YIELD, val, *channel)
-                socket and self.send_reply(socket, BREAK, None, *channel)
-            else:
-                val = func(*args, **kwargs)
-                socket and self.send_reply(socket, RETURN, val, *channel)
+            val = self.call(call)
         except Exception as error:
             socket and self.send_reply(socket, RAISE, error, *channel)
             raise
+        if is_iterator(val):
+            vals = val
+            try:
+                for val in vals:
+                    socket and self.send_reply(socket, YIELD, val, *channel)
+                socket and self.send_reply(socket, BREAK, None, *channel)
+            except Exception as error:
+                socket and self.send_reply(socket, RAISE, error, *channel)
+                raise
+        else:
+            socket and self.send_reply(socket, RETURN, val, *channel)
+
+    def call(self, call):
+        return getattr(self.obj, call.function_name)(*call.args, **call.kwargs)
 
     def get_reply_socket(self, address, context):
         try:
@@ -403,7 +406,7 @@ class Task(object):
             reply = self.reply_queue.get()
             assert not reply.method & ACK and reply.method != RETURN
             if reply.method == YIELD:
-                yield reply.daa
+                yield reply.data
             elif reply.method == RAISE:
                 raise reply.data
             elif reply.method == BREAK:

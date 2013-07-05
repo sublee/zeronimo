@@ -25,16 +25,18 @@ WINDOWS = platform.system() == 'Windows'
 
 make_deferred_fixture = lambda name: namedtuple(name, ['protocol'])
 will_be_worker = make_deferred_fixture('will_be_worker')
-will_be_customer_sockets = make_deferred_fixture('will_be_customer_sockets')
 will_be_collector = make_deferred_fixture('will_be_collector')
+will_be_push_socket = make_deferred_fixture('will_be_push_socket')
+will_be_pub_socket = make_deferred_fixture('will_be_pub_socket')
 will_be_address = make_deferred_fixture('will_be_address')
 will_be_fanout_address = make_deferred_fixture('will_be_fanout_address')
 will_be_topic = make_deferred_fixture('will_be_topic')
 will_be_context = make_deferred_fixture('will_be_context')
 deferred_fixtures = {
     'worker*': will_be_worker,
-    'customer_socks*': will_be_customer_sockets,
     'collector*': will_be_collector,
+    'push*': will_be_push_socket,
+    'pub*': will_be_pub_socket,
     'addr*': will_be_address,
     'fanout_addr*': will_be_fanout_address,
     'topic': will_be_topic,
@@ -185,7 +187,7 @@ def resolve_fixtures(f, protocol):
         pull_addrs = set()
         sub_addrs = set()
         runners = set()
-        params_will_be_customer_sockets = set()
+        socket_params = set()
         for param, val in kwargs.iteritems():
             if isinstance(val, will_be_worker):
                 pull_sock = ctx.socket(zmq.PULL)
@@ -212,17 +214,21 @@ def resolve_fixtures(f, protocol):
                 val = topic
             elif isinstance(val, will_be_context):
                 val = ctx
-            elif isinstance(val, will_be_customer_sockets):
-                params_will_be_customer_sockets.add(param)
+            elif isinstance(val, (will_be_push_socket, will_be_pub_socket)):
+                socket_params.add(param)
             kwargs[param] = val
-        for param in params_will_be_customer_sockets:
-            push_sock = ctx.socket(zmq.PUSH)
-            pub_sock = ctx.socket(zmq.PUB)
-            for addr in pull_addrs:
-                push_sock.connect(addr)
-            for addr in sub_addrs:
-                pub_sock.connect(addr)
-            kwargs[param] = {zmq.PUSH: push_sock, zmq.PUB: pub_sock}
+        for param in socket_params:
+            val = kwargs[param]
+            if isinstance(val, will_be_push_socket):
+                sock_type = zmq.PUSH
+                addrs = pull_addrs
+            else:
+                sock_type = zmq.PUB
+                addrs = sub_addrs
+            sock = ctx.socket(sock_type)
+            for addr in addrs:
+                sock.connect(addr)
+            kwargs[param] = sock
         for runner in runners:
             runner.start()
         try:
@@ -354,46 +360,35 @@ class Application(object):
         obj.counter = counter
         return obj
 
-    def simple(self):
-        return 'ok'
+    def zeronimo(self):
+        return 'zeronimo'
 
     def add(self, a, b):
         """a + b."""
         return a + b
 
-    def jabberwocky(self):
-        yield 'Twas brillig, and the slithy toves'
-        yield 'Did gyre and gimble in the wabe;'
-        yield 'All mimsy were the borogoves,'
-        yield 'And the mome raths outgrabe.'
+    def xrange(self, *args):
+        return xrange(*args)
 
-    def xrange(self):
-        return xrange(5)
-
-    def dict_view(self):
-        return dict(zip(xrange(5), xrange(5))).viewkeys()
+    def dict_view(self, *args):
+        return dict((x, x) for x in xrange(*args)).viewkeys()
 
     def dont_yield(self):
         if False:
             yield 'it should\'t be sent'
             assert 0
 
-    def zero_div(self):
-        0/0      /0/0 /0/0    /0/0   /0/0/0/0   /0/0
-        0/0  /0  /0/0 /0/0    /0/0 /0/0    /0/0     /0
-        0/0/0/0/0/0/0 /0/0/0/0/0/0 /0/0    /0/0   /0
-        0/0/0/0/0/0/0 /0/0    /0/0 /0/0    /0/0
-        0/0  /0  /0/0 /0/0    /0/0   /0/0/0/0     /0
-
-    def launch_rocket(self):
-        yield 3
-        yield 2
-        yield 1
-        raise RuntimeError('Launch!')
-
     def rycbar123(self):
         for word in 'run, you clever boy; and remember.'.split():
             yield word
+
+    def zero_div(self):
+        0 / 0
+
+    def rycbar123_and_zero_div(self):
+        for word in self.rycbar123():
+            yield word
+        self.zero_div()
 
     def sleep(self):
         gevent.sleep(0.1)
