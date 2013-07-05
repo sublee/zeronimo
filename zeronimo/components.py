@@ -13,7 +13,11 @@ from types import MethodType
 
 from gevent import GreenletExit, spawn, Timeout
 from gevent.queue import Empty, Queue
-from libuuid import uuid4_bytes
+try:
+    from libuuid import uuid4_bytes
+except ImportError:
+    import uuid
+    uuid4_bytes = lambda: uuid.uuid4().get_bytes()
 from msgpack import ExtraData
 import zmq.green as zmq
 
