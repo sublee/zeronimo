@@ -210,6 +210,8 @@ class Customer(object):
         self._znm_collector = collector
 
     def __getitem__(self, topic):
+        if self._znm_socket.type != zmq.PUB:
+            raise ValueError('Customer socket should be PUB to set a topic')
         cls = type(self)
         customer = cls(self._znm_socket, self._znm_collector)
         customer._znm_topic = topic
