@@ -49,7 +49,7 @@ class Runnable(object):
     @classmethod
     def _patch(cls, obj):
         obj._running = None
-        def clean_run(self):
+        def inner_run(self):
             try:
                 cls.run(self)
             except GreenletExit:
@@ -59,7 +59,7 @@ class Runnable(object):
         def run(self):
             self.start()
             return self._running.get()
-        obj._clean_run = MethodType(clean_run, obj)
+        obj._inner_run = MethodType(inner_run, obj)
         obj.run = MethodType(run, obj)
 
     def run(self):
@@ -69,7 +69,8 @@ class Runnable(object):
     def start(self):
         if self.is_running():
             raise RuntimeError('{0} already running'.format(cls_name(self)))
-        self._running = spawn(self._clean_run)
+        self._running = spawn(self._inner_run)
+        self._running.join(0)
         return self._running
 
     def stop(self):
@@ -247,9 +248,10 @@ class Customer(object):
         send_call()
         if not self._znm_collector.is_running():
             self._znm_collector.start()
-        limit = None if self._znm_socket.type == zmq.PUB else 1
-        tasks = self._znm_collector.establish(send_call, call_id, limit)
-        return tasks[0] if limit == 1 else tasks
+        is_fanout = self._znm_socket.type == zmq.PUB
+        establish_args = () if is_fanout else (1, send_call)
+        tasks = self._znm_collector.establish(call_id, *establish_args)
+        return tasks if is_fanout else tasks[0]
 
 
 class Collector(Runnable):
@@ -298,12 +300,12 @@ class Collector(Runnable):
                 missing_queues[reply.work_id] = reply_queue
         reply_queue.put(reply)
 
-    def establish(self, retry, call_id, limit=None):
-        accepts = self.wait_accepts(retry, call_id, limit)
+    def establish(self, call_id, limit=None, retry=None):
+        accepts = self.wait_accepts(call_id, limit, retry)
         tasks = self.collect_tasks(accepts, call_id, limit)
         return tasks if self.as_task else [task() for task in tasks]
 
-    def wait_accepts(self, retry, call_id, limit=None):
+    def wait_accepts(self, call_id, limit=None, retry=None):
         ack_queue = Queue()
         self.reply_queues[call_id] = {None: ack_queue}
         accepts = []
@@ -314,7 +316,8 @@ class Collector(Runnable):
                     reply = ack_queue.get()
                     if reply.method == REJECT:
                         rejected += 1
-                        retry()
+                        if retry is not None:
+                            retry()
                         continue
                     elif reply.method == ACCEPT:
                         accepts.append(reply)

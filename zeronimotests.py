@@ -6,7 +6,7 @@ from gevent import joinall, spawn
 import pytest
 import zmq.green as zmq
 
-from conftest import link_sockets
+from conftest import Application, link_sockets, run_device, sync_pubsub
 import zeronimo
 
 
@@ -14,7 +14,7 @@ def test_running():
     from zeronimo.components import Runnable
     class NullRunner(Runnable):
         def run(self):
-            pass
+            gevent.sleep(0.1)
     runner = NullRunner()
     assert not runner.is_running()
     runner.start()
@@ -40,6 +40,40 @@ def test_messaging(ctx, addr, topic):
         assert zeronimo.recv(pull) == Exception
         zeronimo.send(push, Exception('Allons-y'), topic=t)
         assert isinstance(zeronimo.recv(pull), Exception)
+
+
+def test_from_socket(ctx, addr1, addr2):
+    try:
+        # sockets
+        worker_sock = ctx.socket(zmq.PULL)
+        worker_sock.bind(addr1)
+        collector_sock = ctx.socket(zmq.PULL)
+        collector_sock.bind(addr2)
+        push = ctx.socket(zmq.PUSH)
+        push.connect(addr1)
+        # components
+        app = Application()
+        worker = zeronimo.Worker(app, [worker_sock])
+        worker.start()
+        collector = zeronimo.Collector(collector_sock, addr2)
+        customer = zeronimo.Customer(push, collector)
+        # test
+        assert customer.zeronimo() == 'zeronimo'
+    finally:
+        collector.stop()
+        collector_sock.close()
+        push.close()
+        worker.stop()
+        worker_sock.close()
+
+
+def test_socket_type_error(ctx):
+    with pytest.raises(ValueError):
+        zeronimo.Customer(ctx.socket(zmq.PAIR))
+    with pytest.raises(ValueError):
+        zeronimo.Worker(None, [ctx.socket(zmq.PAIR)])
+    with pytest.raises(ValueError):
+        zeronimo.Collector(ctx.socket(zmq.PAIR), 'x')
 
 
 def test_fixtures(worker, push, pub, collector, addr1, addr2, ctx):
@@ -187,3 +221,170 @@ def test_reject(worker1, worker2, task_collector, push, pub, topic):
     assert worker1.accepting
     assert worker2.accepting
     assert len(fanout_customer.zeronimo()) == 2
+
+
+def test_subscription(worker1, worker2, collector, pub, topic):
+    fanout_customer = zeronimo.Customer(pub, collector)[topic]
+    sub1 = [sock for sock in worker1.sockets if sock.socket_type == zmq.SUB][0]
+    sub2 = [sock for sock in worker2.sockets if sock.socket_type == zmq.SUB][0]
+    sub1.set(zmq.UNSUBSCRIBE, topic)
+    assert len(fanout_customer.zeronimo()) == 1
+    sub2.set(zmq.UNSUBSCRIBE, topic)
+    with pytest.raises(zeronimo.WorkerNotFound):
+        fanout_customer.zeronimo()
+    worker1.stop()
+    sub1.set(zmq.SUBSCRIBE, topic)
+    sync_pubsub(pub, [sub1], topic)
+    worker1.start()
+    assert len(fanout_customer.zeronimo()) == 1
+    worker1.stop()
+    worker2.stop()
+    sub2.set(zmq.SUBSCRIBE, topic)
+    sync_pubsub(pub, [sub1, sub2], topic)
+    worker1.start()
+    worker2.start()
+    assert len(fanout_customer.zeronimo()) == 2
+
+
+def test_device(ctx, collector, topic, addr1, addr2, addr3, addr4):
+    # customer  |-----| forwarder |---> | worker
+    # collector | <---| streamer |------|
+    try:
+        # run streamer
+        streamer_in_addr, streamer_out_addr = addr1, addr2
+        forwarder_in_addr, forwarder_out_addr = addr3, addr4
+        streamer = spawn(
+            run_device, ctx.socket(zmq.PULL), ctx.socket(zmq.PUSH),
+            streamer_in_addr, streamer_out_addr)
+        streamer.join(0)
+        # run forwarder
+        sub = ctx.socket(zmq.SUB)
+        sub.set(zmq.SUBSCRIBE, '')
+        forwarder = spawn(
+            run_device, sub, ctx.socket(zmq.PUB),
+            forwarder_in_addr, forwarder_out_addr)
+        forwarder.join(0)
+        # connect to the devices
+        worker_pull1 = ctx.socket(zmq.PULL)
+        worker_pull2 = ctx.socket(zmq.PULL)
+        worker_pull1.connect(streamer_out_addr)
+        worker_pull2.connect(streamer_out_addr)
+        worker_sub1 = ctx.socket(zmq.SUB)
+        worker_sub2 = ctx.socket(zmq.SUB)
+        worker_sub1.set(zmq.SUBSCRIBE, topic)
+        worker_sub2.set(zmq.SUBSCRIBE, topic)
+        worker_sub1.connect(forwarder_out_addr)
+        worker_sub2.connect(forwarder_out_addr)
+        push = ctx.socket(zmq.PUSH)
+        push.connect(streamer_in_addr)
+        pub = ctx.socket(zmq.PUB)
+        pub.connect(forwarder_in_addr)
+        sync_pubsub(pub, [worker_sub1, worker_sub2], topic)
+        # make and start workers
+        app = Application()
+        worker1 = zeronimo.Worker(app, [worker_pull1, worker_sub1])
+        worker2 = zeronimo.Worker(app, [worker_pull2, worker_sub2])
+        worker1.start()
+        worker2.start()
+        # zeronimo!
+        customer = zeronimo.Customer(push, collector)
+        fanout_customer = zeronimo.Customer(pub, collector)[topic]
+        assert customer.zeronimo() == 'zeronimo'
+        assert fanout_customer.zeronimo() == ['zeronimo', 'zeronimo']
+    finally:
+        streamer.kill()
+        forwarder.kill()
+        push.close()
+        pub.close()
+        worker1.stop()
+        worker2.stop()
+
+
+@pytest.mark.xfail('zmq.zmq_version_info() < (3, 2)')  # zmq<3.2 should fail
+def test_x_forwarder(ctx, collector, topic, addr1, addr2):
+    # customer  |----| forwarder with XPUB/XSUB |---> | worker
+    # collector | <-----------------------------------|
+    try:
+        # run forwarder
+        forwarder_in_addr, forwarder_out_addr = addr1, addr2
+        forwarder = spawn(
+            run_device, ctx.socket(zmq.XSUB), ctx.socket(zmq.XPUB),
+            forwarder_in_addr, forwarder_out_addr)
+        forwarder.join(0)
+        # connect to the devices
+        worker_sub1 = ctx.socket(zmq.SUB)
+        worker_sub2 = ctx.socket(zmq.SUB)
+        worker_sub1.set(zmq.SUBSCRIBE, topic)
+        worker_sub2.set(zmq.SUBSCRIBE, topic)
+        worker_sub1.connect(forwarder_out_addr)
+        worker_sub2.connect(forwarder_out_addr)
+        pub = ctx.socket(zmq.PUB)
+        pub.connect(forwarder_in_addr)
+        sync_pubsub(pub, [worker_sub1, worker_sub2], topic)
+        # make and start workers
+        worker1 = zeronimo.Worker(app, [worker_sub1])
+        worker2 = zeronimo.Worker(app, [worker_sub2])
+        worker1.start()
+        worker2.start()
+        # zeronimo!
+        fanout_customer = zeronimo.Customer(pub, collector)[topic]
+        assert fanout_customer.zeronimo() == ['zeronimo', 'zeronimo']
+    finally:
+        forwarder.kill()
+        pub.close()
+        worker1.stop()
+        worker2.stop()
+
+
+def test_proxied_collector(ctx, worker, push, addr1, addr2):
+    # customer  |-------------------> | worker
+    # collector | <---| streamer |----|
+    try:
+        streamer = spawn(
+            run_device, ctx.socket(zmq.PULL), ctx.socket(zmq.PUSH),
+            addr1, addr2)
+        streamer.join(0)
+        collector_sock = ctx.socket(zmq.PULL)
+        collector_sock.connect(addr2)
+        collector = zeronimo.Collector(collector_sock, addr1)
+        customer = zeronimo.Customer(push, collector)
+        assert customer.zeronimo() == 'zeronimo'
+    finally:
+        streamer.kill()
+        collector.stop()
+        collector_sock.close()
+
+
+def test_2nd_start(worker, collector):
+    assert worker.is_running()
+    worker.stop()
+    assert not worker.is_running()
+    worker.start()
+    assert worker.is_running()
+    assert collector.is_running()
+    collector.stop()
+    assert not collector.is_running()
+    collector.start()
+    assert collector.is_running()
+
+
+def test_concurrent_collector(worker, collector, push, pub, topic):
+    customer = zeronimo.Customer(push, collector)
+    fanout_customer = zeronimo.Customer(pub, collector)[topic]
+    done = []
+    def do_test():
+        assert customer.zeronimo() == 'zeronimo'
+        assert fanout_customer.zeronimo() == ['zeronimo']
+        done.append(True)
+    times = 5
+    joinall([spawn(do_test) for x in xrange(times)], raise_error=True)
+    assert len(done) == times
+
+
+def test_stopped_collector(worker, collector, push):
+    customer = zeronimo.Customer(push, collector)
+    collector.stop()
+    assert not collector.is_running()
+    assert customer.zeronimo() == 'zeronimo'
+    assert collector.is_running()
+    collector.stop()
