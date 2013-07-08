@@ -1,12 +1,17 @@
 # -*- coding: utf-8 -*-
-from collections import namedtuple
+from collections import Counter, namedtuple
 from fnmatch import fnmatch
 import functools
 import inspect
 import os
 import platform
+import random
+import shutil
+import string
 from types import FunctionType
 
+import gevent
+from gevent import socket
 import zmq.green as zmq
 
 import zeronimo
@@ -16,27 +21,32 @@ FEED_DIR = os.path.join(os.path.dirname(__file__), '_feeds')
 WINDOWS = platform.system() == 'Windows'
 
 
+config = NotImplemented
+
+
 # deferred fixtures
 
 
 make_deferred_fixture = lambda name: namedtuple(name, ['protocol'])
 will_be_worker = make_deferred_fixture('will_be_worker')
-will_be_customer = make_deferred_fixture('will_be_customer')
-will_be_fanout_customer = make_deferred_fixture('will_be_fanout_customer')
 will_be_collector = make_deferred_fixture('will_be_collector')
-will_be_addr = make_deferred_fixture('will_be_addr')
-will_be_fanout_addr = make_deferred_fixture('will_be_fanout_addr')
+will_be_task_collector = make_deferred_fixture('will_be_task_collector')
+will_be_push_socket = make_deferred_fixture('will_be_push_socket')
+will_be_pub_socket = make_deferred_fixture('will_be_pub_socket')
+will_be_address = make_deferred_fixture('will_be_address')
+will_be_fanout_address = make_deferred_fixture('will_be_fanout_address')
 will_be_topic = make_deferred_fixture('will_be_topic')
-will_be_ctx = make_deferred_fixture('will_be_ctx')
+will_be_context = make_deferred_fixture('will_be_context')
 deferred_fixtures = {
     'worker*': will_be_worker,
-    'customer*': will_be_customer,
-    'fanout_customer*': will_be_fanout_customer,
     'collector*': will_be_collector,
-    'addr*': will_be_addr,
-    'fanout_addr*': will_be_fanout_addr,
-    'topic*': will_be_topic,
-    'ctx': will_be_ctx,
+    'task_collector*': will_be_task_collector,
+    'push*': will_be_push_socket,
+    'pub*': will_be_pub_socket,
+    'addr*': will_be_address,
+    'fanout_addr*': will_be_fanout_address,
+    'topic': will_be_topic,
+    'ctx': will_be_context,
 }
 
 
@@ -44,8 +54,6 @@ deferred_fixtures = {
 
 
 def rand_str(size=6):
-    import random
-    import string
     return ''.join(random.choice(string.ascii_lowercase) for x in xrange(size))
 
 
@@ -86,7 +94,10 @@ class AddressGenerator(object):
         return 'e' + cls.pgm()
 
 
-gen_addr = lambda protocol: getattr(AddressGenerator, protocol)()
+def gen_address(protocol, fanout=False):
+    if not fanout and protocol.endswith('pgm'):
+        protocol = 'tcp'
+    return getattr(AddressGenerator, protocol)()
 
 
 def pytest_addoption(parser):
@@ -111,11 +122,6 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     globals()['config'] = config
-    init_collector = zeronimo.Collector.__init__
-    def patched_init_collector(self, *args, **kwargs):
-        kwargs.setdefault('timeout', config._adjusted_timeout)
-        init_collector(self, *args, **kwargs)
-    zeronimo.Collector.__init__ = init_collector
 
 
 def pytest_unconfigure(config):
@@ -137,6 +143,7 @@ def pytest_generate_tests(metafunc):
                     curargvalues.append(deferred_fixture(protocol))
                     break
             else:
+                t
                 continue
             if not ids:
                 argnames.append(param)
@@ -172,22 +179,89 @@ def get_testing_protocols(metafunc):
     return testing_protocols
 
 
+def adjust_timeout(f):
+    @functools.wraps(f)
+    def timeout_adjusted(**kwargs):
+        timeout = config.option.timeout
+        for x in xrange(10):
+            kwargs['timeout'] = timeout
+            try:
+                return f(**kwargs)
+            except zeronimo.WorkerNotFound:
+                timeout *= 2
+        raise zeronimo.WorkerNotFound('Maybe --timeout={0} is too '
+                                      'fast'.format(config.option.timeout))
+    return timeout_adjusted
+
+
 def resolve_fixtures(f, protocol):
     @functools.wraps(f)
+    @adjust_timeout
     def fixture_resolved(**kwargs):
         ctx = zmq.Context()
-        resolved_kwargs = {}
+        topic = rand_str()
+        app = Application()
+        timeout = kwargs.pop('timeout', config.option.timeout)
+        pull_addrs = set()
+        sub_addrs = set()
+        sub_socks = set()
+        runners = set()
+        socket_params = set()
         for param, val in kwargs.iteritems():
             if isinstance(val, will_be_worker):
-                val = 'Worker'
-            elif isinstance(val, will_be_addr):
-                val = gen_addr(protocol)
+                pull_sock = ctx.socket(zmq.PULL)
+                pull_addr = gen_address(protocol)
+                pull_sock.bind(pull_addr)
+                pull_addrs.add(pull_addr)
+                sub_sock = ctx.socket(zmq.SUB)
+                sub_sock.set(zmq.SUBSCRIBE, topic)
+                sub_addr = gen_address(protocol, fanout=True)
+                sub_sock.bind(sub_addr)
+                sub_addrs.add(sub_addr)
+                sub_socks.add(sub_sock)
+                worker_info = [pull_addr, sub_addr, topic]
+                val = zeronimo.Worker(app, [pull_sock, sub_sock], worker_info)
+                runners.add(val)
+            elif isinstance(val, (will_be_collector, will_be_task_collector)):
+                pull_sock = ctx.socket(zmq.PULL)
+                pull_addr = gen_address(protocol)
+                pull_sock.bind(pull_addr)
+                as_task = isinstance(val, will_be_task_collector)
+                val = zeronimo.Collector(pull_sock, pull_addr, as_task,
+                                         timeout)
+                runners.add(val)
+            elif isinstance(val, will_be_address):
+                val = gen_address(protocol)
+            elif isinstance(val, will_be_fanout_address):
+                val = gen_address(protocol, fanout=True)
             elif isinstance(val, will_be_topic):
-                val = rand_str()
-            elif isinstance(val, will_be_ctx):
+                val = topic
+            elif isinstance(val, will_be_context):
                 val = ctx
+            elif isinstance(val, (will_be_push_socket, will_be_pub_socket)):
+                socket_params.add(param)
             kwargs[param] = val
-        return f(**kwargs)
+        for param in socket_params:
+            val = kwargs[param]
+            if isinstance(val, will_be_push_socket):
+                sock_type = zmq.PUSH
+                addrs = pull_addrs
+            else:
+                sock_type = zmq.PUB
+                addrs = sub_addrs
+            sock = ctx.socket(sock_type)
+            for addr in addrs:
+                sock.connect(addr)
+            if sock_type == zmq.PUB:
+                sync_pubsub(sock, sub_socks, topic)
+            kwargs[param] = sock
+        for runner in runners:
+            runner.start()
+        try:
+            return f(**kwargs)
+        finally:
+            for runner in runners:
+                runner.stop()
     return fixture_resolved
 
 
@@ -259,7 +333,7 @@ def sync_pubsub(pub_sock, sub_socks, topic=''):
     poller = zmq.Poller()
     for sub_sock in sub_socks:
         poller.register(sub_sock, zmq.POLLIN)
-    to_sync = sub_socks[:]
+    to_sync = list(sub_socks)
     # sync all SUB sockets
     with gevent.Timeout(1, 'Are SUB sockets subscribing?'):
         while to_sync:
@@ -291,3 +365,66 @@ def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
     finally:
         in_sock.close()
         out_sock.close()
+
+
+class Application(object):
+    """The sample application."""
+
+    def __new__(cls):
+        obj = super(Application, cls).__new__(cls)
+        counter = Counter()
+        def count(f):
+            @functools.wraps(f)
+            def wrapped(*args, **kwargs):
+                counter[f.__name__] += 1
+                return f(*args, **kwargs)
+            return wrapped
+        for attr in dir(obj):
+            if attr.endswith('__'):
+                continue
+            setattr(obj, attr, count(getattr(obj, attr)))
+        obj.counter = counter
+        return obj
+
+    def zeronimo(self):
+        return 'zeronimo'
+
+    def add(self, a, b):
+        """a + b."""
+        return a + b
+
+    def xrange(self, *args):
+        return xrange(*args)
+
+    def dict_view(self, *args):
+        return dict((x, x) for x in xrange(*args)).viewkeys()
+
+    def dont_yield(self):
+        if False:
+            yield 'it should\'t be sent'
+            assert 0
+
+    def rycbar123(self):
+        for word in 'run, you clever boy; and remember.'.split():
+            yield word
+
+    def zero_div(self):
+        0 / 0
+
+    def rycbar123_and_zero_div(self):
+        for word in self.rycbar123():
+            yield word
+        self.zero_div()
+
+    def sleep(self, seconds):
+        gevent.sleep(seconds)
+        return seconds
+
+    def sleep_range(self, sleep, start, stop=None, step=1):
+        if stop is None:
+            start, stop = 0, start
+        sequence = range(start, stop, step)
+        for x, val in enumerate(sequence):
+            yield val
+            if x < len(sequence) - 1:
+                gevent.sleep(sleep)

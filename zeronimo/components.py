@@ -7,12 +7,17 @@
     :license: BSD, see LICENSE for more details.
 """
 from __future__ import absolute_import
+from collections import Iterable, Mapping, Sequence, Set
 import functools
 from types import MethodType
 
 from gevent import GreenletExit, spawn, Timeout
 from gevent.queue import Empty, Queue
-from libuuid import uuid4_bytes
+try:
+    from libuuid import uuid4_bytes
+except ImportError:
+    import uuid
+    uuid4_bytes = lambda: uuid.uuid4().get_bytes()
 from msgpack import ExtraData
 import zmq.green as zmq
 
@@ -23,24 +28,21 @@ from .messaging import (
     Call, Reply, send, recv)
 
 
-__all__ = ['Runner', 'Worker', 'Customer', 'Collector', 'Task']
+__all__ = ['Runnable', 'Worker', 'Customer', 'Collector', 'Task']
 
 
-def is_generator(func):
-    """Snipped from py.test."""
-    try:
-        return (func.func_code.co_flags & 32)  # generator function
-    except AttributeError:  # c / builtin functions have no func_code
-        return False
+def is_iterator(obj):
+    serializable = (Sequence, Set, Mapping)
+    return (isinstance(obj, Iterable) and not isinstance(obj, serializable))
 
 
-class Runner(object):
-    """A runner should implement :meth:`run`. :attr:`running` is ensured to be
-    ``True`` while :meth:`run` is runnig.
+class Runnable(object):
+    """A runnable object should implement :meth:`run`. :attr:`running` is
+    ensured to be ``True`` while :meth:`run` is runnig.
     """
 
     def __new__(cls, *args, **kwargs):
-        obj = super(Runner, cls).__new__(cls)
+        obj = super(Runnable, cls).__new__(cls)
         cls._patch(obj)
         return obj
 
@@ -68,6 +70,7 @@ class Runner(object):
         if self.is_running():
             raise RuntimeError('{0} already running'.format(cls_name(self)))
         self._running = spawn(self._clean_run)
+        return self._running
 
     def stop(self):
         try:
@@ -85,7 +88,7 @@ class Runner(object):
         return self._running is not None
 
 
-class Worker(Runner):
+class Worker(Runnable):
     """The worker object runs an RPC service of an object through ZMQ sockets.
     The ZMQ sockets should be PULL or SUB socket type. The PULL sockets receive
     Round-robin calls; the SUB sockets receive Publish-subscribe
@@ -159,20 +162,25 @@ class Worker(Runner):
             self.send_reply(socket, method, self.info, *channel)
         if not self.accepting:
             return
-        func = getattr(self.obj, call.function_name)
-        args = call.args
-        kwargs = call.kwargs
         try:
-            if is_generator(func):
-                for val in func(*args, **kwargs):
-                    socket and self.send_reply(socket, YIELD, val, *channel)
-                socket and self.send_reply(socket, BREAK, None, *channel)
-            else:
-                val = func(*args, **kwargs)
-                socket and self.send_reply(socket, RETURN, val, *channel)
+            val = self.call(call)
         except Exception as error:
             socket and self.send_reply(socket, RAISE, error, *channel)
             raise
+        if is_iterator(val):
+            vals = val
+            try:
+                for val in vals:
+                    socket and self.send_reply(socket, YIELD, val, *channel)
+                socket and self.send_reply(socket, BREAK, None, *channel)
+            except Exception as error:
+                socket and self.send_reply(socket, RAISE, error, *channel)
+                raise
+        else:
+            socket and self.send_reply(socket, RETURN, val, *channel)
+
+    def call(self, call):
+        return getattr(self.obj, call.function_name)(*call.args, **call.kwargs)
 
     def get_reply_socket(self, address, context):
         try:
@@ -240,11 +248,11 @@ class Customer(object):
         if not self._znm_collector.is_running():
             self._znm_collector.start()
         limit = None if self._znm_socket.type == zmq.PUB else 1
-        tasks = self._znm_collector.establish(call_id, send_call, limit)
+        tasks = self._znm_collector.establish(send_call, call_id, limit)
         return tasks[0] if limit == 1 else tasks
 
 
-class Collector(Runner):
+class Collector(Runnable):
 
     def __init__(self, socket, address, as_task=False, timeout=0.01):
         if socket.type != zmq.PULL:
@@ -263,7 +271,11 @@ class Collector(Runner):
             except (TypeError, ExtraData):
                 # TODO: warning
                 continue
-            self.dispatch_reply(reply)
+            try:
+                self.dispatch_reply(reply)
+            except KeyError:
+                # TODO: warning
+                continue
 
     def dispatch_reply(self, reply):
         if reply.method & ACK:
@@ -286,12 +298,12 @@ class Collector(Runner):
                 missing_queues[reply.work_id] = reply_queue
         reply_queue.put(reply)
 
-    def establish(self, call_id, retry, limit=None):
-        accepts = self.wait_accepts(call_id, limit)
+    def establish(self, retry, call_id, limit=None):
+        accepts = self.wait_accepts(retry, call_id, limit)
         tasks = self.collect_tasks(accepts, call_id, limit)
         return tasks if self.as_task else [task() for task in tasks]
 
-    def wait_accepts(self, call_id, limit=None):
+    def wait_accepts(self, retry, call_id, limit=None):
         ack_queue = Queue()
         self.reply_queues[call_id] = {None: ack_queue}
         accepts = []
@@ -404,7 +416,7 @@ class Task(object):
             reply = self.reply_queue.get()
             assert not reply.method & ACK and reply.method != RETURN
             if reply.method == YIELD:
-                yield reply.daa
+                yield reply.data
             elif reply.method == RAISE:
                 raise reply.data
             elif reply.method == BREAK:
