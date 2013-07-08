@@ -219,7 +219,7 @@ def resolve_fixtures(f, protocol):
                 sub_sock.bind(sub_addr)
                 sub_addrs.add(sub_addr)
                 sub_socks.add(sub_sock)
-                worker_info = (pull_addr, sub_addr, topic)
+                worker_info = [pull_addr, sub_addr, topic]
                 val = zeronimo.Worker(app, [pull_sock, sub_sock], worker_info)
                 runners.add(val)
             elif isinstance(val, (will_be_collector, will_be_task_collector)):
@@ -416,9 +416,9 @@ class Application(object):
             yield word
         self.zero_div()
 
-    def sleep(self):
-        gevent.sleep(0.1)
-        return 'slept'
+    def sleep(self, seconds):
+        gevent.sleep(seconds)
+        return seconds
 
     def sleep_range(self, sleep, start, stop=None, step=1):
         if stop is None:

@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
+import time
+
 import gevent
 from gevent import joinall, spawn
 import pytest
 import zmq.green as zmq
 
-import zeronimo
-
 from conftest import link_sockets
+import zeronimo
 
 
 def test_running():
@@ -152,3 +153,37 @@ def test_1to2(worker1, worker2, task_collector, push):
     assert task1() == 2
     assert task2() == 4
     assert task1.worker_info != task2.worker_info
+
+
+def test_slow(worker, collector, push):
+    customer = zeronimo.Customer(push, collector)
+    with pytest.raises(gevent.Timeout):
+        with gevent.Timeout(0.1):
+            customer.sleep(0.3)
+        t = time.time()
+        assert customer.sleep(0.1) == 0.1
+        assert time.time() - t >= 0.1
+
+
+def test_reject(worker1, worker2, task_collector, push, pub, topic):
+    customer = zeronimo.Customer(push, task_collector)
+    fanout_customer = zeronimo.Customer(pub, task_collector)[topic]
+    assert worker1.accepting
+    assert worker2.accepting
+    assert len(fanout_customer.zeronimo()) == 2
+    worker2.reject_all()
+    assert not worker2.accepting
+    assert customer.zeronimo().worker_info == worker1.info
+    assert customer.zeronimo().worker_info == worker1.info
+    assert len(fanout_customer.zeronimo()) == 1
+    worker1.reject_all()
+    assert not worker1.accepting
+    with pytest.raises(zeronimo.WorkerNotFound):
+        customer.zeronimo()
+    with pytest.raises(zeronimo.WorkerNotFound):
+        fanout_customer.zeronimo()
+    worker1.accept_all()
+    worker2.accept_all()
+    assert worker1.accepting
+    assert worker2.accepting
+    assert len(fanout_customer.zeronimo()) == 2

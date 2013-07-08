@@ -246,7 +246,7 @@ class Customer(object):
         if not self._znm_collector.is_running():
             self._znm_collector.start()
         limit = None if self._znm_socket.type == zmq.PUB else 1
-        tasks = self._znm_collector.establish(call_id, send_call, limit)
+        tasks = self._znm_collector.establish(send_call, call_id, limit)
         return tasks[0] if limit == 1 else tasks
 
 
@@ -296,12 +296,12 @@ class Collector(Runnable):
                 missing_queues[reply.work_id] = reply_queue
         reply_queue.put(reply)
 
-    def establish(self, call_id, retry, limit=None):
-        accepts = self.wait_accepts(call_id, limit)
+    def establish(self, retry, call_id, limit=None):
+        accepts = self.wait_accepts(retry, call_id, limit)
         tasks = self.collect_tasks(accepts, call_id, limit)
         return tasks if self.as_task else [task() for task in tasks]
 
-    def wait_accepts(self, call_id, limit=None):
+    def wait_accepts(self, retry, call_id, limit=None):
         ack_queue = Queue()
         self.reply_queues[call_id] = {None: ack_queue}
         accepts = []
