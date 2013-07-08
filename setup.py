@@ -69,7 +69,7 @@ if 'test' in sys.argv: import zmq
 
 
 # detect the current version
-with open('zeronimo.py') as f:
+with open('zeronimo/__init__.py') as f:
     version = re.search(r'__version__\s*=\s*\'(.+?)\'', f.read()).group(1)
 assert version
 
