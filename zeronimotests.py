@@ -292,12 +292,15 @@ def test_device(ctx, collector, topic, addr1, addr2, addr3, addr4):
         assert customer.zeronimo() == 'zeronimo'
         assert fanout_customer.zeronimo() == ['zeronimo', 'zeronimo']
     finally:
-        streamer.kill()
-        forwarder.kill()
-        push.close()
-        pub.close()
-        worker1.stop()
-        worker2.stop()
+        try:
+            streamer.kill()
+            forwarder.kill()
+            push.close()
+            pub.close()
+            worker1.stop()
+            worker2.stop()
+        except UnboundLocalError:
+            pass
 
 
 @pytest.mark.xfail('zmq.zmq_version_info() < (3, 2)')  # zmq<3.2 should fail
@@ -322,6 +325,7 @@ def test_x_forwarder(ctx, collector, topic, addr1, addr2):
         pub.connect(forwarder_in_addr)
         sync_pubsub(pub, [worker_sub1, worker_sub2], topic)
         # make and start workers
+        app = Application()
         worker1 = zeronimo.Worker(app, [worker_sub1])
         worker2 = zeronimo.Worker(app, [worker_sub2])
         worker1.start()
@@ -330,10 +334,13 @@ def test_x_forwarder(ctx, collector, topic, addr1, addr2):
         fanout_customer = zeronimo.Customer(pub, collector)[topic]
         assert fanout_customer.zeronimo() == ['zeronimo', 'zeronimo']
     finally:
-        forwarder.kill()
-        pub.close()
-        worker1.stop()
-        worker2.stop()
+        try:
+            forwarder.kill()
+            pub.close()
+            worker1.stop()
+            worker2.stop()
+        except UnboundLocalError:
+            pass
 
 
 def test_proxied_collector(ctx, worker, push, addr1, addr2):
@@ -350,9 +357,12 @@ def test_proxied_collector(ctx, worker, push, addr1, addr2):
         customer = zeronimo.Customer(push, collector)
         assert customer.zeronimo() == 'zeronimo'
     finally:
-        streamer.kill()
-        collector.stop()
-        collector_sock.close()
+        try:
+            streamer.kill()
+            collector.stop()
+            collector_sock.close()
+        except UnboundLocalError:
+            pass
 
 
 def test_2nd_start(worker, collector):

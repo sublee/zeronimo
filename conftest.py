@@ -344,7 +344,7 @@ def sync_pubsub(pub_sock, sub_socks, topic=''):
         poller.register(sub_sock, zmq.POLLIN)
     to_sync = list(sub_socks)
     # sync all SUB sockets
-    with gevent.Timeout(1, gevent.Timeout('Are SUB sockets subscribing?')):
+    with gevent.Timeout(1, RuntimeError('Are SUB sockets subscribing?')):
         while to_sync:
             pub_sock.send(topic + ':sync')
             events = dict(poller.poll(timeout=1))
