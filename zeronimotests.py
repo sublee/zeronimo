@@ -94,11 +94,8 @@ def test_fixtures(worker, push, pub, collector, addr1, addr2, ctx):
 def test_nowait(worker, push):
     customer = zeronimo.Customer(push)
     assert worker.obj.counter['zeronimo'] == 0
-    customer.zeronimo()
-    customer.zeronimo()
-    customer.zeronimo()
-    customer.zeronimo()
-    customer.zeronimo()
+    for x in xrange(5):
+        assert customer.zeronimo() is None
     assert worker.obj.counter['zeronimo'] == 0
     gevent.sleep(0.01)
     assert worker.obj.counter['zeronimo'] == 5
@@ -107,7 +104,7 @@ def test_nowait(worker, push):
 def test_fanout_nowait(worker, worker2, worker3, worker4, worker5, pub, topic):
     customer = zeronimo.Customer(pub)
     assert worker.obj.counter['zeronimo'] == 0
-    v = customer[topic].zeronimo()
+    assert customer[topic].zeronimo() is None
     assert worker.obj.counter['zeronimo'] == 0
     gevent.sleep(0.01)
     assert worker.obj.counter['zeronimo'] == 5
@@ -179,8 +176,8 @@ def test_2to1(worker, collector, push1, push2):
         assert customer.add(1, 1) == 2
         assert len(list(customer.rycbar123())) == 6
         with pytest.raises(ZeroDivisionError):
-            tunnel.zero_div()
-    joinall([spawn(test, customer1), spawn(test, customer2)])
+            customer.zero_div()
+    joinall([spawn(test, customer1), spawn(test, customer2)], raise_error=True)
 
 
 def test_1to2(worker1, worker2, task_collector, push):
