@@ -2,13 +2,11 @@
 from collections import Counter, namedtuple
 from fnmatch import fnmatch
 import functools
-import inspect
 import os
 import platform
 import random
 import shutil
 import string
-from types import FunctionType
 
 import gevent
 from gevent import socket
@@ -17,6 +15,7 @@ import zmq.green as zmq
 import zeronimo
 
 
+TICK = 0.001
 FEED_DIR = os.path.join(os.path.dirname(__file__), '_feeds')
 WINDOWS = platform.system() == 'Windows'
 
@@ -136,14 +135,12 @@ def pytest_generate_tests(metafunc):
     ids = []
     for protocol in get_testing_protocols(metafunc):
         curargvalues = []
-        tunnel_socks = []
         for param in metafunc.fixturenames:
             for pattern, deferred_fixture in deferred_fixtures.iteritems():
                 if fnmatch(param, pattern):
                     curargvalues.append(deferred_fixture(protocol))
                     break
             else:
-                t
                 continue
             if not ids:
                 argnames.append(param)
@@ -307,24 +304,24 @@ def link_sockets(addr, server_sock, client_socks):
         sock.connect(addr)
 
 
-def wait_to_close(addr, timeout=1):
-    protocol, endpoint = addr.split('://', 1)
-    if protocol == 'inproc':
-        gevent.sleep(TICK)
-        return
-    elif protocol == 'ipc':
-        still_exists = lambda: os.path.exists(endpoint)
-    elif protocol == 'tcp':
-        host, port = endpoint.split(':')
-        port = int(port)
-        def still_exists():
-            for conn in ps.get_connections():
-                if conn.local_address == (host, port):
-                    return True
-            return False
-    with gevent.Timeout(timeout, '{} still exists'.format(addr)):
-        while still_exists():
-            gevent.sleep(TICK)
+#def wait_to_close(addr, timeout=1):
+#    protocol, endpoint = addr.split('://', 1)
+#    if protocol == 'inproc':
+#        gevent.sleep(TICK)
+#        return
+#    elif protocol == 'ipc':
+#        still_exists = lambda: os.path.exists(endpoint)
+#    elif protocol == 'tcp':
+#        host, port = endpoint.split(':')
+#        port = int(port)
+#        def still_exists():
+#            for conn in ps.get_connections():
+#                if conn.local_address == (host, port):
+#                    return True
+#            return False
+#    with gevent.Timeout(timeout, '{} still exists'.format(addr)):
+#        while still_exists():
+#            gevent.sleep(TICK)
 
 
 def sync_pubsub(pub_sock, sub_socks, topic=''):
