@@ -60,11 +60,14 @@ def test_from_socket(ctx, addr1, addr2):
         # test
         assert customer.zeronimo() == 'zeronimo'
     finally:
-        collector.stop()
-        collector_sock.close()
-        push.close()
-        worker.stop()
-        worker_sock.close()
+        try:
+            collector.stop()
+            collector_sock.close()
+            push.close()
+            worker.stop()
+            worker_sock.close()
+        except UnboundLocalError:
+            pass
 
 
 def test_socket_type_error(ctx):
