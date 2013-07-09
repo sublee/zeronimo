@@ -239,6 +239,8 @@ class Customer(object):
 
     def _znm_emit(self, function_name, *args, **kwargs):
         """Allocates a call id and emit."""
+        if not self._znm_collector.is_running():
+            self._znm_collector.start()
         call_id = uuid4_bytes()
         collector_address = self._znm_collector.address
         # normal tuple is faster than namedtuple
@@ -246,8 +248,6 @@ class Customer(object):
         send_call = functools.partial(send, self._znm_socket, call,
                                       topic=self._znm_topic)
         send_call()
-        if not self._znm_collector.is_running():
-            self._znm_collector.start()
         is_fanout = self._znm_socket.type == zmq.PUB
         establish_args = () if is_fanout else (1, send_call)
         tasks = self._znm_collector.establish(call_id, *establish_args)
