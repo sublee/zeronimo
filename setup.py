@@ -21,7 +21,7 @@ Server-side
 
 The address is 192.168.0.41. The worker will listen at 24600.
 
-::
+.. sourcecode:: python
 
    import zmq.green as zmq
    import zeronimo
@@ -44,7 +44,7 @@ Client-side
 
 The address is 192.168.0.42. The reply collector will listen at 24601.
 
-::
+.. sourcecode:: python
 
    import zmq.green as zmq
    import zeronimo
