@@ -19,6 +19,8 @@ Example
 Server-side
 -----------
 
+The address is 192.168.0.41. The worker will listen at 24600.
+
 ::
 
    import zmq.green as zmq
@@ -32,7 +34,7 @@ Server-side
 
    ctx = zmq.Context()
    worker_sock = ctx.socket(zmq.PULL)
-   worker_sock.bind('ipc://worker')
+   worker_sock.bind('tcp://*:24600')
 
    worker = zeronimo.Worker(Application(), [worker_sock])
    worker.run()
@@ -40,21 +42,25 @@ Server-side
 Client-side
 -----------
 
+The address is 192.168.0.42. The reply collector will listen at 24601.
+
 ::
 
    import zmq.green as zmq
    import zeronimo
 
    ctx = zmq.Context()
-   customer_sock = ctx.socket(zmq.PULL)
-   customer_sock.bind('ipc://customer')
-   tunnel_sock = ctx.socket(zmq.PUSH)
-   tunnel_sock.connect('ipc://worker')
 
-   customer = zeronimo.Customer(customer_sock, 'ipc://customer')
-   with customer.link([tunnel_sock]) as tunnel:
-       for line in tunnel.rycbar123():
-           print line
+   collector_sock = ctx.socket(zmq.PULL)
+   collector_sock.bind('tcp://*:24601)
+   collector = zeronimo.Collector(collector_sock, 'tcp://192.168.0.42:24601')
+
+   customer_sock = ctx.socket(zmq.PUSH)
+   customer_sock.connect('tcp://192.168.0.41:24600')
+   customer = zeronimo.Customer(customer_sock, collector)
+
+   for line in customer.rycbar123():
+       print line
 
 """
 from __future__ import with_statement
