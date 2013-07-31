@@ -63,6 +63,7 @@ import os
 import re
 from setuptools import setup
 from setuptools.command.test import test
+import subprocess
 import sys
 # prevent error in sys.exitfunc when testing
 if 'test' in sys.argv: import zmq
@@ -78,7 +79,8 @@ assert version
 def run_tests(self):
     pyc = re.compile(r'\.pyc|\$py\.class')
     test_file = pyc.sub('.py', __import__(self.test_suite).__file__)
-    raise SystemExit(__import__('pytest').main([test_file]))
+    test_args = ['py.test', test_file, '--inproc', '--tcp']
+    raise SystemExit(subprocess.call(test_args))
 test.run_tests = run_tests
 
 
