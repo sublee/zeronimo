@@ -94,7 +94,7 @@ setup(
     description='RPC between distributed workers',
     long_description=__doc__,
     platforms='any',
-    py_modules=['zeronimo'],
+    packages=['zeronimo'],
     classifiers=['Development Status :: 1 - Planning',
                  'Intended Audience :: Developers',
                  'License :: OSI Approved :: BSD License',
