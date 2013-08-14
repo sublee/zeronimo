@@ -398,3 +398,18 @@ def test_stopped_collector(worker, collector, push):
     assert customer.zeronimo() == 'zeronimo'
     assert collector.is_running()
     collector.stop()
+
+
+def test_unreachable(worker, collector, push, pub, topic):
+    customer = zeronimo.Customer(push, collector)
+    fanout_customer = zeronimo.Customer(pub, collector)[topic]
+    customer_nowait = zeronimo.Customer(push)
+    worker.stop()
+    for sock in worker.sockets:
+        sock.close()
+    with gevent.Timeout(1):
+        with pytest.raises(zeronimo.WorkerNotFound):
+            customer.zeronimo()
+        with pytest.raises(zeronimo.WorkerNotFound):
+            fanout_customer.zeronimo()
+        assert customer_nowait.zeronimo() is None

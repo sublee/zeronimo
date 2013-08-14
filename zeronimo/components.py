@@ -199,7 +199,10 @@ class Worker(Runnable):
 
     def send_reply(self, socket, method, data, call_id, work_id):
         reply = Reply(method, data, call_id, work_id)
-        return send(socket, reply)
+        try:
+            return send(socket, reply, zmq.NOBLOCK)
+        except zmq.Again:
+            pass
 
     def __repr__(self):
         keywords = ['info'] if self.info is not None else []
@@ -235,7 +238,10 @@ class Customer(object):
         """Sends a call without call id allocation. It doesn't wait replies."""
         # normal tuple is faster than namedtuple
         call = (function_name, args, kwargs, None, None)
-        send(self._znm_socket, call, topic=self._znm_topic)
+        try:
+            send(self._znm_socket, call, zmq.NOBLOCK, self._znm_topic)
+        except zmq.Again:
+            pass  # ignore
 
     def _znm_emit(self, function_name, *args, **kwargs):
         """Allocates a call id and emit."""
@@ -245,8 +251,11 @@ class Customer(object):
         collector_address = self._znm_collector.address
         # normal tuple is faster than namedtuple
         call = (function_name, args, kwargs, call_id, collector_address)
-        send_call = functools.partial(send, self._znm_socket, call,
-                                      topic=self._znm_topic)
+        def send_call():
+            try:
+                send(self._znm_socket, call, zmq.NOBLOCK, self._znm_topic)
+            except zmq.Again:
+                raise make_worker_not_found()
         send_call()
         is_fanout = self._znm_socket.type == zmq.PUB
         establish_args = () if is_fanout else (1, send_call)

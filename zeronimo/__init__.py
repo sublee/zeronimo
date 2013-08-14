@@ -13,6 +13,6 @@ from .exceptions import ZeronimoException, WorkerNotFound
 from .messaging import send, recv
 
 
-__version__ = '0.1.dev'
+__version__ = '0.1.0'
 __all__ = ['Worker', 'Customer', 'Collector', 'Task', 'ZeronimoException',
            'WorkerNotFound', 'send', 'recv']
