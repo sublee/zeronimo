@@ -413,3 +413,25 @@ def test_unreachable(worker, collector, push, pub, topic):
         with pytest.raises(zeronimo.WorkerNotFound):
             fanout_customer.zeronimo()
         assert customer_nowait.zeronimo() is None
+
+
+def test_exc_logs(capsys, worker, collector, push):
+    customer = zeronimo.Customer(push, collector)
+    with pytest.raises(ZeroDivisionError):
+        customer.zero_div()
+    out, err = capsys.readouterr()
+    assert 'Traceback (most recent call last)' in err
+    assert 'ZeroDivisionError' in err
+    with pytest.raises(ZeroDivisionError):
+        customer.ignore_exc(ZeroDivisionError, ValueError)
+    out, err = capsys.readouterr()
+    assert 'Traceback (most recent call last)' in err
+    assert 'ZeroDivisionError' in err
+    with pytest.raises(ZeroDivisionError):
+        customer.ignore_exc(ZeroDivisionError, ZeroDivisionError)
+    out, err = capsys.readouterr()
+    assert not err
+    with pytest.raises(ZeroDivisionError):
+        customer.ignore_exc(ZeroDivisionError, (ArithmeticError, ValueError))
+    out, err = capsys.readouterr()
+    assert not err

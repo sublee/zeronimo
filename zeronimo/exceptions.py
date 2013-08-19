@@ -6,9 +6,11 @@
     :copyright: (c) 2013 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
+from contextlib import contextmanager
 
 
-__all__ = ['ZeronimoException', 'WorkerNotFound', 'make_worker_not_found']
+__all__ = ['ZeronimoException', 'WorkerNotFound', 'make_worker_not_found',
+           'raises']
 
 
 class ZeronimoException(Exception):
@@ -41,6 +43,20 @@ def make_worker_not_found(rejected=0):
         errmsg.append('a worker rejected')
     elif rejected:
         errmsg.append('{0} workers rejected'.format(rejected))
-    err = WorkerNotFound(', '.join(errmsg))
-    err.rejected = rejected
-    return err
+    exc = WorkerNotFound(', '.join(errmsg))
+    exc.rejected = rejected
+    return exc
+
+
+@contextmanager
+def raises(exctype):
+    """Expected exceptions occured in the context will not raised at the
+    worker's greenlet. The exceptions will still be delivered to the collector.
+
+    Use this in methods of the application object.
+    """
+    try:
+        yield
+    except exctype as exc:
+        exc._znm_expected = True
+        raise

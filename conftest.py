@@ -434,3 +434,9 @@ class Application(object):
             yield val
             if x < len(sequence) - 1:
                 gevent.sleep(sleep)
+
+    def ignore_exc(self, throw, ignore):
+        if isinstance(ignore, list):
+            ignore = tuple(ignore)
+        with zeronimo.raises(ignore):
+            raise throw

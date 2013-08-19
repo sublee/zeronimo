@@ -8,6 +8,7 @@
 """
 from __future__ import absolute_import
 from collections import Iterable, Mapping, Sequence, Set
+from contextlib import contextmanager
 import functools
 from types import MethodType
 
@@ -150,12 +151,12 @@ class Worker(Runnable):
                 spawn(self.work, call, socket.context)
 
     def work(self, call, context):
-        """Invokes a function and send results to the customer. It supports
+        """Calls a function and send results to the collector. It supports
         all of function actions. A function could return, yield, raise any
-        picklable objects.
+        packable objects.
         """
         work_id = uuid4_bytes()
-        socket = None
+        socket, channel = None, (None, None)
         if call.collector_address is not None:
             socket = self.get_reply_socket(call.collector_address, context)
             channel = (call.call_id, work_id)
@@ -163,24 +164,37 @@ class Worker(Runnable):
             self.send_reply(socket, method, self.info, *channel)
         if not self.accepting:
             return
-        try:
+        with self.exception_sending(socket, *channel) as raised:
             val = self.call(call)
-        except Exception as error:
-            socket and self.send_reply(socket, RAISE, error, *channel)
-            raise
+        if raised():
+            return
         if is_iterator(val):
             vals = val
-            try:
+            with self.exception_sending(socket, *channel):
                 for val in vals:
                     socket and self.send_reply(socket, YIELD, val, *channel)
                 socket and self.send_reply(socket, BREAK, None, *channel)
-            except Exception as error:
-                socket and self.send_reply(socket, RAISE, error, *channel)
-                raise
         else:
             socket and self.send_reply(socket, RETURN, val, *channel)
 
+    @contextmanager
+    def exception_sending(self, socket, *channel):
+        """Sends an exception which occurs in the context to the collector.
+        It raises the caught exception if that was not expected.
+        :func:`zeronimo.exceptions.raises` declares expected exception types.
+        """
+        raised = []
+        try:
+            yield lambda: bool(raised)
+        except BaseException as exc:
+            raised.append(True)
+            socket and self.send_reply(socket, RAISE, exc, *channel)
+            # don't raise at worker-side if the exception was expected
+            if not getattr(exc, '_znm_expected', False):
+                raise
+
     def call(self, call):
+        """Calls a function."""
         return getattr(self.obj, call.function_name)(*call.args, **call.kwargs)
 
     def get_reply_socket(self, address, context):
