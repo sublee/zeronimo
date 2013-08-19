@@ -415,7 +415,7 @@ def test_unreachable(worker, collector, push, pub, topic):
         assert customer_nowait.zeronimo() is None
 
 
-def test_exc_logs(capsys, worker, collector, push):
+def test_expected_exception(capsys, worker, collector, push):
     customer = zeronimo.Customer(push, collector)
     with pytest.raises(ZeroDivisionError):
         customer.zero_div()
