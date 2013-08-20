@@ -11,6 +11,7 @@ from collections import Iterable, Mapping, Sequence, Set
 from contextlib import contextmanager
 import functools
 from types import MethodType
+import warnings
 
 from gevent import GreenletExit, spawn, Timeout
 from gevent.queue import Empty, Queue
@@ -19,10 +20,10 @@ try:
 except ImportError:
     import uuid
     uuid4_bytes = lambda: uuid.uuid4().get_bytes()
-from msgpack import ExtraData
+from msgpack import ExtraData, UnpackValueError
 import zmq.green as zmq
 
-from .exceptions import make_worker_not_found
+from .exceptions import UnexpectedMessage, make_worker_not_found
 from .helpers import cls_name, make_repr
 from .messaging import (
     ACK, DONE, ACCEPT, REJECT, RETURN, RAISE, YIELD, BREAK,
@@ -145,8 +146,11 @@ class Worker(Runnable):
                 assert event & zmq.POLLIN
                 try:
                     call = Call(*recv(socket))
-                except (TypeError, ExtraData):
-                    # TODO: warning
+                except (TypeError, ExtraData, UnpackValueError) as exc:
+                    warning = UnexpectedMessage(
+                        'Received unexpected message: {!r}'.format(exc.serial))
+                    warning.serial = exc.serial
+                    warnings.warn(warning)
                     continue
                 spawn(self.work, call, socket.context)
 

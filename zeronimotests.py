@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import time
+import warnings
 
 import gevent
 from gevent import joinall, spawn
@@ -8,6 +9,9 @@ import zmq.green as zmq
 
 from conftest import Application, link_sockets, run_device, sync_pubsub
 import zeronimo
+
+
+warnings.simplefilter('always')
 
 
 def test_running():
@@ -435,3 +439,36 @@ def test_expected_exception(capsys, worker, collector, push):
         customer.ignore_exc(ZeroDivisionError, (ArithmeticError, ValueError))
     out, err = capsys.readouterr()
     assert not err
+
+
+def test_pgm_connect(ctx, fanout_addr):
+    if 'pgm' not in fanout_addr[:4]:
+        pytest.skip()
+    sub = ctx.socket(zmq.SUB)
+    sub.set(zmq.SUBSCRIBE, '')
+    sub.connect(fanout_addr)
+    worker = zeronimo.Worker(None, [sub])
+    worker.start()
+    pub1 = ctx.socket(zmq.PUB)
+    pub1.connect(fanout_addr)
+    pub2 = ctx.socket(zmq.PUB)
+    pub2.connect(fanout_addr)  # in zmq-3.2, pgm-connect sends an empty message
+    try:
+        worker.wait(0.1)
+    finally:
+        worker.stop()
+        sub.close()
+        pub1.close()
+        pub2.close()
+
+
+def test_unexpected_message(worker, push):
+    push.send('Zeronimo!')  # indicates to ExtraData
+    push.send('')  # indicates to UnpackValueError
+    with warnings.catch_warnings(record=True) as w:
+        gevent.sleep(0.1)
+    assert len(w) == 2
+    assert w[0].category is zeronimo.UnexpectedMessage
+    assert w[1].category is zeronimo.UnexpectedMessage
+    assert w[0].message.serial == 'Zeronimo!'
+    assert w[1].message.serial == ''

@@ -92,4 +92,8 @@ def send(socket, obj, flags=0, topic=None):
 def recv(socket, flags=0):
     """Receives a Python object via a ZeroMQ socket."""
     serial = socket.recv_multipart(flags)[-1]
-    return msgpack.unpackb(serial, object_hook=object_hook)
+    try:
+        return msgpack.unpackb(serial, object_hook=object_hook)
+    except BaseException as exc:
+        exc.serial = serial
+        raise

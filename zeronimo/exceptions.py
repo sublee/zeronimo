@@ -9,11 +9,11 @@
 from contextlib import contextmanager
 
 
-__all__ = ['ZeronimoException', 'WorkerNotFound', 'make_worker_not_found',
-           'raises']
+__all__ = ['ZeronimoException', 'WorkerNotFound', 'UnexpectedMessage',
+           'make_worker_not_found', 'raises']
 
 
-class ZeronimoException(Exception):
+class ZeronimoException(BaseException):
     """The base exception for exceptions Zeronimo customized."""
 
     pass
@@ -23,6 +23,12 @@ class WorkerNotFound(ZeronimoException, LookupError):
     """Occurs by a collector which failed to find any worker accepted within
     the timeout.
     """
+
+    pass
+
+
+class UnexpectedMessage(ZeronimoException, RuntimeWarning):
+    """Warns when a received message is not expected format."""
 
     pass
 
