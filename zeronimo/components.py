@@ -406,6 +406,7 @@ class Collector(Runnable):
         del reply_queues[task.work_id]
         if not reply_queues:
             del self.reply_queues[task.call_id]
+            del self.missing_queues[task.call_id]
 
 
 class Task(object):
@@ -429,7 +430,7 @@ class Task(object):
         """Gets the result."""
         reply = self.reply_queue.get()
         assert not reply.method & ACK
-        if reply.method == DONE:
+        if reply.method & DONE:
             self.collector.task_done(self)
         if reply.method == RETURN:
             return reply.data

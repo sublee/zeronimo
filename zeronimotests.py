@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import time
 import warnings
+import weakref
 
 import gevent
 from gevent import joinall, spawn
@@ -472,3 +473,16 @@ def test_unexpected_message(worker, push):
     assert w[1].category is zeronimo.UnexpectedMessage
     assert w[0].message.serial == 'Zeronimo!'
     assert w[1].message.serial == ''
+
+
+def test_queue_leaking(worker, task_collector, push):
+    customer = zeronimo.Customer(push, task_collector)
+    task = customer.zeronimo()
+    reply_queue_ref = weakref.ref(task.reply_queue)
+    assert task_collector.reply_queues
+    assert task_collector.missing_queues
+    assert task() == 'zeronimo'
+    assert not task_collector.reply_queues
+    assert not task_collector.missing_queues
+    del task
+    assert reply_queue_ref() is None
