@@ -406,7 +406,7 @@ class Collector(Runnable):
         del reply_queues[task.work_id]
         if not reply_queues:
             del self.reply_queues[task.call_id]
-            del self.missing_queues[task.call_id]
+            self.missing_queues.pop(task.call_id, None)
 
 
 class Task(object):
