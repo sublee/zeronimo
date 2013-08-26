@@ -8,7 +8,8 @@ from gevent import joinall, spawn
 import pytest
 import zmq.green as zmq
 
-from conftest import Application, link_sockets, run_device, sync_pubsub
+from conftest import (
+    Application, link_sockets, run_device, running, sync_pubsub)
 import zeronimo
 
 
@@ -48,40 +49,36 @@ def test_messaging(ctx, addr, topic):
 
 
 def test_from_socket(ctx, addr1, addr2):
-    try:
-        # sockets
-        worker_sock = ctx.socket(zmq.PULL)
-        worker_sock.bind(addr1)
-        collector_sock = ctx.socket(zmq.PULL)
-        collector_sock.bind(addr2)
-        push = ctx.socket(zmq.PUSH)
-        push.connect(addr1)
-        # components
-        app = Application()
-        worker = zeronimo.Worker(app, [worker_sock])
-        worker.start()
-        collector = zeronimo.Collector(collector_sock, addr2)
-        customer = zeronimo.Customer(push, collector)
+    # sockets
+    worker_sock = ctx.socket(zmq.PULL)
+    worker_sock.bind(addr1)
+    collector_sock = ctx.socket(zmq.PULL)
+    collector_sock.bind(addr2)
+    push = ctx.socket(zmq.PUSH)
+    push.connect(addr1)
+    # components
+    app = Application()
+    worker = zeronimo.Worker(app, [worker_sock])
+    collector = zeronimo.Collector(collector_sock, addr2)
+    customer = zeronimo.Customer(push, collector)
+    with running([worker], sockets=[worker_sock, collector_sock, push]):
         # test
         assert customer.zeronimo() == 'zeronimo'
-    finally:
-        try:
-            collector.stop()
-            collector_sock.close()
-            push.close()
-            worker.stop()
-            worker_sock.close()
-        except UnboundLocalError:
-            pass
 
 
 def test_socket_type_error(ctx):
     with pytest.raises(ValueError):
-        zeronimo.Customer(ctx.socket(zmq.PAIR))
+        zeronimo.Customer(ctx.socket(zmq.REQ))
     with pytest.raises(ValueError):
-        zeronimo.Worker(None, [ctx.socket(zmq.PAIR)])
+        zeronimo.Customer(ctx.socket(zmq.REP))
     with pytest.raises(ValueError):
-        zeronimo.Collector(ctx.socket(zmq.PAIR), 'x')
+        zeronimo.Worker(None, [ctx.socket(zmq.REQ)])
+    with pytest.raises(ValueError):
+        zeronimo.Worker(None, [ctx.socket(zmq.REP)])
+    with pytest.raises(ValueError):
+        zeronimo.Collector(ctx.socket(zmq.REQ), 'x')
+    with pytest.raises(ValueError):
+        zeronimo.Collector(ctx.socket(zmq.REP), 'x')
 
 
 def test_fixtures(worker, push, pub, collector, addr1, addr2, ctx):
@@ -312,12 +309,12 @@ def test_device(ctx, collector, topic, addr1, addr2, addr3, addr4):
 def test_x_forwarder(ctx, collector, topic, addr1, addr2):
     # customer  |----| forwarder with XPUB/XSUB |---> | worker
     # collector | <-----------------------------------|
+    # run forwarder
+    forwarder_in_addr, forwarder_out_addr = addr1, addr2
+    forwarder = spawn(
+        run_device, ctx.socket(zmq.XSUB), ctx.socket(zmq.XPUB),
+        forwarder_in_addr, forwarder_out_addr)
     try:
-        # run forwarder
-        forwarder_in_addr, forwarder_out_addr = addr1, addr2
-        forwarder = spawn(
-            run_device, ctx.socket(zmq.XSUB), ctx.socket(zmq.XPUB),
-            forwarder_in_addr, forwarder_out_addr)
         forwarder.join(0)
         # connect to the devices
         worker_sub1 = ctx.socket(zmq.SUB)
@@ -333,19 +330,12 @@ def test_x_forwarder(ctx, collector, topic, addr1, addr2):
         app = Application()
         worker1 = zeronimo.Worker(app, [worker_sub1])
         worker2 = zeronimo.Worker(app, [worker_sub2])
-        worker1.start()
-        worker2.start()
-        # zeronimo!
-        fanout_customer = zeronimo.Customer(pub, collector)[topic]
-        assert fanout_customer.zeronimo() == ['zeronimo', 'zeronimo']
+        with running([worker1, worker2], sockets=[pub]):
+            # zeronimo!
+            fanout_customer = zeronimo.Customer(pub, collector)[topic]
+            assert fanout_customer.zeronimo() == ['zeronimo', 'zeronimo']
     finally:
-        try:
-            forwarder.kill()
-            pub.close()
-            worker1.stop()
-            worker2.stop()
-        except UnboundLocalError:
-            pass
+        forwarder.kill()
 
 
 def test_proxied_collector(ctx, worker, push, addr1, addr2):
@@ -486,3 +476,29 @@ def test_queue_leaking(worker, task_collector, push):
     assert not task_collector.missing_queues
     del task
     assert reply_queue_ref() is None
+
+
+def test_task_broken(worker, task_collector, push):
+    customer = zeronimo.Customer(push, task_collector)
+    task = customer.sleep(0.1)
+    task_collector.socket.close()
+    with pytest.raises(zeronimo.SocketClosed):
+        task()
+
+
+def test_pair(ctx, addr):
+    left = ctx.socket(zmq.PAIR)
+    right = ctx.socket(zmq.PAIR)
+    left.bind(addr)
+    right.connect(addr)
+    worker = zeronimo.Worker(Application(), [left])
+    with pytest.raises(ValueError):  # pair collector doesn't need an address
+        zeronimo.Collector(right, addr)
+    collector = zeronimo.Collector(right)
+    customer = zeronimo.Customer(right, collector)
+    with running([worker], sockets=[left, right]):
+        assert customer.zeronimo() == 'zeronimo'
+        assert ' '.join(customer.rycbar123()) == \
+               'run, you clever boy; and remember.'
+        with pytest.raises(ZeroDivisionError):
+            customer.zero_div()

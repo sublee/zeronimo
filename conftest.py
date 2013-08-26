@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from collections import Counter, namedtuple
+from contextlib import contextmanager
 from fnmatch import fnmatch
 import functools
 import os
@@ -371,6 +372,23 @@ def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
     finally:
         in_sock.close()
         out_sock.close()
+
+
+@contextmanager
+def running(runnables, sockets=None):
+    try:
+        for runnable in runnables:
+            runnable.start()
+        yield
+    finally:
+        for runnable in runnables:
+            try:
+                runnable.stop()
+            except RuntimeError:
+                pass
+        if sockets is not None:
+            for sock in sockets:
+                sock.close()
 
 
 class Application(object):

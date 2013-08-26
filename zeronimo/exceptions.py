@@ -8,6 +8,8 @@
 """
 from contextlib import contextmanager
 
+import zmq
+
 
 __all__ = ['ZeronimoException', 'WorkerNotFound', 'UnexpectedMessage',
            'make_worker_not_found', 'raises']
@@ -23,6 +25,12 @@ class WorkerNotFound(ZeronimoException, LookupError):
     """Occurs by a collector which failed to find any worker accepted within
     the timeout.
     """
+
+    pass
+
+
+class SocketClosed(ZeronimoException, zmq.ZMQError):
+    """Collector socket is closed while a task is collecting replies."""
 
     pass
 
