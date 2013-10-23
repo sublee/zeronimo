@@ -13,7 +13,7 @@ import functools
 from types import MethodType
 import warnings
 
-from gevent import GreenletExit, spawn, Timeout
+from gevent import Greenlet, GreenletExit, Timeout
 from gevent.queue import Empty, Queue
 try:
     from libuuid import uuid4_bytes
@@ -31,7 +31,7 @@ from .messaging import (
     Call, Reply, send, recv)
 
 
-__all__ = ['Runnable', 'Worker', 'Customer', 'Collector', 'Task']
+__all__ = ['Component', 'Worker', 'Customer', 'Collector', 'Task']
 
 
 def is_iterator(obj):
@@ -39,13 +39,15 @@ def is_iterator(obj):
     return (isinstance(obj, Iterable) and not isinstance(obj, serializable))
 
 
-class Runnable(object):
-    """A runnable object should implement :meth:`run`. :attr:`running` is
-    ensured to be ``True`` while :meth:`run` is runnig.
+class Component(object):
+    """A component should implement :meth:`run`. :attr:`running` is ensured to
+    be ``True`` while :meth:`run` is executing.
     """
 
+    greenlet_class = Greenlet
+
     def __new__(cls, *args, **kwargs):
-        obj = super(Runnable, cls).__new__(cls)
+        obj = super(Component, cls).__new__(cls)
         cls._patch(obj)
         return obj
 
@@ -72,7 +74,7 @@ class Runnable(object):
     def start(self):
         if self.is_running():
             raise RuntimeError('{0} already running'.format(cls_name(self)))
-        self._running = spawn(self._inner_run)
+        self._running = self.greenlet_class.spawn(self._inner_run)
         self._running.join(0)
         return self._running
 
@@ -92,7 +94,7 @@ class Runnable(object):
         return self._running is not None
 
 
-class Worker(Runnable):
+class Worker(Component):
     """The worker object runs an RPC service of an object through ZMQ sockets.
     The ZMQ sockets should be PULL or SUB socket type. The PULL sockets receive
     Round-robin calls; the SUB sockets receive Publish-subscribe
@@ -154,7 +156,7 @@ class Worker(Runnable):
                     warning.serial = exc.serial
                     warnings.warn(warning)
                     continue
-                spawn(self.work, socket, call)
+                self.greenlet_class.spawn(self.work, socket, call)
 
     def work(self, socket, call):
         """Calls a function and send results to the collector. It supports
@@ -288,7 +290,7 @@ class Customer(object):
         return tasks if is_fanout else tasks[0]
 
 
-class Collector(Runnable):
+class Collector(Component):
 
     def __init__(self, socket, address=None, as_task=False, timeout=0.01):
         if socket.type not in [zmq.PULL, zmq.PAIR]:
@@ -388,8 +390,8 @@ class Collector(Runnable):
         except KeyError:
             pass
         else:
-            spawn(self._collect_more_tasks,
-                  tasks, ack_queue.get, call_id, limit)
+            self.greenlet_class.spawn(
+                self._collect_more_tasks, tasks, ack_queue.get, call_id, limit)
         return tasks
 
     def _collect_more_tasks(self, tasks, get_reply, call_id, limit=None):

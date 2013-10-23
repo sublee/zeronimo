@@ -17,8 +17,8 @@ warnings.simplefilter('always')
 
 
 def test_running():
-    from zeronimo.components import Runnable
-    class NullRunner(Runnable):
+    from zeronimo.components import Component
+    class NullRunner(Component):
         def run(self):
             gevent.sleep(0.1)
     runner = NullRunner()

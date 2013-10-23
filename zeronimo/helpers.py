@@ -18,27 +18,34 @@ def cls_name(obj):
     return type(obj).__name__
 
 
-def make_repr(obj, params=[], keywords=[], data={}):
+def make_repr(obj, params=None, keywords=None, data=None, name=None):
     """Generates a string of object initialization code style. It is useful
-    for custom __repr__ methods.
+    for custom __repr__ methods::
 
-        class Example(object):
+       class Example(object):
 
-            def __init__(self, param, keyword=None):
-                self.param = param
-                self.keyword = keyword
+           def __init__(self, param, keyword=None):
+               self.param = param
+               self.keyword = keyword
 
-            def __repr__(self):
-                return make_repr(self, ['param'], ['keyword'])
+           def __repr__(self):
+               return make_repr(self, ['param'], ['keyword'])
 
-        >>> Example('hello', keyword='world')
-        Example('hello', keyword='world')
+    See the representation of example object::
+
+       >>> Example('hello', keyword='world')
+       Example('hello', keyword='world')
     """
-    get = lambda attr: data[attr] if attr in data else getattr(obj, attr)
     opts = []
-    if params:
+    if data is not None:
+        get = lambda attr: data[attr] if attr in data else getattr(obj, attr)
+    else:
+        get = functools.partial(getattr, obj)
+    if params is not None:
         opts.append(', '.join([repr(get(attr)) for attr in params]))
-    if keywords:
+    if keywords is not None:
         opts.append(', '.join(
             ['{0}={1!r}'.format(attr, get(attr)) for attr in keywords]))
-    return '{0}({1})'.format(cls_name(obj), ', '.join(opts))
+    if name is None:
+        name = cls_name(obj)
+    return '{0}({1})'.format(name, ', '.join(opts))
