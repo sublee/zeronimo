@@ -24,7 +24,7 @@ from msgpack import ExtraData, UnpackValueError
 import zmq.green as zmq
 
 from .exceptions import (
-    SocketClosed, UnexpectedMessage, make_worker_not_found)
+    SocketClosed, UnexpectedMessage, WorkerNotFound, make_worker_not_found)
 from .helpers import cls_name, make_repr
 from .messaging import (
     ACK, DONE, ACCEPT, REJECT, RETURN, RAISE, YIELD, BREAK,
@@ -95,19 +95,19 @@ class Component(object):
 
 
 class Worker(Component):
-    """The worker object runs an RPC service of an object through ZMQ sockets.
-    The ZMQ sockets should be PULL or SUB socket type. The PULL sockets receive
-    Round-robin calls; the SUB sockets receive Publish-subscribe
-    (fan-out) calls.
+    """Worker runs an RPC service of an object through ZeroMQ sockets. The
+    ZeroMQ sockets should be PULL or SUB socket type. The PULL sockets receive
+    Round-robin calls; the SUB sockets receive Publish-subscribe (fan-out)
+    calls.
 
-    ::
+    .. sourcecode::
 
        import os
        worker = Worker(os, [sock1, sock2], info='doctor')
        worker.run()
 
     :param obj: the object to be shared by an RPC service.
-    :param sockets: the ZMQ sockets of PULL or SUB socket type.
+    :param sockets: the ZeroMQ sockets of PULL or SUB socket type.
     :param info: (optional) the worker will send this value to customers at
                  accepting an call. it might be identity of the worker to
                  let the customer's know what worker accepted.
@@ -237,6 +237,10 @@ class Worker(Component):
 
 
 class Customer(object):
+    """Customer sends RPC calls to the workers. But it could not receive the
+    result by itself. It should work with :class:`Collector` to receive
+    worker's results.
+    """
 
     _znm_socket = None
     _znm_collector = None
@@ -282,7 +286,7 @@ class Customer(object):
             try:
                 send(self._znm_socket, call, zmq.NOBLOCK, self._znm_topic)
             except zmq.Again:
-                raise make_worker_not_found()
+                raise WorkerNotFound('Failed to emit at the moment')
         send_call()
         is_fanout = self._znm_socket.type == zmq.PUB
         establish_args = () if is_fanout else (1, send_call)
@@ -291,6 +295,7 @@ class Customer(object):
 
 
 class Collector(Component):
+    """Collector receives results from the worker."""
 
     def __init__(self, socket, address=None, as_task=False, timeout=0.01):
         if socket.type not in [zmq.PULL, zmq.PAIR]:
@@ -324,11 +329,13 @@ class Collector(Component):
                 continue
 
     def put_all(self, reply):
+        """Puts the reply to all queues."""
         for reply_queues in self.reply_queues.itervalues():
             for reply_queue in reply_queues.itervalues():
                 reply_queue.put(reply)
 
     def dispatch_reply(self, reply):
+        """Dispatches the reply to the proper queue."""
         if reply.method & ACK:
             self.reply_queues[reply.call_id][None].put(reply)
             return
@@ -350,11 +357,17 @@ class Collector(Component):
         reply_queue.put(reply)
 
     def establish(self, call_id, limit=None, retry=None):
+        """Waits for the call is accepted by workers and starts to collect the
+        tasks.
+        """
         accepts = self.wait_accepts(call_id, limit, retry)
         tasks = self.collect_tasks(accepts, call_id, limit)
         return tasks if self.as_task else [task() for task in tasks]
 
     def wait_accepts(self, call_id, limit=None, retry=None):
+        """Waits for the call is accepted by workers. When a worker rejected,
+        it calls the retry function to find another worker.
+        """
         ack_queue = Queue()
         self.reply_queues[call_id] = {None: ack_queue}
         accepts = []
@@ -383,6 +396,7 @@ class Collector(Component):
         return accepts
 
     def collect_tasks(self, accepts, call_id, limit=None):
+        """Starts to collect the tasks."""
         tasks = []
         self._collect_more_tasks(tasks, iter(accepts).next, call_id, limit)
         try:
@@ -424,6 +438,7 @@ class Collector(Component):
             tasks.append(task)
 
     def task_done(self, task):
+        """Called at the task done for cleaning up the reply queues."""
         reply_queues = self.reply_queues[task.call_id]
         del reply_queues[task.work_id]
         if not reply_queues:
@@ -464,6 +479,9 @@ class Task(object):
             return iter([])
 
     def iterator(self, first_reply):
+        """If the method of first reply is YIELD, the result will be a
+        generator. This method makes the generator.
+        """
         yield first_reply.data
         while True:
             reply = self.reply_queue.get()

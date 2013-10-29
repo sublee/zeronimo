@@ -8,6 +8,7 @@
     :copyright: (c) 2013 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
+import functools
 
 
 __all__ = ['cls_name', 'make_repr']
