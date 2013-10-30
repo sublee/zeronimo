@@ -246,11 +246,12 @@ class Customer(object):
     _znm_collector = None
     _znm_topic = None
 
-    def __init__(self, socket, collector=None):
+    def __init__(self, socket, collector=None, topic=None):
         if socket.type not in [zmq.PUSH, zmq.PUB, zmq.PAIR]:
             raise ValueError('Customer wraps PUSH or PUB or PAIR socket')
         self._znm_socket = socket
         self._znm_collector = collector
+        self._znm_topic = topic
 
     def __getitem__(self, topic):
         if self._znm_socket.type != zmq.PUB:

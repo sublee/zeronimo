@@ -502,3 +502,8 @@ def test_pair(ctx, addr):
                'run, you clever boy; and remember.'
         with pytest.raises(ZeroDivisionError):
             customer.zero_div()
+
+
+def test_initial_topic(push):
+    customer = zeronimo.Customer(push, topic='zeronimo')
+    assert customer._znm_topic == 'zeronimo'

@@ -14,7 +14,7 @@ from .exceptions import (
 from .messaging import send, recv
 
 
-__version__ = '0.1.2'
+__version__ = '0.1.3'
 __all__ = ['Worker', 'Customer', 'Collector', 'Task', 'ZeronimoException',
            'WorkerNotFound', 'SocketClosed', 'UnexpectedMessage', 'raises',
            'send', 'recv']
