@@ -67,8 +67,10 @@ class AddressGenerator(object):
     @classmethod
     def ipc(cls):
         """Generates available IPC address."""
-        if not os.path.isdir(FEED_DIR):
+        try:
             os.mkdir(FEED_DIR)
+        except OSError:
+            pass
         pipe = None
         while pipe is None or os.path.exists(pipe):
             pipe = os.path.join(FEED_DIR, rand_str())
@@ -114,7 +116,7 @@ def pytest_addoption(parser):
                      help='tests with pgm protocol.')
     parser.addoption('--epgm', action='store_true',
                      help='tests with epgm protocol.')
-    parser.addoption('--timeout', action='store', type='float',
+    parser.addoption('--timeout', action='store', type=float,
                      default=0.01, help='finding timeout in seconds.')
     parser.addoption('--clear', action='store_true',
                      help='destroy context at each tests done.')
