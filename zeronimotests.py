@@ -121,9 +121,9 @@ def test_xpubsub_type_error(ctx):
         zeronimo.Collector(ctx.socket(zmq.XSUB), 'x')
 
 
-@pytest.mark.skipif('zmq.zmq_version_info() < (4,)')
+@pytest.mark.skipif('zmq.zmq_version_info() < (4, 0, 1)')
 def test_stream_type_error(ctx):
-    # zmq.STREAM is available from libzmq-4
+    # zmq.STREAM is available from libzmq-4.0.1
     with pytest.raises(ValueError):
         zeronimo.Customer(ctx.socket(zmq.STREAM))
     with pytest.raises(ValueError):
