@@ -34,6 +34,19 @@ from .messaging import (
 __all__ = ['Component', 'Worker', 'Customer', 'Collector', 'Task']
 
 
+# compatible zmq constants
+try:
+    ZMQ_XPUB = zmq.XPUB
+    ZMQ_XSUB = zmq.XSUB
+except AttributeError:
+    ZMQ_XPUB = -1
+    ZMQ_XSUB = -1
+try:
+    ZMQ_STREAM = zmq.STREAM
+except AttributeError:
+    ZMQ_STREAM = -1
+
+
 def is_iterator(obj):
     serializable = (Sequence, Set, Mapping)
     return (isinstance(obj, Iterable) and not isinstance(obj, serializable))
@@ -122,8 +135,8 @@ class Worker(Component):
         super(Worker, self).__init__()
         self.obj = obj
         socket_types = set(s.socket_type for s in sockets)
-        if socket_types.difference([zmq.PULL, zmq.SUB, zmq.PAIR]):
-            raise ValueError('Worker wraps PULL or SUB or PAIR sockets')
+        if socket_types.difference([zmq.PAIR, zmq.SUB, zmq.PULL, ZMQ_XSUB]):
+            raise ValueError('Worker wraps one of PAIR, SUB, PULL, and XSUB')
         self.sockets = sockets
         self.info = info
         self._cached_reply_sockets = {}
@@ -247,15 +260,15 @@ class Customer(object):
     _znm_topic = None
 
     def __init__(self, socket, collector=None, topic=None):
-        if socket.type not in [zmq.PUSH, zmq.PUB, zmq.PAIR]:
-            raise ValueError('Customer wraps PUSH or PUB or PAIR socket')
+        if socket.type not in [zmq.PAIR, zmq.PUB, zmq.PUSH, ZMQ_XPUB]:
+            raise ValueError('Customer wraps one of PAIR, PUB, PUSH, and XPUB')
         self._znm_socket = socket
         self._znm_collector = collector
         self._znm_topic = topic
 
     def __getitem__(self, topic):
-        if self._znm_socket.type != zmq.PUB:
-            raise ValueError('Only customer with PUB socket could set a topic')
+        if self._znm_socket.type not in [zmq.PUB, zmq.XPUB]:
+            raise ValueError('Only customer with PUB/XPUB could set a topic')
         cls = type(self)
         customer = cls(self._znm_socket, self._znm_collector)
         customer._znm_topic = topic
@@ -289,7 +302,7 @@ class Customer(object):
             except zmq.Again:
                 raise WorkerNotFound('Failed to emit at the moment')
         send_call()
-        is_fanout = self._znm_socket.type == zmq.PUB
+        is_fanout = self._znm_socket.type in [zmq.PUB, zmq.XPUB]
         establish_args = () if is_fanout else (1, send_call)
         tasks = self._znm_collector.establish(call_id, *establish_args)
         return tasks if is_fanout else tasks[0]
@@ -299,8 +312,8 @@ class Collector(Component):
     """Collector receives results from the worker."""
 
     def __init__(self, socket, address=None, as_task=False, timeout=0.01):
-        if socket.type not in [zmq.PULL, zmq.PAIR]:
-            raise ValueError('Collector wraps PULL or PAIR socket')
+        if socket.type not in [zmq.PAIR, zmq.PULL]:
+            raise ValueError('Collector wraps PAIR or PULL')
         if address is None and socket.type != zmq.PAIR:
             raise ValueError('Address required')
         if address is not None and socket.type == zmq.PAIR:
