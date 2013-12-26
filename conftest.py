@@ -114,7 +114,7 @@ def pytest_addoption(parser):
                      help='tests with pgm protocol.')
     parser.addoption('--epgm', action='store_true',
                      help='tests with epgm protocol.')
-    parser.addoption('--timeout', action='store', type='float',
+    parser.addoption('--timeout', action='store', type=float,
                      default=0.01, help='finding timeout in seconds.')
     parser.addoption('--clear', action='store_true',
                      help='destroy context at each tests done.')
@@ -173,7 +173,16 @@ def get_testing_protocols(metafunc):
         except ValueError:
             pass
     if not testing_protocols:
-        raise RuntimeError('Should specify testing protocols')
+        raise RuntimeError('Specify protocols to test:\n'
+                           '--inproc|--ipc|--tcp|--pgm|--epgm or --all')
+    elif 'pgm' in testing_protocols:
+        # check CAP_NET_RAW
+        try:
+            socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+        except socket.error as e:
+            if e.errno == 1:  # Operation not permitted
+                raise OSError('Enable the CAP_NET_RAW capability to use PGM:\n'
+                              '$ sudo setcap CAP_NET_RAW=ep `which python`')
     return testing_protocols
 
 
