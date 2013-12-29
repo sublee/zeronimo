@@ -11,7 +11,8 @@ from contextlib import contextmanager
 import zmq
 
 
-__all__ = ['ZeronimoException', 'WorkerNotFound', 'UnexpectedMessage',
+__all__ = ['ZeronimoException', 'WorkerNotFound', 'TaskRejected',
+           'SocketClosed', 'UnexpectedMessage',
            'make_worker_not_found', 'raises']
 
 
@@ -21,10 +22,22 @@ class ZeronimoException(BaseException):
     pass
 
 
-class WorkerNotFound(ZeronimoException, LookupError):
+class WorkerNotFound(ZeronimoException):
     """Occurs by a collector which failed to find any worker accepted within
     the timeout.
     """
+
+    pass
+
+
+class WorkerNotReachable(WorkerNotFound):
+    """The customer has no connection to any worker."""
+
+    pass
+
+
+class TaskRejected(WorkerNotFound):
+    """Failed to find worker accepts the task within the timeout."""
 
     pass
 
@@ -53,12 +66,15 @@ def make_worker_not_found(rejected=0):
         WorkerNotFound('Worker not found, 10 workers rejected',)
     """
     errmsg = ['Worker not found']
+    if rejected:
+        exctype = TaskRejected
+    else:
+        exctype = WorkerNotFound
     if rejected == 1:
         errmsg.append('a worker rejected')
     elif rejected:
         errmsg.append('{0} workers rejected'.format(rejected))
-    exc = WorkerNotFound(', '.join(errmsg))
-    exc.rejected = rejected
+    exc = exctype(', '.join(errmsg))
     return exc
 
 

@@ -13,7 +13,7 @@ try:
 except ImportError:
     import pickle
 
-import msgpack
+import zmq
 
 from .helpers import make_repr
 
@@ -35,7 +35,7 @@ YIELD = ITER | 0b01
 BREAK = ITER | 0b10
 
 
-_Call = namedtuple('_Call', ['function_name', 'args', 'kwargs', 'call_id',
+_Call = namedtuple('_Call', ['funcname', 'args', 'kwargs', 'call_id',
                              'collector_address'])
 _Reply = namedtuple('_Reply', ['method', 'data', 'call_id', 'work_id'])
 
@@ -63,37 +63,21 @@ class Reply(_Reply):
         return make_repr(self, keywords=self._fields, data={'method': M()})
 
 
-PICKLE_MAGIC_KEY = '__pickle__'
-
-
-def default(obj):
-    """The default serializer for MessagePack."""
-    return {PICKLE_MAGIC_KEY: pickle.dumps(obj)}
-
-
-def object_hook(obj):
-    """The object hook for MessagePack."""
-    if PICKLE_MAGIC_KEY in obj:
-        return pickle.loads(obj[PICKLE_MAGIC_KEY])
-    return obj
-
-
 def send(socket, obj, flags=0, topic=None):
     """Sends a Python object via a ZeroMQ socket. It also can append PUB/SUB
     topic.
     """
-    serial = msgpack.packb(obj, default=default)
     if topic:
-        return socket.send_multipart([topic, serial], flags)
-    else:
-        return socket.send(serial, flags)
+        socket.send(topic, flags | zmq.SNDMORE)
+    message = pickle.dumps(obj)
+    return socket.send(message, flags)
 
 
 def recv(socket, flags=0):
     """Receives a Python object via a ZeroMQ socket."""
-    serial = socket.recv_multipart(flags)[-1]
+    message = socket.recv_multipart(flags)[-1]
     try:
-        return msgpack.unpackb(serial, object_hook=object_hook)
+        return pickle.loads(message)
     except BaseException as exc:
-        exc.serial = serial
+        exc.message = message
         raise

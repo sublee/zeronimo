@@ -513,8 +513,8 @@ def test_unexpected_message(worker, push):
     assert len(w) == 2
     assert w[0].category is zeronimo.UnexpectedMessage
     assert w[1].category is zeronimo.UnexpectedMessage
-    assert w[0].message.serial == 'Zeronimo!'
-    assert w[1].message.serial == ''
+    assert w[0].message.message == 'Zeronimo!'
+    assert w[1].message.message == ''
 
 
 def test_queue_leaking(worker, task_collector, push):
@@ -562,8 +562,8 @@ def test_initial_topic(pub):
 
 
 @pytest.mark.skipif('zmq.zmq_version_info() < (3,)')
+# XPUB/XSUB is available from libzmq-3
 def test_direct_xpub_xsub(ctx, addr1, addr2):
-    # XPUB/XSUB is available from libzmq-3
     worker_sock = ctx.socket(zmq.XSUB)
     worker_sock.bind(addr1)
     collector_sock = ctx.socket(zmq.PULL)

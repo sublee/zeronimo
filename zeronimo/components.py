@@ -10,6 +10,10 @@ from __future__ import absolute_import
 from collections import Iterable, Mapping, Sequence, Set
 from contextlib import contextmanager
 import functools
+try:
+    from cPickle import UnpicklingError
+except ImportError:
+    from pickle import UnpicklingError
 from types import MethodType
 import warnings
 
@@ -20,7 +24,6 @@ try:
 except ImportError:
     import uuid
     uuid4_bytes = lambda: uuid.uuid4().get_bytes()
-from msgpack import ExtraData, UnpackValueError
 import zmq.green as zmq
 
 from .exceptions import (
@@ -163,10 +166,11 @@ class Worker(Component):
                 assert event & zmq.POLLIN
                 try:
                     call = Call(*recv(socket))
-                except (TypeError, ExtraData, UnpackValueError) as exc:
+                except (TypeError, EOFError, UnpicklingError) as exc:
                     warning = UnexpectedMessage(
-                        'Received unexpected message: {!r}'.format(exc.serial))
-                    warning.serial = exc.serial
+                        'Received unexpected message: {!r}'
+                        ''.format(exc.message))
+                    warning.message = exc.message
                     warnings.warn(warning)
                     continue
                 self.greenlet_class.spawn(self.work, socket, call)
@@ -216,7 +220,7 @@ class Worker(Component):
 
     def call(self, call):
         """Calls a function."""
-        return getattr(self.obj, call.function_name)(*call.args, **call.kwargs)
+        return getattr(self.obj, call.funcname)(*call.args, **call.kwargs)
 
     def get_reply_socket(self, socket, address):
         if socket.type == zmq.PAIR:
@@ -279,23 +283,23 @@ class Customer(object):
         self.__dict__[attr] = functools.partial(emit, attr)
         return self.__dict__[attr]
 
-    def _znm_emit_nowait(self, function_name, *args, **kwargs):
+    def _znm_emit_nowait(self, funcname, *args, **kwargs):
         """Sends a call without call id allocation. It doesn't wait replies."""
         # normal tuple is faster than namedtuple
-        call = (function_name, args, kwargs, None, None)
+        call = (funcname, args, kwargs, None, None)
         try:
             send(self._znm_socket, call, zmq.NOBLOCK, self._znm_topic)
         except zmq.Again:
             pass  # ignore
 
-    def _znm_emit(self, function_name, *args, **kwargs):
+    def _znm_emit(self, funcname, *args, **kwargs):
         """Allocates a call id and emit."""
         if not self._znm_collector.is_running():
             self._znm_collector.start()
         call_id = uuid4_bytes()
         collector_address = self._znm_collector.address
         # normal tuple is faster than namedtuple
-        call = (function_name, args, kwargs, call_id, collector_address)
+        call = (funcname, args, kwargs, call_id, collector_address)
         def send_call():
             try:
                 send(self._znm_socket, call, zmq.NOBLOCK, self._znm_topic)
@@ -329,7 +333,7 @@ class Collector(Component):
         while True:
             try:
                 reply = Reply(*recv(self.socket))
-            except (TypeError, ExtraData):
+            except (TypeError, UnpicklingError):
                 # TODO: warning
                 continue
             except zmq.ZMQError:
