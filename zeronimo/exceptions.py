@@ -3,7 +3,7 @@
     zeronimo.exceptions
     ~~~~~~~~~~~~~~~~~~~
 
-    :copyright: (c) 2013 by Heungsub Lee
+    :copyright: (c) 2013-2014 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
 from contextlib import contextmanager
@@ -11,9 +11,8 @@ from contextlib import contextmanager
 import zmq
 
 
-__all__ = ['ZeronimoException', 'WorkerNotFound', 'TaskRejected',
-           'SocketClosed', 'UnexpectedMessage',
-           'make_worker_not_found', 'raises']
+__all__ = ['ZeronimoException', 'WorkerNotFound', 'WorkerNotReachable',
+           'TaskRejected', 'SocketClosed', 'MalformedMessage', 'raises']
 
 
 class ZeronimoException(BaseException):
@@ -48,34 +47,10 @@ class SocketClosed(ZeronimoException, zmq.ZMQError):
     pass
 
 
-class UnexpectedMessage(ZeronimoException, RuntimeWarning):
+class MalformedMessage(ZeronimoException, RuntimeWarning):
     """Warns when a received message is not expected format."""
 
     pass
-
-
-def make_worker_not_found(rejected=0):
-    """Generates an error message by the count of workers rejected for
-    :exc:`WorkerNotFound`.
-
-        >>> make_worker_not_found(rejected=0)
-        WorkerNotFound('Worker not found',)
-        >>> make_worker_not_found(rejected=1)
-        WorkerNotFound('Worker not found, a worker rejected',)
-        >>> make_worker_not_found(rejected=10)
-        WorkerNotFound('Worker not found, 10 workers rejected',)
-    """
-    errmsg = ['Worker not found']
-    if rejected:
-        exctype = TaskRejected
-    else:
-        exctype = WorkerNotFound
-    if rejected == 1:
-        errmsg.append('a worker rejected')
-    elif rejected:
-        errmsg.append('{0} workers rejected'.format(rejected))
-    exc = exctype(', '.join(errmsg))
-    return exc
 
 
 @contextmanager

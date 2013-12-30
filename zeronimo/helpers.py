@@ -5,7 +5,7 @@
 
     Helper functions.
 
-    :copyright: (c) 2013 by Heungsub Lee
+    :copyright: (c) 2013-2014 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
 import functools

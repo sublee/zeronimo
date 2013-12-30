@@ -3,7 +3,7 @@
     zeronimo.components
     ~~~~~~~~~~~~~~~~~~~
 
-    :copyright: (c) 2013 by Heungsub Lee
+    :copyright: (c) 2013-2014 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
 from __future__ import absolute_import
@@ -27,11 +27,12 @@ except ImportError:
 import zmq.green as zmq
 
 from .exceptions import (
-    SocketClosed, UnexpectedMessage, WorkerNotFound, make_worker_not_found)
+    WorkerNotFound, WorkerNotReachable, TaskRejected,
+    SocketClosed, MalformedMessage)
 from .helpers import cls_name, make_repr
 from .messaging import (
-    ACK, DONE, ACCEPT, REJECT, RETURN, RAISE, YIELD, BREAK,
-    Call, Reply, send, recv)
+    ACK, DONE, ITER, ACCEPT, REJECT, RETURN, RAISE,
+    YIELD, BREAK, PACK, UNPACK, Call, Reply, send, recv)
 
 
 __all__ = ['Component', 'Worker', 'Customer', 'Collector', 'Task']
@@ -167,8 +168,8 @@ class Worker(Component):
                 try:
                     call = Call(*recv(socket))
                 except (TypeError, EOFError, UnpicklingError) as exc:
-                    warning = UnexpectedMessage(
-                        'Received unexpected message: {!r}'
+                    warning = MalformedMessage(
+                        'Received malformed message: {!r}'
                         ''.format(exc.message))
                     warning.message = exc.message
                     warnings.warn(warning)
@@ -304,7 +305,7 @@ class Customer(object):
             try:
                 send(self._znm_socket, call, zmq.NOBLOCK, self._znm_topic)
             except zmq.Again:
-                raise WorkerNotFound('Failed to emit at the moment')
+                raise WorkerNotReachable('Failed to emit at the moment')
         send_call()
         is_fanout = self._znm_socket.type in [zmq.PUB, zmq.XPUB]
         establish_args = () if is_fanout else (1, send_call)
@@ -410,7 +411,12 @@ class Collector(Component):
                 del self.reply_queues[call_id][None]
         if not accepts:
             del self.reply_queues[call_id]
-            raise make_worker_not_found(rejected)
+            if rejected:
+                raise TaskRejected(
+                    '{0} workers rejected the task'.format(rejected)
+                    if rejected != 1 else 'A worker rejected the task')
+            else:
+                raise WorkerNotFound('Failed to find worker')
         return accepts
 
     def collect_tasks(self, accepts, call_id, limit=None):

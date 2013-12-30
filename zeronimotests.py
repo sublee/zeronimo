@@ -505,14 +505,14 @@ def test_pgm_connect(ctx, fanout_addr):
         pub2.close()
 
 
-def test_unexpected_message(worker, push):
+def test_malformed_message(worker, push):
     push.send('Zeronimo!')  # indicates to ExtraData
     push.send('')  # indicates to UnpackValueError
     with warnings.catch_warnings(record=True) as w:
         gevent.sleep(0.1)
     assert len(w) == 2
-    assert w[0].category is zeronimo.UnexpectedMessage
-    assert w[1].category is zeronimo.UnexpectedMessage
+    assert w[0].category is zeronimo.MalformedMessage
+    assert w[1].category is zeronimo.MalformedMessage
     assert w[0].message.message == 'Zeronimo!'
     assert w[1].message.message == ''
 
