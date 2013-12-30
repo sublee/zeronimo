@@ -267,8 +267,7 @@ def test_reject(worker1, worker2, task_collector, push, pub, topic):
     assert not worker1.accepting
     with pytest.raises(zeronimo.WorkerNotFound):
         customer.zeronimo()
-    with pytest.raises(zeronimo.WorkerNotFound):
-        fanout_customer.zeronimo()
+    assert list(fanout_customer.zeronimo()) == []
     worker1.accept_all()
     worker2.accept_all()
     assert worker1.accepting
@@ -283,8 +282,7 @@ def test_subscription(worker1, worker2, collector, pub, topic):
     sub1.set(zmq.UNSUBSCRIBE, topic)
     assert len(fanout_customer.zeronimo()) == 1
     sub2.set(zmq.UNSUBSCRIBE, topic)
-    with pytest.raises(zeronimo.WorkerNotFound):
-        fanout_customer.zeronimo()
+    assert list(fanout_customer.zeronimo()) == []
     worker1.stop()
     sub1.set(zmq.SUBSCRIBE, topic)
     sync_pubsub(pub, [sub1], topic)
@@ -457,8 +455,7 @@ def test_unreachable(worker, collector, push, pub, topic):
     with gevent.Timeout(1):
         with pytest.raises(zeronimo.WorkerNotFound):
             customer.zeronimo()
-        with pytest.raises(zeronimo.WorkerNotFound):
-            fanout_customer.zeronimo()
+        assert list(fanout_customer.zeronimo()) == []
         assert customer_nowait.zeronimo() is None
 
 
@@ -576,8 +573,7 @@ def test_direct_xpub_xsub(ctx, addr1, addr2):
     collector = zeronimo.Collector(collector_sock, addr2)
     customer = zeronimo.Customer(xpub, collector)
     with running([worker], sockets=[worker_sock, collector_sock, xpub]):
-        with pytest.raises(zeronimo.WorkerNotFound):
-            customer.zeronimo()
+        assert list(customer.zeronimo()) == []
         # subscribe ''
         worker_sock.send('\x01')
         assert xpub.recv() == '\x01'
@@ -585,9 +581,29 @@ def test_direct_xpub_xsub(ctx, addr1, addr2):
         # unsubscribe ''
         worker_sock.send('\x00')
         assert xpub.recv() == '\x00'
-        with pytest.raises(zeronimo.WorkerNotFound):
-            customer.zeronimo()
+        assert list(customer.zeronimo()) == []
         # subscribe 'zeronimo'
         worker_sock.send('\x01zeronimo')
         assert xpub.recv() == '\x01zeronimo'
         assert customer['zeronimo'].zeronimo() == ['zeronimo']
+
+
+def test_marshal_message(ctx, addr1, addr2):
+    import marshal
+    pack = marshal.dumps
+    unpack = marshal.loads
+    # sockets
+    worker_sock = ctx.socket(zmq.PULL)
+    worker_sock.bind(addr1)
+    customer_sock = ctx.socket(zmq.PUSH)
+    customer_sock.connect(addr1)
+    collector_sock = ctx.socket(zmq.PULL)
+    collector_sock.bind(addr2)
+    sockets = [worker_sock, collector_sock, customer_sock]
+    # components
+    app = Application()
+    worker = zeronimo.Worker(app, [worker_sock], pack=pack, unpack=unpack)
+    collector = zeronimo.Collector(collector_sock, addr2, unpack=unpack)
+    customer = zeronimo.Customer(customer_sock, collector, pack=pack)
+    with running([worker], sockets=sockets):
+        assert customer.zeronimo() == 'zeronimo'
