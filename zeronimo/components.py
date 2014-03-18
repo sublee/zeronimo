@@ -27,8 +27,8 @@ from .exceptions import (
     SocketClosed, MalformedMessage)
 from .helpers import cls_name, make_repr
 from .messaging import (
-    ACK, DONE, ITER, ACCEPT, REJECT, RETURN, RAISE,
-    YIELD, BREAK, PACK, UNPACK, Call, Reply, send, recv)
+    ACK, DONE, ACCEPT, REJECT, RETURN, RAISE, YIELD, BREAK, PACK, UNPACK,
+    Call, Reply, send, recv)
 
 
 __all__ = ['Component', 'Worker', 'Customer', 'Collector', 'Task']
@@ -426,6 +426,7 @@ class Collector(Component):
                         elif len(accepts) == limit:
                             break
         finally:
+            ack_queue.put(StopIteration)
             if limit is not None:
                 del self.reply_queues[call_id][None]
         if not accepts:
@@ -484,7 +485,7 @@ class Collector(Component):
         """Called at the task done for cleaning up the reply queues."""
         reply_queues = self.reply_queues[task.call_id]
         del reply_queues[task.work_id]
-        if not reply_queues:
+        if not reply_queues or len(reply_queues) == 1 and None in reply_queues:
             del self.reply_queues[task.call_id]
             self.missing_queues.pop(task.call_id, None)
 

@@ -527,6 +527,20 @@ def test_queue_leaking(worker, task_collector, push):
     assert reply_queue_ref() is None
 
 
+def test_queue_leaking_on_fanout(worker, collector, pub, topic):
+    import gc
+    from gevent.queue import Queue
+    customer = zeronimo.Customer(pub, collector)
+    num_queues1 = len([o for o in gc.get_objects() if isinstance(o, Queue)])
+    g = gevent.spawn(customer[topic].zeronimo)
+    g.join(0)
+    num_queues2 = len([o for o in gc.get_objects() if isinstance(o, Queue)])
+    g.join()
+    num_queues3 = len([o for o in gc.get_objects() if isinstance(o, Queue)])
+    assert num_queues1 < num_queues2
+    assert num_queues1 == num_queues3
+
+
 def test_task_broken(worker, task_collector, push):
     customer = zeronimo.Customer(push, task_collector)
     task = customer.sleep(0.1)
