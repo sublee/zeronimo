@@ -18,5 +18,4 @@ from .messaging import send, recv
 __version__ = '0.1.5'
 __all__ = ['Worker', 'Customer', 'Collector', 'Task', 'ZeronimoException',
            'WorkerNotFound', 'WorkerNotReachable', 'TaskRejected',
-           'SocketClosed', 'MalformedMessage', 'raises', 'send', 'recv',
-           'PACK', 'UNPACK']
+           'SocketClosed', 'MalformedMessage', 'raises', 'send', 'recv']

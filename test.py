@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import gc
 import time
 import warnings
 import weakref
@@ -14,6 +15,11 @@ import zeronimo
 
 
 warnings.simplefilter('always')
+
+
+def find_objects(cls):
+    gc.collect()
+    return [o for o in gc.get_objects() if isinstance(o, cls)]
 
 
 def test_running():
@@ -528,15 +534,14 @@ def test_queue_leaking(worker, task_collector, push):
 
 
 def test_queue_leaking_on_fanout(worker, collector, pub, topic):
-    import gc
     from gevent.queue import Queue
     customer = zeronimo.Customer(pub, collector)
-    num_queues1 = len([o for o in gc.get_objects() if isinstance(o, Queue)])
+    num_queues1 = len(find_objects(Queue))
     g = gevent.spawn(customer[topic].zeronimo)
     g.join(0)
-    num_queues2 = len([o for o in gc.get_objects() if isinstance(o, Queue)])
+    num_queues2 = len(find_objects(Queue))
     g.join()
-    num_queues3 = len([o for o in gc.get_objects() if isinstance(o, Queue)])
+    num_queues3 = len(find_objects(Queue))
     assert num_queues1 < num_queues2
     assert num_queues1 == num_queues3
 
@@ -621,3 +626,31 @@ def test_marshal_message(ctx, addr1, addr2):
     customer = zeronimo.Customer(customer_sock, collector, pack=pack)
     with running([worker], sockets=sockets):
         assert customer.zeronimo() == 'zeronimo'
+
+
+# catch leaks
+
+
+@pytest.mark.trylast
+def test_no_worker_leak():
+    assert not find_objects(zeronimo.Worker)
+
+
+@pytest.mark.trylast
+def test_no_customer_leak():
+    assert not find_objects(zeronimo.Customer)
+
+
+@pytest.mark.trylast
+def test_no_collector_leak():
+    assert not find_objects(zeronimo.Collector)
+
+
+@pytest.mark.trylast
+def test_no_call_leak():
+    assert not find_objects(zeronimo.messaging.Call)
+
+
+@pytest.mark.trylast
+def test_no_reply_leak():
+    assert not find_objects(zeronimo.messaging.Reply)
