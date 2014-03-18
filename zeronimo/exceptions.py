@@ -65,3 +65,32 @@ def raises(exctype):
     except exctype as exc:
         exc._znm_expected = True
         raise
+
+
+class RemoteException(BaseException):
+
+    _composed = {}
+
+    @classmethod
+    def compose(cls, exctype):
+        try:
+            return cls._composed[exctype]
+        except KeyError:
+            class composed_exctype(exctype, cls):
+                __init__ = cls.__init__
+            composed_exctype.exctype = exctype
+            composed_exctype.__name__ = exctype.__name__ + '(Remote)'
+            composed_exctype.__module__ = ''
+            cls._composed[exctype] = composed_exctype
+            return composed_exctype
+
+    def __init__(self, message, filename=None, lineno=None):
+        super(RemoteException, self).__init__(message)
+        self.filename = filename
+        self.lineno = lineno
+
+    def __str__(self):
+        string = super(RemoteException, self).__str__()
+        if self.filename is not None:
+            string += ' ({0}:{1})'.format(self.filename, self.lineno)
+        return string

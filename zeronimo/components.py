@@ -10,6 +10,7 @@ from __future__ import absolute_import
 from collections import Iterable, Mapping, Sequence, Set
 from contextlib import contextmanager
 import functools
+import sys
 from types import MethodType
 import warnings
 
@@ -25,7 +26,7 @@ import zmq.green as zmq
 
 from .exceptions import (
     WorkerNotFound, WorkerNotReachable, TaskRejected,
-    SocketClosed, MalformedMessage)
+    SocketClosed, MalformedMessage, RemoteException)
 from .helpers import cls_name, make_repr
 from .messaging import (
     ACK, DONE, ACCEPT, REJECT, RETURN, RAISE, YIELD, BREAK, PACK, UNPACK,
@@ -46,6 +47,11 @@ try:
     ZMQ_STREAM = zmq.STREAM
 except AttributeError:
     ZMQ_STREAM = -1
+
+
+# default timeouts
+TIMEOUT = 0.01
+FANOUT_TIMEOUT = 0.1
 
 
 def is_iterator(obj):
@@ -217,11 +223,15 @@ class Worker(Component):
         try:
             yield lambda: bool(raised)
         except BaseException as exc:
+            tb = sys.exc_info()[-1]
+            while tb.tb_next is not None:
+                tb = tb.tb_next
+            filename = tb.tb_frame.f_code.co_filename
+            lineno = tb.tb_lineno
+            val = (type(exc), str(exc), filename, lineno)
+            socket and self.send_reply(socket, RAISE, val, *channel)
             raised.append(True)
-            socket and self.send_reply(socket, RAISE, exc, *channel)
-            # don't raise at worker-side if the exception was expected
-            if not getattr(exc, '_znm_expected', False):
-                raise
+            raise
 
     def call(self, call):
         """Calls a function."""
@@ -334,11 +344,82 @@ class Customer(object):
         return tasks if is_fanout else tasks[0]
 
 
+class Customer2(object):
+    """Customer sends RPC calls to the workers. But it could not receive the
+    result by itself. It should work with :class:`Collector` to receive
+    worker's results.
+    """
+
+    socket = None
+    collector = None
+    timeout = None
+    pack = None
+
+    def __init__(self, socket, collector=None, timeout=None, pack=PACK):
+        if socket.type not in [zmq.PAIR, zmq.PUB, zmq.PUSH, ZMQ_XPUB]:
+            raise ValueError('Customer wraps one of PAIR, PUB, PUSH, and XPUB')
+        self.socket = socket
+        self.collector = collector
+        if timeout is None and collector is not None:
+            timeout = FANOUT_TIMEOUT if self.is_fanout() else TIMEOUT
+        self.timeout = timeout
+        self.pack = pack
+
+    def is_fanout(self):
+        return self.socket.type in [zmq.PUB, zmq.XPUB]
+
+    def emit(self, funcname, *args, **kwargs):
+        if self.is_fanout():
+            raise ValueError('Use fanout() instead with PUB or XPUB socket')
+        return self._emit(None, funcname, *args, **kwargs)
+
+    def fanout(self, topic, funcname, *args, **kwargs):
+        if not self.is_fanout():
+            raise ValueError('Use emit() instead without PUB or XPUB socket')
+        return self._emit(topic, funcname, *args, **kwargs)
+
+    def _emit(self, topic, funcname, *args, **kwargs):
+        """Allocates a call id and emit."""
+        # asynchronous emission
+        if self.collector is None:
+            call = (funcname, args, kwargs, None, None)
+            try:
+                send(self.socket, call, zmq.NOBLOCK, topic, self.pack)
+            except zmq.Again:
+                pass  # ignore
+            return
+        # synchronous emission
+        if not self.collector.is_running():
+            self.collector.start()
+        call_id = uuid4_bytes()
+        collector_address = self.collector.address
+        # normal tuple is faster than namedtuple
+        call = (funcname, args, kwargs, call_id, collector_address)
+        # use short names
+        def send_call():
+            try:
+                send(self.socket, call, zmq.NOBLOCK, topic, self.pack)
+            except zmq.Again:
+                raise WorkerNotReachable('Failed to emit at the moment')
+        send_call()
+        is_fanout = self.is_fanout()
+        establish_args = () if is_fanout else (1, send_call)
+        try:
+            tasks = self.collector.establish(
+                call_id, self.timeout, *establish_args)
+        except WorkerNotFound:
+            # fanout call returns empty list instead of raising WorkerNotFound
+            if is_fanout:
+                return []
+            else:
+                raise
+        return tasks if is_fanout else tasks[0]
+
+
 class Collector(Component):
     """Collector receives results from the worker."""
 
-    def __init__(self, socket, address=None, as_task=False, timeout=0.01,
-                 unpack=UNPACK):
+    def __init__(self, socket, address=None, as_task=False, unpack=UNPACK):
         if socket.type not in [zmq.PAIR, zmq.PULL]:
             raise ValueError('Collector wraps PAIR or PULL')
         if address is None and socket.type != zmq.PAIR:
@@ -348,7 +429,6 @@ class Collector(Component):
         self.socket = socket
         self.address = address
         self.as_task = as_task
-        self.timeout = timeout
         self.unpack = unpack
         self.reply_queues = {}
         self.missing_queues = {}
@@ -400,15 +480,15 @@ class Collector(Component):
                 missing_queues[reply.work_id] = reply_queue
         reply_queue.put(reply)
 
-    def establish(self, call_id, limit=None, retry=None):
+    def establish(self, call_id, timeout, limit=None, retry=None):
         """Waits for the call is accepted by workers and starts to collect the
         tasks.
         """
-        accepts = self.wait_accepts(call_id, limit, retry)
+        accepts = self.wait_accepts(call_id, timeout, limit, retry)
         tasks = self.collect_tasks(accepts, call_id, limit)
         return tasks if self.as_task else [task() for task in tasks]
 
-    def wait_accepts(self, call_id, limit=None, retry=None):
+    def wait_accepts(self, call_id, timeout, limit=None, retry=None):
         """Waits for the call is accepted by workers. When a worker rejected,
         it calls the retry function to find another worker.
         """
@@ -417,7 +497,7 @@ class Collector(Component):
         accepts = []
         rejected = 0
         try:
-            with Timeout(self.timeout, False):
+            with Timeout(timeout, False):
                 while True:
                     reply = ack_queue.get()
                     if reply.method == REJECT:
@@ -513,6 +593,17 @@ class Task(object):
         self.work_id = work_id
         self.worker_info = worker_info
 
+    def _raise(self, reply):
+        assert reply.method == RAISE
+        if isinstance(reply.data, BaseException):
+            exc = reply.data
+            exctype = type(exc)
+        else:
+            exctype, excmsg, filename, lineno = reply.data
+            exctype = RemoteException.compose(exctype)
+            exc = exctype(excmsg, filename, lineno)
+        raise exctype, exc, None
+
     def __call__(self):
         """Gets the result."""
         reply = self.reply_queue.get()
@@ -521,10 +612,10 @@ class Task(object):
             self.collector.task_done(self)
         if reply.method == RETURN:
             return reply.data
-        elif reply.method == RAISE:
-            raise reply.data
         elif reply.method == YIELD:
             return self.iterator(reply)
+        elif reply.method == RAISE:
+            self._raise(reply)
         elif reply.method == BREAK:
             return iter([])
 
@@ -539,7 +630,7 @@ class Task(object):
             if reply.method == YIELD:
                 yield reply.data
             elif reply.method == RAISE:
-                raise reply.data
+                self._raise(reply)
             elif reply.method == BREAK:
                 break
 
