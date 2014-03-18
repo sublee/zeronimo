@@ -14,6 +14,7 @@ from types import MethodType
 import warnings
 
 from gevent import Greenlet, GreenletExit, Timeout
+from gevent.pool import Group
 from gevent.queue import Empty, Queue
 try:
     from libuuid import uuid4_bytes
@@ -160,19 +161,24 @@ class Worker(Component):
         poller = zmq.Poller()
         for socket in self.sockets:
             poller.register(socket, zmq.POLLIN)
-        while True:
-            for socket, event in poller.poll():
-                assert event & zmq.POLLIN
-                try:
-                    call = Call(*recv(socket, unpack=self.unpack))
-                except BaseException as exc:
-                    warning = MalformedMessage(
-                        'Received malformed message: {!r}'
-                        ''.format(exc.message))
-                    warning.message = exc.message
-                    warnings.warn(warning)
-                    continue
-                self.greenlet_class.spawn(self.work, socket, call)
+        group = Group()
+        group.greenlet_class = self.greenlet_class
+        try:
+            while True:
+                for socket, event in poller.poll():
+                    assert event & zmq.POLLIN
+                    try:
+                        call = Call(*recv(socket, unpack=self.unpack))
+                    except BaseException as exc:
+                        warning = MalformedMessage(
+                            'Received malformed message: {!r}'
+                            ''.format(exc.message))
+                        warning.message = exc.message
+                        warnings.warn(warning)
+                        continue
+                    group.spawn(self.work, socket, call)
+        finally:
+            group.kill()
 
     def work(self, socket, call):
         """Calls a function and send results to the collector. It supports
