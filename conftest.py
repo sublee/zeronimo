@@ -175,7 +175,16 @@ def get_testing_protocols(metafunc):
         except ValueError:
             pass
     if not testing_protocols:
-        raise RuntimeError('Should specify testing protocols')
+        raise RuntimeError('Specify protocols to test:\n'
+                           '--inproc|--ipc|--tcp|--pgm|--epgm or --all')
+    elif 'pgm' in testing_protocols:
+        # check CAP_NET_RAW
+        try:
+            socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+        except socket.error as e:
+            if e.errno == 1:  # Operation not permitted
+                raise OSError('Enable the CAP_NET_RAW capability to use PGM:\n'
+                              '$ sudo setcap CAP_NET_RAW=ep `which python`')
     return testing_protocols
 
 
@@ -246,9 +255,11 @@ def resolve_fixtures(f, protocol):
             if isinstance(val, will_be_push_socket):
                 sock_type = zmq.PUSH
                 addrs = pull_addrs
-            else:
+            elif isinstance(val, will_be_pub_socket):
                 sock_type = zmq.PUB
                 addrs = sub_addrs
+            else:
+                assert 0
             sock = ctx.socket(sock_type)
             for addr in addrs:
                 sock.connect(addr)
@@ -338,7 +349,9 @@ def sync_pubsub(pub_sock, sub_socks, topic=''):
        >>> sub_sock1.set(zmq.SUBSCRIBE, 'test')
        >>> sub_sock2.set(zmq.SUBSCRIBE, 'test')
        >>> sync_pubsub(pub_sock, [sub_sock1, sub_sock2], topic='test')
+
     """
+    msg = str(random.random())
     poller = zmq.Poller()
     for sub_sock in sub_socks:
         poller.register(sub_sock, zmq.POLLIN)
@@ -346,11 +359,13 @@ def sync_pubsub(pub_sock, sub_socks, topic=''):
     # sync all SUB sockets
     with gevent.Timeout(1, RuntimeError('Are SUB sockets subscribing?')):
         while to_sync:
-            pub_sock.send(topic + ':sync')
+            pub_sock.send_multipart([topic, msg])
             events = dict(poller.poll(timeout=1))
             for sub_sock in sub_socks:
                 if sub_sock in events:
-                    assert sub_sock.recv().endswith(':sync')
+                    topic_recv, msg_recv = sub_sock.recv_multipart()
+                    assert topic_recv == topic
+                    assert msg_recv == msg
                     try:
                         to_sync.remove(sub_sock)
                     except ValueError:
@@ -361,7 +376,9 @@ def sync_pubsub(pub_sock, sub_socks, topic=''):
         if not events:
             break
         for sub_sock, event in events:
-            assert sub_sock.recv().endswith(':sync')
+            topic_recv, msg_recv = sub_sock.recv_multipart()
+            assert topic_recv == topic
+            assert msg_recv == msg
 
 
 def run_device(in_sock, out_sock, in_addr=None, out_addr=None):

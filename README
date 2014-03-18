@@ -2,3 +2,7 @@ Zeronimo!
 =========
 
 RPC between distributed workers.
+
+To test Zeronimo, run this:
+
+  $ py.test --all zeronimotests.py

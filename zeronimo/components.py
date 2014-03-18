@@ -3,7 +3,7 @@
     zeronimo.components
     ~~~~~~~~~~~~~~~~~~~
 
-    :copyright: (c) 2013 by Heungsub Lee
+    :copyright: (c) 2013-2014 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
 from __future__ import absolute_import
@@ -20,18 +20,31 @@ try:
 except ImportError:
     import uuid
     uuid4_bytes = lambda: uuid.uuid4().get_bytes()
-from msgpack import ExtraData, UnpackValueError
 import zmq.green as zmq
 
 from .exceptions import (
-    SocketClosed, UnexpectedMessage, WorkerNotFound, make_worker_not_found)
+    WorkerNotFound, WorkerNotReachable, TaskRejected,
+    SocketClosed, MalformedMessage)
 from .helpers import cls_name, make_repr
 from .messaging import (
-    ACK, DONE, ACCEPT, REJECT, RETURN, RAISE, YIELD, BREAK,
-    Call, Reply, send, recv)
+    ACK, DONE, ITER, ACCEPT, REJECT, RETURN, RAISE,
+    YIELD, BREAK, PACK, UNPACK, Call, Reply, send, recv)
 
 
 __all__ = ['Component', 'Worker', 'Customer', 'Collector', 'Task']
+
+
+# compatible zmq constants
+try:
+    ZMQ_XPUB = zmq.XPUB
+    ZMQ_XSUB = zmq.XSUB
+except AttributeError:
+    ZMQ_XPUB = -1
+    ZMQ_XSUB = -1
+try:
+    ZMQ_STREAM = zmq.STREAM
+except AttributeError:
+    ZMQ_STREAM = -1
 
 
 def is_iterator(obj):
@@ -118,14 +131,16 @@ class Worker(Component):
     info = None
     accepting = True
 
-    def __init__(self, obj, sockets, info=None):
+    def __init__(self, obj, sockets, info=None, pack=PACK, unpack=UNPACK):
         super(Worker, self).__init__()
         self.obj = obj
         socket_types = set(s.socket_type for s in sockets)
-        if socket_types.difference([zmq.PULL, zmq.SUB, zmq.PAIR]):
-            raise ValueError('Worker wraps PULL or SUB or PAIR sockets')
+        if socket_types.difference([zmq.PAIR, zmq.SUB, zmq.PULL, ZMQ_XSUB]):
+            raise ValueError('Worker wraps one of PAIR, SUB, PULL, and XSUB')
         self.sockets = sockets
         self.info = info
+        self.pack = pack
+        self.unpack = unpack
         self._cached_reply_sockets = {}
 
     def accept_all(self):
@@ -149,11 +164,12 @@ class Worker(Component):
             for socket, event in poller.poll():
                 assert event & zmq.POLLIN
                 try:
-                    call = Call(*recv(socket))
-                except (TypeError, ExtraData, UnpackValueError) as exc:
-                    warning = UnexpectedMessage(
-                        'Received unexpected message: {!r}'.format(exc.serial))
-                    warning.serial = exc.serial
+                    call = Call(*recv(socket, unpack=self.unpack))
+                except BaseException as exc:
+                    warning = MalformedMessage(
+                        'Received malformed message: {!r}'
+                        ''.format(exc.message))
+                    warning.message = exc.message
                     warnings.warn(warning)
                     continue
                 self.greenlet_class.spawn(self.work, socket, call)
@@ -203,7 +219,7 @@ class Worker(Component):
 
     def call(self, call):
         """Calls a function."""
-        return getattr(self.obj, call.function_name)(*call.args, **call.kwargs)
+        return getattr(self.obj, call.funcname)(*call.args, **call.kwargs)
 
     def get_reply_socket(self, socket, address):
         if socket.type == zmq.PAIR:
@@ -225,9 +241,10 @@ class Worker(Component):
             return socket
 
     def send_reply(self, socket, method, data, call_id, work_id):
-        reply = Reply(method, data, call_id, work_id)
+        # normal tuple is faster than namedtuple
+        reply = (method, data, call_id, work_id)
         try:
-            return send(socket, reply, zmq.NOBLOCK)
+            return send(socket, reply, zmq.NOBLOCK, pack=self.pack)
         except (zmq.Again, zmq.ZMQError):
             pass
 
@@ -246,16 +263,17 @@ class Customer(object):
     _znm_collector = None
     _znm_topic = None
 
-    def __init__(self, socket, collector=None, topic=None):
-        if socket.type not in [zmq.PUSH, zmq.PUB, zmq.PAIR]:
-            raise ValueError('Customer wraps PUSH or PUB or PAIR socket')
+    def __init__(self, socket, collector=None, topic=None, pack=PACK):
+        if socket.type not in [zmq.PAIR, zmq.PUB, zmq.PUSH, ZMQ_XPUB]:
+            raise ValueError('Customer wraps one of PAIR, PUB, PUSH, and XPUB')
         self._znm_socket = socket
         self._znm_collector = collector
         self._znm_topic = topic
+        self._znm_pack = pack
 
     def __getitem__(self, topic):
-        if self._znm_socket.type != zmq.PUB:
-            raise ValueError('Only customer with PUB socket could set a topic')
+        if self._znm_socket.type not in [zmq.PUB, zmq.XPUB]:
+            raise ValueError('Only customer with PUB/XPUB could set a topic')
         cls = type(self)
         customer = cls(self._znm_socket, self._znm_collector)
         customer._znm_topic = topic
@@ -266,41 +284,57 @@ class Customer(object):
         self.__dict__[attr] = functools.partial(emit, attr)
         return self.__dict__[attr]
 
-    def _znm_emit_nowait(self, function_name, *args, **kwargs):
+    def _znm_emit_nowait(self, funcname, *args, **kwargs):
         """Sends a call without call id allocation. It doesn't wait replies."""
         # normal tuple is faster than namedtuple
-        call = (function_name, args, kwargs, None, None)
+        call = (funcname, args, kwargs, None, None)
+        # use short names
+        socket = self._znm_socket
+        topic = self._znm_topic
+        pack = self._znm_pack
         try:
-            send(self._znm_socket, call, zmq.NOBLOCK, self._znm_topic)
+            send(socket, call, zmq.NOBLOCK, topic, pack)
         except zmq.Again:
             pass  # ignore
 
-    def _znm_emit(self, function_name, *args, **kwargs):
+    def _znm_emit(self, funcname, *args, **kwargs):
         """Allocates a call id and emit."""
         if not self._znm_collector.is_running():
             self._znm_collector.start()
         call_id = uuid4_bytes()
         collector_address = self._znm_collector.address
         # normal tuple is faster than namedtuple
-        call = (function_name, args, kwargs, call_id, collector_address)
+        call = (funcname, args, kwargs, call_id, collector_address)
+        # use short names
+        socket = self._znm_socket
+        topic = self._znm_topic
+        pack = self._znm_pack
         def send_call():
             try:
-                send(self._znm_socket, call, zmq.NOBLOCK, self._znm_topic)
+                send(socket, call, zmq.NOBLOCK, topic, pack)
             except zmq.Again:
-                raise WorkerNotFound('Failed to emit at the moment')
+                raise WorkerNotReachable('Failed to emit at the moment')
         send_call()
-        is_fanout = self._znm_socket.type == zmq.PUB
+        is_fanout = self._znm_socket.type in [zmq.PUB, zmq.XPUB]
         establish_args = () if is_fanout else (1, send_call)
-        tasks = self._znm_collector.establish(call_id, *establish_args)
+        try:
+            tasks = self._znm_collector.establish(call_id, *establish_args)
+        except WorkerNotFound:
+            # fanout call returns empty list instead of raising WorkerNotFound
+            if is_fanout:
+                return []
+            else:
+                raise
         return tasks if is_fanout else tasks[0]
 
 
 class Collector(Component):
     """Collector receives results from the worker."""
 
-    def __init__(self, socket, address=None, as_task=False, timeout=0.01):
-        if socket.type not in [zmq.PULL, zmq.PAIR]:
-            raise ValueError('Collector wraps PULL or PAIR socket')
+    def __init__(self, socket, address=None, as_task=False, timeout=0.01,
+                 unpack=UNPACK):
+        if socket.type not in [zmq.PAIR, zmq.PULL]:
+            raise ValueError('Collector wraps PAIR or PULL')
         if address is None and socket.type != zmq.PAIR:
             raise ValueError('Address required')
         if address is not None and socket.type == zmq.PAIR:
@@ -309,20 +343,23 @@ class Collector(Component):
         self.address = address
         self.as_task = as_task
         self.timeout = timeout
+        self.unpack = unpack
         self.reply_queues = {}
         self.missing_queues = {}
 
     def run(self):
         while True:
             try:
-                reply = Reply(*recv(self.socket))
-            except (TypeError, ExtraData):
-                # TODO: warning
-                continue
+                reply = Reply(*recv(self.socket, unpack=self.unpack))
+            except GreenletExit:
+                break
             except zmq.ZMQError:
                 exc = SocketClosed('Collector socket closed')
                 self.put_all(Reply(RAISE, exc, None, None))
                 break
+            except:
+                # TODO: warn MalformedMessage
+                continue
             try:
                 self.dispatch_reply(reply)
             except KeyError:
@@ -393,7 +430,12 @@ class Collector(Component):
                 del self.reply_queues[call_id][None]
         if not accepts:
             del self.reply_queues[call_id]
-            raise make_worker_not_found(rejected)
+            if rejected:
+                raise TaskRejected(
+                    '{0} workers rejected the task'.format(rejected)
+                    if rejected != 1 else 'A worker rejected the task')
+            else:
+                raise WorkerNotFound('Failed to find worker')
         return accepts
 
     def collect_tasks(self, accepts, call_id, limit=None):
