@@ -84,10 +84,11 @@ class RemoteException(BaseException):
             cls._composed[exctype] = composed_exctype
             return composed_exctype
 
-    def __init__(self, message, filename=None, lineno=None):
+    def __init__(self, message, filename=None, lineno=None, worker_info=None):
         super(RemoteException, self).__init__(message)
         self.filename = filename
         self.lineno = lineno
+        self.worker_info = worker_info
 
     def __str__(self):
         string = super(RemoteException, self).__str__()
