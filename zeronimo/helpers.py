@@ -19,7 +19,19 @@ def cls_name(obj):
     return type(obj).__name__
 
 
-def make_repr(obj, params=None, keywords=None, data=None, name=None):
+def _repr_attr(obj, attr, data=None, reprs=None):
+    val = getattr(obj, attr)
+    if data is not None:
+        val = data.get(attr, val)
+    if reprs is None:
+        repr_f = repr
+    else:
+        repr_f = reprs.get(attr, repr)
+    return repr_f(val)
+
+
+def make_repr(obj, params=None, keywords=None, data=None, name=None,
+              reprs=None):
     """Generates a string of object initialization code style. It is useful
     for custom __repr__ methods::
 
@@ -38,15 +50,13 @@ def make_repr(obj, params=None, keywords=None, data=None, name=None):
        Example('hello', keyword='world')
     """
     opts = []
-    if data is not None:
-        get = lambda attr: data[attr] if attr in data else getattr(obj, attr)
-    else:
-        get = functools.partial(getattr, obj)
     if params is not None:
-        opts.append(', '.join([repr(get(attr)) for attr in params]))
+        opts.append(', '.join(
+            _repr_attr(obj, attr, data, reprs) for attr in params))
     if keywords is not None:
         opts.append(', '.join(
-            ['{0}={1!r}'.format(attr, get(attr)) for attr in keywords]))
+            '{0}={1}'.format(attr, _repr_attr(obj, attr, data, reprs))
+            for attr in keywords))
     if name is None:
         name = cls_name(obj)
     return '{0}({1})'.format(name, ', '.join(opts))

@@ -7,6 +7,7 @@
     :license: BSD, see LICENSE for more details.
 """
 from __future__ import absolute_import
+from binascii import hexlify
 from collections import Iterable, Mapping, Sequence, Set
 from contextlib import contextmanager
 import functools
@@ -310,6 +311,8 @@ class Collector(Component):
             except KeyError:
                 # TODO: warning
                 continue
+            finally:
+                del reply
 
     def put_all(self, reply):
         """Puts the reply to all queues."""
@@ -454,14 +457,15 @@ class Task(object):
 
     def __call__(self):
         try:
-            return self._async_result.get()
+            async_result = self._async_result
         except AttributeError:
-            self._async_result = AsyncResult()
+            async_result = AsyncResult()
+            self._async_result = async_result
             try:
-                self._async_result.set(self.result())
+                async_result.set(self.result())
             except BaseException as exc:
-                self._async_result.set_exception(exc)
-            return self._async_result.get()
+                async_result.set_exception(exc)
+        return async_result.get()
 
     def result(self):
         """Gets the result."""
@@ -508,8 +512,8 @@ class Task(object):
         raise exctype, exc, None
 
     def __repr__(self):
-        return make_repr(
-            self, None, ['call_id', 'work_id', 'worker_info'])
+        return make_repr(self, None, ['call_id', 'work_id', 'worker_info'],
+                         reprs={'call_id': hexlify, 'work_id': hexlify})
 
 
 class Emitter(object):

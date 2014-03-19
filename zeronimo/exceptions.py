@@ -80,7 +80,8 @@ class RemoteException(BaseException):
                 __init__ = cls.__init__
             composed_exctype.exctype = exctype
             composed_exctype.__name__ = exctype.__name__ + '(Remote)'
-            composed_exctype.__module__ = ''
+            # avoid to start with dot in traceback
+            composed_exctype.__module__ = 'exceptions'
             cls._composed[exctype] = composed_exctype
             return composed_exctype
 
