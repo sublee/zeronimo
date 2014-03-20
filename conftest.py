@@ -28,25 +28,23 @@ config = NotImplemented
 
 
 make_deferred_fixture = lambda name: namedtuple(name, ['protocol'])
-will_be_worker = make_deferred_fixture('will_be_worker')
-will_be_collector = make_deferred_fixture('will_be_collector')
-will_be_task_collector = make_deferred_fixture('will_be_task_collector')
-will_be_push_socket = make_deferred_fixture('will_be_push_socket')
-will_be_pub_socket = make_deferred_fixture('will_be_pub_socket')
-will_be_address = make_deferred_fixture('will_be_address')
-will_be_fanout_address = make_deferred_fixture('will_be_fanout_address')
-will_be_topic = make_deferred_fixture('will_be_topic')
-will_be_context = make_deferred_fixture('will_be_context')
+deferred_worker = make_deferred_fixture('deferred_worker')
+deferred_collector = make_deferred_fixture('deferred_collector')
+deferred_push_socket = make_deferred_fixture('deferred_push_socket')
+deferred_pub_socket = make_deferred_fixture('deferred_pub_socket')
+deferred_address = make_deferred_fixture('deferred_address')
+deferred_fanout_address = make_deferred_fixture('deferred_fanout_address')
+deferred_topic = make_deferred_fixture('deferred_topic')
+deferred_context = make_deferred_fixture('deferred_context')
 deferred_fixtures = {
-    'worker*': will_be_worker,
-    'collector*': will_be_collector,
-    'task_collector*': will_be_task_collector,
-    'push*': will_be_push_socket,
-    'pub*': will_be_pub_socket,
-    'addr*': will_be_address,
-    'fanout_addr*': will_be_fanout_address,
-    'topic': will_be_topic,
-    'ctx': will_be_context,
+    'worker*': deferred_worker,
+    'collector*': deferred_collector,
+    'push*': deferred_push_socket,
+    'pub*': deferred_pub_socket,
+    'addr*': deferred_address,
+    'fanout_addr*': deferred_fanout_address,
+    'topic': deferred_topic,
+    'ctx': deferred_context,
 }
 
 
@@ -116,8 +114,8 @@ def pytest_addoption(parser):
                      help='tests with pgm protocol.')
     parser.addoption('--epgm', action='store_true',
                      help='tests with epgm protocol.')
-    parser.addoption('--timeout', action='store', type=float,
-                     default=0.01, help='finding timeout in seconds.')
+    parser.addoption('--patience', action='store', type=float, default=1.,
+                     help='multiplier for default emitter timeout.')
     parser.addoption('--clear', action='store_true',
                      help='destroy context at each tests done.')
 
@@ -188,36 +186,42 @@ def get_testing_protocols(metafunc):
     return testing_protocols
 
 
-def adjust_timeout(f):
+def adjust_patience(f):
     @functools.wraps(f)
-    def timeout_adjusted(**kwargs):
-        timeout = config.option.timeout
+    def patience_adjusted(**kwargs):
+        patience = config.option.patience
         for x in xrange(10):
-            kwargs['timeout'] = timeout
+            kwargs['patience'] = patience
             try:
                 return f(**kwargs)
             except zeronimo.WorkerNotFound:
-                timeout *= 2
-        raise zeronimo.WorkerNotFound('Maybe --timeout={0} is too '
-                                      'fast'.format(config.option.timeout))
-    return timeout_adjusted
+                patience *= 2
+        raise zeronimo.WorkerNotFound('Maybe --patience={0} is too low'
+                                      ''.format(config.option.patience))
+    return patience_adjusted
+
+
+customer_timeout = zeronimo.Customer.timeout
+fanout_timeout = zeronimo.Fanout.timeout
 
 
 def resolve_fixtures(f, protocol):
     @functools.wraps(f)
-    @adjust_timeout
+    @adjust_patience
     def fixture_resolved(**kwargs):
         ctx = zmq.Context()
         topic = rand_str()
         app = Application()
-        timeout = kwargs.pop('timeout', config.option.timeout)
+        patience = kwargs.pop('patience', config.option.patience)
+        zeronimo.Customer.timeout = customer_timeout * patience
+        zeronimo.Fanout.timeout = fanout_timeout * patience
         pull_addrs = set()
         sub_addrs = set()
         sub_socks = set()
         runners = set()
         socket_params = set()
         for param, val in kwargs.iteritems():
-            if isinstance(val, will_be_worker):
+            if isinstance(val, deferred_worker):
                 pull_sock = ctx.socket(zmq.PULL)
                 pull_addr = gen_address(protocol)
                 pull_sock.bind(pull_addr)
@@ -231,31 +235,29 @@ def resolve_fixtures(f, protocol):
                 worker_info = [pull_addr, sub_addr, topic]
                 val = zeronimo.Worker(app, [pull_sock, sub_sock], worker_info)
                 runners.add(val)
-            elif isinstance(val, (will_be_collector, will_be_task_collector)):
+            elif isinstance(val, deferred_collector):
                 pull_sock = ctx.socket(zmq.PULL)
                 pull_addr = gen_address(protocol)
                 pull_sock.bind(pull_addr)
-                as_task = isinstance(val, will_be_task_collector)
-                val = zeronimo.Collector(pull_sock, pull_addr, as_task,
-                                         timeout)
+                val = zeronimo.Collector(pull_sock, pull_addr)
                 runners.add(val)
-            elif isinstance(val, will_be_address):
+            elif isinstance(val, deferred_address):
                 val = gen_address(protocol)
-            elif isinstance(val, will_be_fanout_address):
+            elif isinstance(val, deferred_fanout_address):
                 val = gen_address(protocol, fanout=True)
-            elif isinstance(val, will_be_topic):
+            elif isinstance(val, deferred_topic):
                 val = topic
-            elif isinstance(val, will_be_context):
+            elif isinstance(val, deferred_context):
                 val = ctx
-            elif isinstance(val, (will_be_push_socket, will_be_pub_socket)):
+            elif isinstance(val, (deferred_push_socket, deferred_pub_socket)):
                 socket_params.add(param)
             kwargs[param] = val
         for param in socket_params:
             val = kwargs[param]
-            if isinstance(val, will_be_push_socket):
+            if isinstance(val, deferred_push_socket):
                 sock_type = zmq.PUSH
                 addrs = pull_addrs
-            elif isinstance(val, will_be_pub_socket):
+            elif isinstance(val, deferred_pub_socket):
                 sock_type = zmq.PUB
                 addrs = sub_addrs
             else:
@@ -316,26 +318,6 @@ def link_sockets(addr, server_sock, client_socks):
             break
     for sock in client_socks:
         sock.connect(addr)
-
-
-#def wait_to_close(addr, timeout=1):
-#    protocol, endpoint = addr.split('://', 1)
-#    if protocol == 'inproc':
-#        gevent.sleep(TICK)
-#        return
-#    elif protocol == 'ipc':
-#        still_exists = lambda: os.path.exists(endpoint)
-#    elif protocol == 'tcp':
-#        host, port = endpoint.split(':')
-#        port = int(port)
-#        def still_exists():
-#            for conn in ps.get_connections():
-#                if conn.local_address == (host, port):
-#                    return True
-#            return False
-#    with gevent.Timeout(timeout, '{} still exists'.format(addr)):
-#        while still_exists():
-#            gevent.sleep(TICK)
 
 
 def sync_pubsub(pub_sock, sub_socks, topic=''):
@@ -471,9 +453,3 @@ class Application(object):
             yield val
             if x < len(sequence) - 1:
                 gevent.sleep(sleep)
-
-    def ignore_exc(self, throw, ignore):
-        if isinstance(ignore, list):
-            ignore = tuple(ignore)
-        with zeronimo.raises(ignore):
-            raise throw

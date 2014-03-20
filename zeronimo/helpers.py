@@ -8,7 +8,7 @@
     :copyright: (c) 2013-2014 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
-import functools
+import zmq
 
 
 __all__ = ['cls_name', 'make_repr']
@@ -60,3 +60,18 @@ def make_repr(obj, params=None, keywords=None, data=None, name=None,
     if name is None:
         name = cls_name(obj)
     return '{0}({1})'.format(name, ', '.join(opts))
+
+
+_socket_type_names = {}
+for name in ('PAIR PUB SUB REQ REP DEALER ROUTER PULL PUSH XPUB XSUB '
+             'STREAM').split():
+    try:
+        socket_type = getattr(zmq, name)
+    except AttributeError:
+        continue
+    assert socket_type not in _socket_type_names
+    _socket_type_names[socket_type] = name
+
+
+def socket_type_name(socket_type):
+    return _socket_type_names[socket_type]

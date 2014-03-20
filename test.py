@@ -17,6 +17,10 @@ import zeronimo
 warnings.simplefilter('always')
 
 
+def eval_tasks(tasks):
+    return [task() for task in tasks]
+
+
 def find_objects(cls):
     gc.collect()
     return [o for o in gc.get_objects() if isinstance(o, cls)]
@@ -69,7 +73,8 @@ def test_from_socket(ctx, addr1, addr2):
     customer = zeronimo.Customer(push, collector)
     with running([worker], sockets=[worker_sock, collector_sock, push]):
         # test
-        assert customer.zeronimo() == 'zeronimo'
+        task = customer.emit('zeronimo')
+        assert task() == 'zeronimo'
 
 
 def test_socket_type_error(ctx):
@@ -154,16 +159,16 @@ def test_nowait(worker, push):
     customer = zeronimo.Customer(push)
     assert worker.obj.counter['zeronimo'] == 0
     for x in xrange(5):
-        assert customer.zeronimo() is None
+        assert customer.emit('zeronimo') is None
     assert worker.obj.counter['zeronimo'] == 0
     gevent.sleep(0.01)
     assert worker.obj.counter['zeronimo'] == 5
 
 
 def test_fanout_nowait(worker, worker2, worker3, worker4, worker5, pub, topic):
-    customer = zeronimo.Customer(pub)
+    fanout = zeronimo.Fanout(pub)
     assert worker.obj.counter['zeronimo'] == 0
-    assert customer[topic].zeronimo() is None
+    assert fanout.emit(topic, 'zeronimo') is None
     assert worker.obj.counter['zeronimo'] == 0
     gevent.sleep(0.01)
     assert worker.obj.counter['zeronimo'] == 5
@@ -171,23 +176,24 @@ def test_fanout_nowait(worker, worker2, worker3, worker4, worker5, pub, topic):
 
 def test_return(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
-    assert customer.zeronimo() == 'zeronimo'
-    assert customer.add(100, 200) == 300
-    assert customer.add('100', '200') == '100200'
+    assert customer.emit('zeronimo')() == 'zeronimo'
+    assert customer.emit('add', 100, 200)() == 300
+    assert customer.emit('add', '100', '200')() == '100200'
 
 
 def test_yield(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
-    assert ' '.join(customer.rycbar123()) == \
+    assert ' '.join(customer.emit('rycbar123')()) == \
            'run, you clever boy; and remember.'
-    assert list(customer.dont_yield()) == []
+    assert list(customer.emit('dont_yield')()) == []
 
 
 def test_raise(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
-    with pytest.raises(ZeroDivisionError):
-        customer.zero_div()
-    g = customer.rycbar123_and_zero_div()
+    with pytest.raises(ZeroDivisionError) as exc_info:
+        customer.emit('zero_div')()
+    assert issubclass(exc_info.type, zeronimo.RemoteException)
+    g = customer.emit('rycbar123_and_zero_div')()
     assert next(g) == 'run,'
     assert next(g) == 'you'
     assert next(g) == 'clever'
@@ -200,20 +206,27 @@ def test_raise(worker, collector, push):
 
 def test_iterator(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
-    assert list(customer.xrange(1, 100, 10)) == range(1, 100, 10)
-    assert set(customer.dict_view(1, 100, 10)) == set(range(1, 100, 10))
+    assert list(customer.emit('xrange', 1, 100, 10)()) == range(1, 100, 10)
+    assert \
+        set(customer.emit('dict_view', 1, 100, 10)()) == \
+        set(range(1, 100, 10))
 
 
 def test_fanout_return(worker1, worker2, collector, pub, topic):
-    customer = zeronimo.Customer(pub, collector)
-    assert customer[topic].zeronimo() == ['zeronimo', 'zeronimo']
-    assert customer[topic].add(100, 200) == [300, 300]
-    assert customer[topic].add('100', '200') == ['100200', '100200']
+    fanout = zeronimo.Fanout(pub, collector)
+    assert \
+        eval_tasks(fanout.emit(topic, 'zeronimo')) == \
+        ['zeronimo', 'zeronimo']
+    assert eval_tasks(fanout.emit(topic, 'add', 10, 20)) == [30, 30]
+    assert \
+        eval_tasks(fanout.emit(topic, 'add', '10', '20')) == \
+        ['1020', '1020']
 
 
 def test_fanout_yield(worker1, worker2, collector, pub, topic):
-    customer = zeronimo.Customer(pub, collector)
-    for g in customer[topic].rycbar123():
+    fanout = zeronimo.Fanout(pub, collector)
+    for task in fanout.emit(topic, 'rycbar123'):
+        g = task()
         assert next(g) == 'run,'
         assert next(g) == 'you'
         assert next(g) == 'clever'
@@ -223,26 +236,26 @@ def test_fanout_yield(worker1, worker2, collector, pub, topic):
 
 
 def test_fanout_raise(worker1, worker2, collector, pub, topic):
-    customer = zeronimo.Customer(pub, collector)
+    fanout = zeronimo.Fanout(pub, collector)
     with pytest.raises(ZeroDivisionError):
-        customer[topic].zero_div()
+        eval_tasks(fanout.emit(topic, 'zero_div'))
 
 
 def test_2to1(worker, collector, push1, push2):
     customer1 = zeronimo.Customer(push1, collector)
     customer2 = zeronimo.Customer(push2, collector)
     def test(customer):
-        assert customer.add(1, 1) == 2
-        assert len(list(customer.rycbar123())) == 6
+        assert customer.emit('add', 1, 1)() == 2
+        assert len(list(customer.emit('rycbar123')())) == 6
         with pytest.raises(ZeroDivisionError):
-            customer.zero_div()
+            customer.emit('zero_div')()
     joinall([spawn(test, customer1), spawn(test, customer2)], raise_error=True)
 
 
-def test_1to2(worker1, worker2, task_collector, push):
-    customer = zeronimo.Customer(push, task_collector)
-    task1 = customer.add(1, 1)
-    task2 = customer.add(2, 2)
+def test_1to2(worker1, worker2, collector, push):
+    customer = zeronimo.Customer(push, collector)
+    task1 = customer.emit('add', 1, 1)
+    task2 = customer.emit('add', 2, 2)
     assert task1() == 2
     assert task2() == 4
     assert task1.worker_info != task2.worker_info
@@ -252,55 +265,55 @@ def test_slow(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
     with pytest.raises(gevent.Timeout):
         with gevent.Timeout(0.1):
-            customer.sleep(0.3)
+            customer.emit('sleep', 0.3)()
         t = time.time()
-        assert customer.sleep(0.1) == 0.1
+        assert customer.emit('sleep', 0.1)() == 0.1
         assert time.time() - t >= 0.1
 
 
-def test_reject(worker1, worker2, task_collector, push, pub, topic):
-    customer = zeronimo.Customer(push, task_collector)
-    fanout_customer = zeronimo.Customer(pub, task_collector)[topic]
+def test_reject(worker1, worker2, collector, push, pub, topic):
+    customer = zeronimo.Customer(push, collector)
+    fanout = zeronimo.Fanout(pub, collector)
     assert worker1.accepting
     assert worker2.accepting
-    assert len(fanout_customer.zeronimo()) == 2
+    assert len(fanout.emit(topic, 'zeronimo')) == 2
     worker2.reject_all()
     assert not worker2.accepting
-    assert customer.zeronimo().worker_info == worker1.info
-    assert customer.zeronimo().worker_info == worker1.info
-    assert len(fanout_customer.zeronimo()) == 1
+    assert customer.emit('zeronimo').worker_info == worker1.info
+    assert customer.emit('zeronimo').worker_info == worker1.info
+    assert len(fanout.emit(topic, 'zeronimo')) == 1
     worker1.reject_all()
     assert not worker1.accepting
     with pytest.raises(zeronimo.WorkerNotFound):
-        customer.zeronimo()
-    assert fanout_customer.zeronimo() == []
+        customer.emit('zeronimo')
+    assert fanout.emit(topic, 'zeronimo') == []
     worker1.accept_all()
     worker2.accept_all()
     assert worker1.accepting
     assert worker2.accepting
-    assert len(fanout_customer.zeronimo()) == 2
+    assert len(fanout.emit(topic, 'zeronimo')) == 2
 
 
 def test_subscription(worker1, worker2, collector, pub, topic):
-    fanout_customer = zeronimo.Customer(pub, collector)[topic]
+    fanout = zeronimo.Fanout(pub, collector)
     sub1 = [sock for sock in worker1.sockets if sock.socket_type == zmq.SUB][0]
     sub2 = [sock for sock in worker2.sockets if sock.socket_type == zmq.SUB][0]
     sub1.set(zmq.UNSUBSCRIBE, topic)
-    assert len(fanout_customer.zeronimo()) == 1
+    assert len(fanout.emit(topic, 'zeronimo')) == 1
     sub2.set(zmq.UNSUBSCRIBE, topic)
-    assert fanout_customer.zeronimo() == []
+    assert fanout.emit(topic, 'zeronimo') == []
     worker1.stop()
     sub1.set(zmq.SUBSCRIBE, topic)
     sync_pubsub(pub, [sub1], topic)
     worker1.start()
-    assert len(fanout_customer.zeronimo()) == 1
+    assert len(fanout.emit(topic, 'zeronimo')) == 1
     worker1.stop()
     worker2.stop()
     sub2.set(zmq.SUBSCRIBE, topic)
     sync_pubsub(pub, [sub2], topic)
     worker1.start()
     worker2.start()
-    assert len(fanout_customer.zeronimo()) == 2
+    assert len(fanout.emit(topic, 'zeronimo')) == 2
 
 
 def test_device(ctx, collector, topic, addr1, addr2, addr3, addr4):
@@ -345,9 +358,11 @@ def test_device(ctx, collector, topic, addr1, addr2, addr3, addr4):
         worker2.start()
         # zeronimo!
         customer = zeronimo.Customer(push, collector)
-        fanout_customer = zeronimo.Customer(pub, collector)[topic]
-        assert customer.zeronimo() == 'zeronimo'
-        assert fanout_customer.zeronimo() == ['zeronimo', 'zeronimo']
+        fanout = zeronimo.Fanout(pub, collector)
+        assert customer.emit('zeronimo')() == 'zeronimo'
+        assert \
+            eval_tasks(fanout.emit(topic, 'zeronimo')) == \
+            ['zeronimo', 'zeronimo']
     finally:
         try:
             streamer.kill()
@@ -386,10 +401,11 @@ def test_x_forwarder(ctx, collector, topic, addr1, addr2):
         app = Application()
         worker1 = zeronimo.Worker(app, [worker_sub1])
         worker2 = zeronimo.Worker(app, [worker_sub2])
+        fanout = zeronimo.Fanout(pub, collector)
         with running([worker1, worker2], sockets=[pub]):
             # zeronimo!
-            fanout_customer = zeronimo.Customer(pub, collector)[topic]
-            assert fanout_customer.zeronimo() == ['zeronimo', 'zeronimo']
+            tasks = fanout.emit(topic, 'zeronimo')
+            assert eval_tasks(tasks) == ['zeronimo', 'zeronimo']
     finally:
         forwarder.kill()
 
@@ -406,7 +422,7 @@ def test_proxied_collector(ctx, worker, push, addr1, addr2):
         collector_sock.connect(addr2)
         collector = zeronimo.Collector(collector_sock, addr1)
         customer = zeronimo.Customer(push, collector)
-        assert customer.zeronimo() == 'zeronimo'
+        assert customer.emit('zeronimo')() == 'zeronimo'
     finally:
         try:
             streamer.kill()
@@ -431,11 +447,11 @@ def test_2nd_start(worker, collector):
 
 def test_concurrent_collector(worker, collector, push, pub, topic):
     customer = zeronimo.Customer(push, collector)
-    fanout_customer = zeronimo.Customer(pub, collector)[topic]
+    fanout = zeronimo.Fanout(pub, collector)
     done = []
     def do_test():
-        assert customer.zeronimo() == 'zeronimo'
-        assert fanout_customer.zeronimo() == ['zeronimo']
+        assert customer.emit('zeronimo')() == 'zeronimo'
+        assert eval_tasks(fanout.emit(topic, 'zeronimo')) == ['zeronimo']
         done.append(True)
     times = 5
     joinall([spawn(do_test) for x in xrange(times)], raise_error=True)
@@ -446,45 +462,24 @@ def test_stopped_collector(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
     collector.stop()
     assert not collector.is_running()
-    assert customer.zeronimo() == 'zeronimo'
+    task = customer.emit('zeronimo')
+    assert task() == 'zeronimo'
     assert collector.is_running()
     collector.stop()
 
 
 def test_unreachable(worker, collector, push, pub, topic):
     customer = zeronimo.Customer(push, collector)
-    fanout_customer = zeronimo.Customer(pub, collector)[topic]
+    fanout = zeronimo.Fanout(pub, collector)
     customer_nowait = zeronimo.Customer(push)
     worker.stop()
     for sock in worker.sockets:
         sock.close()
     with gevent.Timeout(1):
         with pytest.raises(zeronimo.WorkerNotFound):
-            customer.zeronimo()
-        assert fanout_customer.zeronimo() == []
-        assert customer_nowait.zeronimo() is None
-
-
-def test_expected_exception(capsys, worker, collector, push):
-    customer = zeronimo.Customer(push, collector)
-    with pytest.raises(ZeroDivisionError):
-        customer.zero_div()
-    out, err = capsys.readouterr()
-    assert 'Traceback (most recent call last)' in err
-    assert 'ZeroDivisionError' in err
-    with pytest.raises(ZeroDivisionError):
-        customer.ignore_exc(ZeroDivisionError, ValueError)
-    out, err = capsys.readouterr()
-    assert 'Traceback (most recent call last)' in err
-    assert 'ZeroDivisionError' in err
-    with pytest.raises(ZeroDivisionError):
-        customer.ignore_exc(ZeroDivisionError, ZeroDivisionError)
-    out, err = capsys.readouterr()
-    assert not err
-    with pytest.raises(ZeroDivisionError):
-        customer.ignore_exc(ZeroDivisionError, (ArithmeticError, ValueError))
-    out, err = capsys.readouterr()
-    assert not err
+            customer.emit('zeronimo')
+        assert fanout.emit(topic, 'zeronimo') == []
+        assert customer_nowait.emit('zeronimo') is None
 
 
 def test_pgm_connect(ctx, fanout_addr):
@@ -520,36 +515,40 @@ def test_malformed_message(worker, push):
     assert w[1].message.message == ''
 
 
-def test_queue_leaking(worker, task_collector, push):
-    customer = zeronimo.Customer(push, task_collector)
-    task = customer.zeronimo()
+def test_queue_leaking(worker, collector, push):
+    customer = zeronimo.Customer(push, collector)
+    task = customer.emit('zeronimo')
     reply_queue_ref = weakref.ref(task.reply_queue)
-    assert task_collector.reply_queues
-    assert task_collector.missing_queues
+    assert collector.reply_queues
+    assert collector.missing_queues
     assert task() == 'zeronimo'
-    assert not task_collector.reply_queues
-    assert not task_collector.missing_queues
+    assert not collector.reply_queues
+    assert not collector.missing_queues
     del task
     assert reply_queue_ref() is None
 
 
 def test_queue_leaking_on_fanout(worker, collector, pub, topic):
     from gevent.queue import Queue
-    customer = zeronimo.Customer(pub, collector)
+    fanout = zeronimo.Fanout(pub, collector)
     num_queues1 = len(find_objects(Queue))
-    g = gevent.spawn(customer[topic].zeronimo)
+    g = gevent.spawn(fanout.emit, topic, 'zeronimo')
     g.join(0)
     num_queues2 = len(find_objects(Queue))
+    assert num_queues1 < num_queues2
     g.join()
     num_queues3 = len(find_objects(Queue))
-    assert num_queues1 < num_queues2
-    assert num_queues1 == num_queues3
+    assert num_queues1 <= num_queues3
+    tasks = g.get()
+    eval_tasks(tasks)
+    num_queues4 = len(find_objects(Queue))
+    assert num_queues1 == num_queues4
 
 
-def test_task_broken(worker, task_collector, push):
-    customer = zeronimo.Customer(push, task_collector)
-    task = customer.sleep(0.1)
-    task_collector.socket.close()
+def test_task_broken(worker, collector, push):
+    customer = zeronimo.Customer(push, collector)
+    task = customer.emit('sleep', 0.1)
+    collector.socket.close()
     with pytest.raises(zeronimo.SocketClosed):
         task()
 
@@ -565,16 +564,11 @@ def test_pair(ctx, addr):
     collector = zeronimo.Collector(right)
     customer = zeronimo.Customer(right, collector)
     with running([worker], sockets=[left, right]):
-        assert customer.zeronimo() == 'zeronimo'
-        assert ' '.join(customer.rycbar123()) == \
+        assert customer.emit('zeronimo')() == 'zeronimo'
+        assert ' '.join(customer.emit('rycbar123')()) == \
                'run, you clever boy; and remember.'
         with pytest.raises(ZeroDivisionError):
-            customer.zero_div()
-
-
-def test_initial_topic(pub):
-    customer = zeronimo.Customer(pub, topic='zeronimo')
-    assert customer._znm_topic == 'zeronimo'
+            customer.emit('zero_div')()
 
 
 @pytest.mark.skipif('zmq.zmq_version_info() < (3,)')
@@ -590,21 +584,21 @@ def test_direct_xpub_xsub(ctx, addr1, addr2):
     app = Application()
     worker = zeronimo.Worker(app, [worker_sock])
     collector = zeronimo.Collector(collector_sock, addr2)
-    customer = zeronimo.Customer(xpub, collector)
+    fanout = zeronimo.Fanout(xpub, collector)
     with running([worker], sockets=[worker_sock, collector_sock, xpub]):
-        assert customer.zeronimo() == []
+        assert fanout.emit('', 'zeronimo') == []
         # subscribe ''
         worker_sock.send('\x01')
         assert xpub.recv() == '\x01'
-        assert customer.zeronimo() == ['zeronimo']
+        assert eval_tasks(fanout.emit('', 'zeronimo')) == ['zeronimo']
         # unsubscribe ''
         worker_sock.send('\x00')
         assert xpub.recv() == '\x00'
-        assert customer.zeronimo() == []
+        assert fanout.emit('', 'zeronimo') == []
         # subscribe 'zeronimo'
         worker_sock.send('\x01zeronimo')
         assert xpub.recv() == '\x01zeronimo'
-        assert customer['zeronimo'].zeronimo() == ['zeronimo']
+        assert eval_tasks(fanout.emit('zeronimo', 'zeronimo')) == ['zeronimo']
 
 
 def test_marshal_message(ctx, addr1, addr2):
@@ -625,7 +619,7 @@ def test_marshal_message(ctx, addr1, addr2):
     collector = zeronimo.Collector(collector_sock, addr2, unpack=unpack)
     customer = zeronimo.Customer(customer_sock, collector, pack=pack)
     with running([worker], sockets=sockets):
-        assert customer.zeronimo() == 'zeronimo'
+        assert customer.emit('zeronimo')() == 'zeronimo'
 
 
 # catch leaks

@@ -33,7 +33,7 @@ REJECT = ACK | 0b10
 RETURN = DONE | 0b01
 RAISE = DONE | 0b10
 YIELD = ITER | 0b01
-BREAK = ITER | 0b10
+BREAK = ITER | DONE | 0b10
 
 
 #: The default function to pack message.
@@ -43,9 +43,10 @@ PACK = pickle.dumps
 UNPACK = pickle.loads
 
 
-_Call = namedtuple('_Call', ['funcname', 'args', 'kwargs', 'call_id',
-                             'collector_address'])
-_Reply = namedtuple('_Reply', ['method', 'data', 'call_id', 'work_id'])
+_Call = namedtuple(
+    '_Call', ['funcname', 'args', 'kwargs', 'call_id', 'reply_to'])
+_Reply = namedtuple(
+    '_Reply', ['method', 'data', 'call_id', 'work_id'])
 
 
 class Call(_Call):

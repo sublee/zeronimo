@@ -10,7 +10,6 @@ from __future__ import absolute_import
 from binascii import hexlify
 from collections import Iterable, Mapping, Sequence, Set
 from contextlib import contextmanager
-import functools
 import sys
 from types import MethodType
 import warnings
@@ -29,7 +28,7 @@ import zmq.green as zmq
 from .exceptions import (
     WorkerNotFound, WorkerNotReachable, TaskRejected,
     SocketClosed, MalformedMessage, RemoteException)
-from .helpers import cls_name, make_repr
+from .helpers import cls_name, make_repr, socket_type_name
 from .messaging import (
     ACK, DONE, ACCEPT, REJECT, RETURN, RAISE, YIELD, BREAK, PACK, UNPACK,
     Call, Reply, send, recv)
@@ -196,7 +195,7 @@ class Worker(Component):
         packable objects.
         """
         work_id = uuid4_bytes()
-        socket = self.get_reply_socket(socket, call.collector_address)
+        socket = self.get_reply_socket(socket, call.reply_to)
         channel = (None, None)
         if socket is not None:
             channel = (call.call_id, work_id)
@@ -219,10 +218,7 @@ class Worker(Component):
 
     @contextmanager
     def exception_sending(self, socket, *channel):
-        """Sends an exception which occurs in the context to the collector.
-        It raises the caught exception if that was not expected.
-        :func:`zeronimo.exceptions.raises` declares expected exception types.
-        """
+        """Sends an exception which occurs in the context to the collector."""
         raised = []
         try:
             yield lambda: bool(raised)
@@ -277,10 +273,91 @@ class Worker(Component):
         return make_repr(self, ['obj', 'sockets'], keywords)
 
 
+class _Emitter(object):
+
+    available_socket_types = NotImplemented
+    timeout = NotImplemented
+
+    socket = None
+    collector = None
+    pack = None
+
+    def __init__(self, socket, collector=None, timeout=None, pack=PACK):
+        super(_Emitter, self).__init__()
+        if socket.type not in self.available_socket_types:
+            raise ValueError('{0} is not available socket type'
+                             ''.format(socket_type_name(socket.type)))
+        self.socket = socket
+        self.collector = collector
+        if timeout is not None:
+            self.timeout = timeout
+        self.pack = pack
+
+    def _emit_nowait(self, funcname, args, kwargs, topic=None):
+        call = (funcname, args, kwargs, None, None)
+        try:
+            send(self.socket, call, zmq.NOBLOCK, topic, self.pack)
+        except zmq.Again:
+            pass  # ignore
+
+    def _emit(self, funcname, args, kwargs,
+              topic=None, limit=None, retry=False):
+        """Allocates a call id and emit."""
+        if not self.collector.is_running():
+            self.collector.start()
+        call_id = uuid4_bytes()
+        reply_to = self.collector.address
+        # normal tuple is faster than namedtuple
+        call = (funcname, args, kwargs, call_id, reply_to)
+        # use short names
+        def send_call():
+            try:
+                send(self.socket, call, zmq.NOBLOCK, topic, self.pack)
+            except zmq.Again:
+                raise WorkerNotReachable('Failed to emit at the moment')
+        send_call()
+        return self.collector.establish(
+            call_id, self.timeout, limit, send_call if retry else None)
+
+
+class Customer(_Emitter):
+    """Customer sends RPC calls to the workers. But it could not receive the
+    result by itself. It should work with :class:`Collector` to receive
+    worker's results.
+    """
+
+    available_socket_types = [zmq.PAIR, zmq.PUSH]
+    timeout = 0.01
+
+    def emit(self, funcname, *args, **kwargs):
+        if self.collector is None:
+            return self._emit_nowait(funcname, args, kwargs)
+        return self._emit(funcname, args, kwargs, limit=1, retry=True)[0]
+
+
+class Fanout(_Emitter):
+    """Customer sends RPC calls to the workers. But it could not receive the
+    result by itself. It should work with :class:`Collector` to receive
+    worker's results.
+    """
+
+    available_socket_types = [zmq.PUB, ZMQ_XPUB]
+    timeout = 0.1
+
+    def emit(self, topic, funcname, *args, **kwargs):
+        if self.collector is None:
+            return self._emit_nowait(funcname, args, kwargs, topic=topic)
+        try:
+            return self._emit(funcname, args, kwargs, topic=topic)
+        except WorkerNotFound:
+            return []
+
+
 class Collector(Component):
     """Collector receives results from the worker."""
 
     def __init__(self, socket, address=None, unpack=UNPACK):
+        super(Collector, self).__init__()
         if socket.type not in [zmq.PAIR, zmq.PULL]:
             raise ValueError('Collector wraps PAIR or PULL')
         if address is None and socket.type != zmq.PAIR:
@@ -432,7 +509,8 @@ class Collector(Component):
     def task_done(self, task):
         """Called at the task done for cleaning up the reply queues."""
         reply_queues = self.reply_queues[task.call_id]
-        del reply_queues[task.work_id]
+        assert reply_queues.pop(task.work_id) is task.reply_queue
+        del task.reply_queue
         if not reply_queues or len(reply_queues) == 1 and None in reply_queues:
             del self.reply_queues[task.call_id]
             self.missing_queues.pop(task.call_id, None)
@@ -449,6 +527,7 @@ class Task(object):
 
     def __init__(self, collector, reply_queue, call_id, work_id,
                  worker_info=None):
+        super(Task, self).__init__()
         self.collector = collector
         self.reply_queue = reply_queue
         self.call_id = call_id
@@ -490,6 +569,8 @@ class Task(object):
         while True:
             reply = self.reply_queue.get()
             assert not reply.method & ACK and reply.method != RETURN
+            if reply.method & DONE:
+                self.collector.task_done(self)
             if reply.method == YIELD:
                 yield reply.data
             elif reply.method == RAISE:
@@ -514,77 +595,3 @@ class Task(object):
     def __repr__(self):
         return make_repr(self, None, ['call_id', 'work_id', 'worker_info'],
                          reprs={'call_id': hexlify, 'work_id': hexlify})
-
-
-class Emitter(object):
-
-    available_socket_types = NotImplemented
-    timeout = NotImplemented
-
-    socket = None
-    collector = None
-    pack = None
-
-    def __init__(self, socket, collector=None, timeout=None, pack=PACK):
-        if socket.type not in self.available_socket_types:
-            raise ValueError('Unavailable socket type')
-        self.socket = socket
-        self.collector = collector
-        if timeout is not None:
-            self.timeout = timeout
-        self.pack = pack
-
-    def _emit_nowait(self, funcname, args, kwargs, topic=None):
-        call = (funcname, args, kwargs, None, None)
-        try:
-            send(self.socket, call, zmq.NOBLOCK, topic, self.pack)
-        except zmq.Again:
-            pass  # ignore
-
-    def _emit(self, funcname, args, kwargs,
-              topic=None, limit=None, retry=False):
-        """Allocates a call id and emit."""
-        if not self.collector.is_running():
-            self.collector.start()
-        call_id = uuid4_bytes()
-        collector_address = self.collector.address
-        # normal tuple is faster than namedtuple
-        call = (funcname, args, kwargs, call_id, collector_address)
-        # use short names
-        def send_call():
-            try:
-                send(self.socket, call, zmq.NOBLOCK, topic, self.pack)
-            except zmq.Again:
-                raise WorkerNotReachable('Failed to emit at the moment')
-        send_call()
-        return self.collector.establish(
-            call_id, self.timeout, limit, send_call if retry else None)
-
-
-class Customer(Emitter):
-    """Customer sends RPC calls to the workers. But it could not receive the
-    result by itself. It should work with :class:`Collector` to receive
-    worker's results.
-    """
-
-    available_socket_types = [zmq.PAIR, zmq.PUSH]
-    timeout = 0.01
-
-    def emit(self, funcname, *args, **kwargs):
-        return self._emit(funcname, args, kwargs, limit=1, retry=True)[0]
-
-
-class Fanout(Emitter):
-    """Customer sends RPC calls to the workers. But it could not receive the
-    result by itself. It should work with :class:`Collector` to receive
-    worker's results.
-    """
-
-    available_socket_types = [zmq.PUB, ZMQ_XPUB]
-    timeout = 0.1
-
-    def emit(self, topic, funcname, *args, **kwargs):
-        try:
-            return self._emit(funcname, args, kwargs, topic=topic)
-        except WorkerNotFound:
-            return []
