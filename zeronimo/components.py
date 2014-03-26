@@ -7,7 +7,6 @@
     :license: BSD, see LICENSE for more details.
 """
 from __future__ import absolute_import
-from binascii import hexlify
 from collections import Iterable, Mapping, Sequence, Set
 from contextlib import contextmanager
 import sys
@@ -15,9 +14,8 @@ from types import MethodType
 import warnings
 
 from gevent import Greenlet, GreenletExit, Timeout
-from gevent.event import AsyncResult
 from gevent.pool import Group
-from gevent.queue import Empty, Queue
+from gevent.queue import Queue
 try:
     from libuuid import uuid4_bytes
 except ImportError:
@@ -26,15 +24,15 @@ except ImportError:
 import zmq.green as zmq
 
 from .exceptions import (
-    WorkerNotFound, WorkerNotReachable, TaskRejected,
-    SocketClosed, MalformedMessage, RemoteException)
+    WorkerNotFound, Rejected, Undelivered, TaskClosed, MalformedMessage)
 from .helpers import cls_name, make_repr, socket_type_name
 from .messaging import (
-    ACK, DONE, ACCEPT, REJECT, RETURN, RAISE, YIELD, BREAK, PACK, UNPACK,
+    ACK, ACCEPT, REJECT, RETURN, RAISE, YIELD, BREAK, PACK, UNPACK,
     Call, Reply, send, recv)
+from .results import RemoteResult
 
 
-__all__ = ['Component', 'Worker', 'Customer', 'Collector', 'Task']
+__all__ = ['Component', 'Worker', 'Customer', 'Collector']
 
 
 # compatible zmq constants
@@ -194,11 +192,11 @@ class Worker(Component):
         all of function actions. A function could return, yield, raise any
         packable objects.
         """
-        work_id = uuid4_bytes()
+        task_id = uuid4_bytes()
         socket = self.get_reply_socket(socket, call.reply_to)
         channel = (None, None)
         if socket is not None:
-            channel = (call.call_id, work_id)
+            channel = (call.call_id, task_id)
             method = ACCEPT if self.accepting else REJECT
             self.send_reply(socket, method, self.info, *channel)
         if not self.accepting:
@@ -260,9 +258,9 @@ class Worker(Component):
             sockets[address] = socket
             return socket
 
-    def send_reply(self, socket, method, data, call_id, work_id):
+    def send_reply(self, socket, method, data, call_id, task_id):
         # normal tuple is faster than namedtuple
-        reply = (method, data, call_id, work_id)
+        reply = (method, data, call_id, task_id)
         try:
             return send(socket, reply, zmq.NOBLOCK, pack=self.pack)
         except (zmq.Again, zmq.ZMQError):
@@ -314,10 +312,11 @@ class _Emitter(object):
             try:
                 send(self.socket, call, zmq.NOBLOCK, topic, self.pack)
             except zmq.Again:
-                raise WorkerNotReachable('Failed to emit at the moment')
+                raise Undelivered('Emission was not delivered')
+        self.collector.prepare(call_id)
         send_call()
-        return self.collector.establish(
-            call_id, self.timeout, limit, send_call if retry else None)
+        return self.collector.establish(call_id, self.timeout, limit,
+                                        send_call if retry else None)
 
 
 class Customer(_Emitter):
@@ -367,8 +366,8 @@ class Collector(Component):
         self.socket = socket
         self.address = address
         self.unpack = unpack
-        self.reply_queues = {}
-        self.missing_queues = {}
+        self.results = {}
+        self.acks = {}
 
     def run(self):
         while True:
@@ -377,8 +376,10 @@ class Collector(Component):
             except GreenletExit:
                 break
             except zmq.ZMQError:
-                exc = SocketClosed('Collector socket closed')
-                self.put_all(Reply(RAISE, exc, None, None))
+                exc = TaskClosed('Collector socket closed')
+                for results in self.results.viewvalues():
+                    for result in results:
+                        result.set_exception(exc)
                 break
             except:
                 # TODO: warn MalformedMessage
@@ -391,207 +392,72 @@ class Collector(Component):
             finally:
                 del reply
 
-    def put_all(self, reply):
-        """Puts the reply to all queues."""
-        for reply_queues in self.reply_queues.itervalues():
-            for reply_queue in reply_queues.itervalues():
-                reply_queue.put(reply)
-
     def dispatch_reply(self, reply):
         """Dispatches the reply to the proper queue."""
-        if reply.method & ACK:
-            self.reply_queues[reply.call_id][None].put(reply)
-            return
-        reply_queues = self.reply_queues[reply.call_id]
-        try:
-            reply_queue = reply_queues[reply.work_id]
-        except KeyError:
+        method = reply.method
+        call_id = reply.call_id
+        task_id = reply.task_id
+        if method & ACK:
             try:
-                missing_queues = self.missing_queues[reply.call_id]
+                acks = self.acks[call_id]
             except KeyError:
-                missing_queues = {}
-                self.missing_queues[reply.call_id] = missing_queues
-            reply_queue = Queue()
-            try:
-                reply_queue = missing_queues[reply.work_id]
-            except KeyError:
-                reply_queue = Queue()
-                missing_queues[reply.work_id] = reply_queue
-        reply_queue.put(reply)
+                raise KeyError('Already established or unprepared call')
+            if method == ACCEPT:
+                worker_info = reply.data
+                result = RemoteResult(self, call_id, task_id, worker_info)
+                self.results[call_id][task_id] = result
+                acks.put_nowait(result)
+            elif method == REJECT:
+                acks.put_nowait(None)
+        else:
+            result = self.results[call_id][task_id]
+            result.set_reply(reply)
+
+    def remove_result(self, result):
+        call_id = result.call_id
+        task_id = result.task_id
+        assert self.results[call_id][task_id] is result
+        del self.results[call_id][task_id]
+        if not self.results[call_id]:
+            del self.results[call_id]
+
+    def prepare(self, call_id):
+        """"""
+        if call_id in self.results:
+            raise KeyError('Call {0} already prepared'.format(call_id))
+        # will be deleted at :meth:`remove_result`.
+        self.results[call_id] = {}
+        # will be deleted at :meth:`establish`.
+        self.acks[call_id] = Queue()
 
     def establish(self, call_id, timeout, limit=None, retry=None):
         """Waits for the call is accepted by workers and starts to collect the
-        tasks.
+        results.
         """
-        accepts = self.wait_accepts(call_id, timeout, limit, retry)
-        tasks = self.collect_tasks(accepts, call_id, limit)
-        return tasks
-
-    def wait_accepts(self, call_id, timeout, limit=None, retry=None):
-        """Waits for the call is accepted by workers. When a worker rejected,
-        it calls the retry function to find another worker.
-        """
-        ack_queue = Queue()
-        self.reply_queues[call_id] = {None: ack_queue}
-        accepts = []
         rejected = 0
+        results = []
+        acks = self.acks[call_id]
         try:
-            with Timeout(timeout, False):
+            with Timeout(timeout):
                 while True:
-                    reply = ack_queue.get()
-                    if reply.method == REJECT:
+                    result = acks.get()
+                    if result is None:
                         rejected += 1
                         if retry is not None:
                             retry()
-                        continue
-                    elif reply.method == ACCEPT:
-                        accepts.append(reply)
-                        if limit is None:
-                            continue
-                        elif len(accepts) == limit:
+                    else:
+                        results.append(result)
+                        if limit is not None and len(results) == limit:
                             break
+        except Timeout:
+            pass
         finally:
-            ack_queue.put(StopIteration)
-            if limit is not None:
-                del self.reply_queues[call_id][None]
-        if not accepts:
-            del self.reply_queues[call_id]
+            del acks
+            del self.acks[call_id]
+        if not results:
             if rejected:
-                raise TaskRejected(
-                    '{0} workers rejected the task'.format(rejected)
-                    if rejected != 1 else 'A worker rejected the task')
+                raise Rejected('{0} workers rejected'.format(rejected)
+                               if rejected != 1 else 'A worker rejected')
             else:
                 raise WorkerNotFound('Failed to find worker')
-        return accepts
-
-    def collect_tasks(self, accepts, call_id, limit=None):
-        """Starts to collect the tasks."""
-        tasks = []
-        self._collect_more_tasks(tasks, iter(accepts).next, call_id, limit)
-        try:
-            ack_queue = self.reply_queues[call_id][None]
-        except KeyError:
-            pass
-        else:
-            self.greenlet_class.spawn(
-                self._collect_more_tasks, tasks, ack_queue.get, call_id, limit)
-        return tasks
-
-    def _collect_more_tasks(self, tasks, get_reply, call_id, limit=None):
-        iterator = iter(get_reply, None)
-        while limit is None or len(tasks) < limit:
-            try:
-                reply = next(iterator)
-            except StopIteration:
-                break
-            if reply is StopIteration:
-                break
-            assert reply.method == ACCEPT
-            assert reply.call_id == call_id
-            reply_queue = Queue()
-            work_id = reply.work_id
-            worker_info = reply.data
-            self.reply_queues[call_id][work_id] = reply_queue
-            # recover missing replies
-            try:
-                missing_queue = self.missing_queues[call_id].pop(work_id)
-            except KeyError:
-                pass
-            else:
-                try:
-                    while True:
-                        reply_queue.put(missing_queue.get(block=False))
-                except Empty:
-                    pass
-            task = Task(self, reply_queue, call_id, work_id, worker_info)
-            tasks.append(task)
-
-    def task_done(self, task):
-        """Called at the task done for cleaning up the reply queues."""
-        reply_queues = self.reply_queues[task.call_id]
-        assert reply_queues.pop(task.work_id) is task.reply_queue
-        del task.reply_queue
-        if not reply_queues or len(reply_queues) == 1 and None in reply_queues:
-            del self.reply_queues[task.call_id]
-            self.missing_queues.pop(task.call_id, None)
-
-
-class Task(object):
-    """The task object.
-
-    :param customer: the customer object.
-    :param id: the task identifier.
-    :param invoker_id: the identifier of the invoker which spawned this task.
-    :param worker_info: the value the worker sent at accepting.
-    """
-
-    def __init__(self, collector, reply_queue, call_id, work_id,
-                 worker_info=None):
-        super(Task, self).__init__()
-        self.collector = collector
-        self.reply_queue = reply_queue
-        self.call_id = call_id
-        self.work_id = work_id
-        self.worker_info = worker_info
-
-    def __call__(self):
-        try:
-            async_result = self._async_result
-        except AttributeError:
-            async_result = AsyncResult()
-            self._async_result = async_result
-            try:
-                async_result.set(self.result())
-            except BaseException as exc:
-                async_result.set_exception(exc)
-        return async_result.get()
-
-    def result(self):
-        """Gets the result."""
-        reply = self.reply_queue.get()
-        assert not reply.method & ACK
-        if reply.method & DONE:
-            self.collector.task_done(self)
-        if reply.method == RETURN:
-            return reply.data
-        elif reply.method == YIELD:
-            return self.iterator(reply)
-        elif reply.method == RAISE:
-            self._raise(reply)
-        elif reply.method == BREAK:
-            return iter([])
-
-    def iterator(self, first_reply):
-        """If the method of first reply is YIELD, the result will be a
-        generator. This method makes the generator.
-        """
-        yield first_reply.data
-        while True:
-            reply = self.reply_queue.get()
-            assert not reply.method & ACK and reply.method != RETURN
-            if reply.method & DONE:
-                self.collector.task_done(self)
-            if reply.method == YIELD:
-                yield reply.data
-            elif reply.method == RAISE:
-                self._raise(reply)
-            elif reply.method == BREAK:
-                break
-
-    def _raise(self, reply):
-        """Raises an exception in the reply as a :exc:`RemoteException`."""
-        assert reply.method == RAISE
-        if isinstance(reply.data, BaseException):
-            # local exception
-            exc = reply.data
-            exctype = type(exc)
-        else:
-            # remote exception
-            exctype, excmsg, filename, lineno = reply.data
-            exctype = RemoteException.compose(exctype)
-            exc = exctype(excmsg, filename, lineno, self.worker_info)
-        raise exctype, exc, None
-
-    def __repr__(self):
-        return make_repr(self, None, ['call_id', 'work_id', 'worker_info'],
-                         reprs={'call_id': hexlify, 'work_id': hexlify})
+        return results

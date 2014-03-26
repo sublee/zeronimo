@@ -46,7 +46,7 @@ UNPACK = pickle.loads
 _Call = namedtuple(
     '_Call', ['funcname', 'args', 'kwargs', 'call_id', 'reply_to'])
 _Reply = namedtuple(
-    '_Reply', ['method', 'data', 'call_id', 'work_id'])
+    '_Reply', ['method', 'data', 'call_id', 'task_id'])
 
 
 class Call(_Call):

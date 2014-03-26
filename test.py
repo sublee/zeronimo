@@ -468,7 +468,7 @@ def test_stopped_collector(worker, collector, push):
     collector.stop()
 
 
-def test_unreachable(worker, collector, push, pub, topic):
+def test_undelivered(worker, collector, push, pub, topic):
     customer = zeronimo.Customer(push, collector)
     fanout = zeronimo.Fanout(pub, collector)
     customer_nowait = zeronimo.Customer(push)
@@ -476,7 +476,7 @@ def test_unreachable(worker, collector, push, pub, topic):
     for sock in worker.sockets:
         sock.close()
     with gevent.Timeout(1):
-        with pytest.raises(zeronimo.WorkerNotFound):
+        with pytest.raises(zeronimo.Undelivered):
             customer.emit('zeronimo')
         assert fanout.emit(topic, 'zeronimo') == []
         assert customer_nowait.emit('zeronimo') is None
@@ -536,21 +536,36 @@ def test_queue_leaking_on_fanout(worker, collector, pub, topic):
     g.join(0)
     num_queues2 = len(find_objects(Queue))
     assert num_queues1 < num_queues2
-    g.join()
+    tasks = g.get()
     num_queues3 = len(find_objects(Queue))
     assert num_queues1 <= num_queues3
-    tasks = g.get()
-    eval_tasks(tasks)
+    gevent.sleep(0.5)
     num_queues4 = len(find_objects(Queue))
-    assert num_queues1 == num_queues4
+    assert num_queues3 == num_queues4
+    eval_tasks(tasks)
+    num_queues5 = len(find_objects(Queue))
+    assert num_queues1 == num_queues5
 
 
 def test_task_broken(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
     task = customer.emit('sleep', 0.1)
     collector.socket.close()
-    with pytest.raises(zeronimo.SocketClosed):
+    with pytest.raises(zeronimo.TaskClosed):
         task()
+
+
+def test_task_close(worker, collector, push):
+    customer = zeronimo.Customer(push, collector)
+    task = customer.emit('sleep_multiple', 0.1, 10)
+    g = task()
+    assert next(g) == 0
+    assert next(g) == 1
+    task.close()
+    with pytest.raises(zeronimo.TaskClosed):
+        next(g)
+    assert not collector.reply_queues
+    assert not collector.missing_queues
 
 
 def test_pair(ctx, addr):

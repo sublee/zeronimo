@@ -445,11 +445,18 @@ class Application(object):
         gevent.sleep(seconds)
         return seconds
 
+    def sleep_multiple(self, seconds, times=1):
+        for x in xrange(times):
+            gevent.sleep(seconds)
+            yield x
+
     def sleep_range(self, sleep, start, stop=None, step=1):
         if stop is None:
             start, stop = 0, start
         sequence = range(start, stop, step)
         for x, val in enumerate(sequence):
             yield val
-            if x < len(sequence) - 1:
-                gevent.sleep(sleep)
+            if x == len(sequence) - 1:
+                # at the last
+                break
+            gevent.sleep(sleep)
