@@ -9,6 +9,7 @@ import random
 import shutil
 import string
 import sys
+import warnings
 
 import gevent
 from gevent import socket
@@ -191,13 +192,14 @@ def adjust_patience(f):
     @functools.wraps(f)
     def patience_adjusted(**kwargs):
         patience = config.option.patience
-        for x in xrange(1):
+        for x in xrange(5):
             kwargs['patience'] = patience
             try:
                 return f(**kwargs)
             except:
                 exctype, exc, traceback = sys.exc_info()
                 patience *= 2
+                warnings.warn('Patience increased to {0}'.format(patience))
         raise exctype, exc, traceback
     return patience_adjusted
 
