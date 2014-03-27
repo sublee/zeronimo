@@ -64,15 +64,15 @@ The address is 192.168.0.42. The reply collector will listen at 24601.
 
 """
 from __future__ import with_statement
-import distutils
-import os
 import re
 from setuptools import setup
 from setuptools.command.test import test
 import subprocess
 import sys
+
+
 # prevent error in sys.exitfunc when testing
-if 'test' in sys.argv: import zmq
+__import__('zmq') if 'test' in sys.argv else None
 
 
 # detect the current version
@@ -83,10 +83,7 @@ assert version
 
 # use pytest instead
 def run_tests(self):
-    pyc = re.compile(r'\.pyc|\$py\.class')
-    test_file = pyc.sub('.py', __import__(self.test_suite).__file__)
-    test_args = ['py.test', test_file, '--inproc', '--tcp']
-    raise SystemExit(subprocess.call(test_args))
+    raise SystemExit(subprocess.call(['py.test', '-v', '--all']))
 test.run_tests = run_tests
 
 
@@ -111,6 +108,6 @@ setup(
                  'Programming Language :: Python :: Implementation :: CPython',
                  'Topic :: Software Development'],
     install_requires=['gevent>=1', 'pyzmq>=14'],
-    test_suite='zeronimotests',
+    test_suite='',
     tests_require=['pytest', 'decorator', 'psutil'],
 )

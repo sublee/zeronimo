@@ -6,8 +6,8 @@ env:
 - ZMQ_VERSION=3.2.4
 - ZMQ_VERSION=2.2.0
 before_install:
-# cython
-- pip install cython
+# cython, pytest
+- pip install cython pytest
 # zeromq
 - wget http://download.zeromq.org/zeromq-$ZMQ_VERSION.tar.gz
 - tar xvzf zeromq-$ZMQ_VERSION.tar.gz
@@ -28,4 +28,4 @@ before_install:
 install:
 - pip install -e .
 script:
-- python setup.py test
+- py.test -v --all
