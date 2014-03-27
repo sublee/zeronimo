@@ -10,7 +10,7 @@
 """
 from __future__ import absolute_import
 
-from .components import Worker, Customer, Fanout, Collector
+from .core import Worker, Customer, Fanout, Collector
 from .exceptions import (
     ZeronimoException, EmissionError, TaskError, WorkerNotFound, Rejected,
     Undelivered, TaskClosed, MalformedMessage)

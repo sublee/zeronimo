@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-    zeronimo.components
-    ~~~~~~~~~~~~~~~~~~~
+    zeronimo.core
+    ~~~~~~~~~~~~~
 
     :copyright: (c) 2013-2014 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
@@ -33,7 +33,7 @@ from .messaging import (
 from .results import RemoteResult
 
 
-__all__ = ['Component', 'Worker', 'Customer', 'Collector']
+__all__ = ['Worker', 'Customer', 'Fanout', 'Collector']
 
 
 # compatible zmq constants
@@ -368,7 +368,44 @@ class Collector(Component):
         self.address = address
         self.unpack = unpack
         self.results = {}
-        self.acks = {}
+        self.result_queues = {}
+
+    def prepare(self, call_id):
+        """"""
+        if call_id in self.results:
+            raise KeyError('Call {0} already prepared'.format(call_id))
+        self.results[call_id] = {}
+        self.result_queues[call_id] = Queue()
+
+    def establish(self, call_id, timeout, limit=None, retry=None):
+        """Waits for the call is accepted by workers and starts to collect the
+        results.
+        """
+        rejected = 0
+        results = []
+        result_queue = self.result_queues[call_id]
+        try:
+            with Timeout(timeout, False):
+                while True:
+                    result = result_queue.get()
+                    if result is None:
+                        rejected += 1
+                        if retry is not None:
+                            retry()
+                    else:
+                        results.append(result)
+                        if limit is not None and len(results) == limit:
+                            break
+        finally:
+            del result_queue
+            self.remove_result_queue(call_id)
+        if not results:
+            if rejected:
+                raise Rejected('{0} workers rejected'.format(rejected)
+                               if rejected != 1 else 'A worker rejected')
+            else:
+                raise WorkerNotFound('Failed to find worker')
+        return results
 
     def run(self):
         while True:
@@ -400,68 +437,29 @@ class Collector(Component):
         task_id = reply.task_id
         if method & ACK:
             try:
-                acks = self.acks[call_id]
+                result_queue = self.result_queues[call_id]
             except KeyError:
                 raise KeyError('Already established or unprepared call')
             if method == ACCEPT:
                 worker_info = reply.data
                 result = RemoteResult(self, call_id, task_id, worker_info)
                 self.results[call_id][task_id] = result
-                acks.put_nowait(result)
+                result_queue.put_nowait(result)
             elif method == REJECT:
-                acks.put_nowait(None)
+                result_queue.put_nowait(None)
         else:
             result = self.results[call_id][task_id]
             result.set_reply(reply)
-
-    def prepare(self, call_id):
-        """"""
-        if call_id in self.results:
-            raise KeyError('Call {0} already prepared'.format(call_id))
-        # will be deleted at :meth:`remove_result`.
-        self.results[call_id] = {}
-        # will be deleted at :meth:`establish`.
-        self.acks[call_id] = Queue()
 
     def remove_result(self, result):
         call_id = result.call_id
         task_id = result.task_id
         assert self.results[call_id][task_id] is result
         del self.results[call_id][task_id]
-        if call_id not in self.acks and not self.results[call_id]:
+        if call_id not in self.result_queues and not self.results[call_id]:
             del self.results[call_id]
 
-    def remove_acks(self, call_id):
-        del self.acks[call_id]
+    def remove_result_queue(self, call_id):
+        del self.result_queues[call_id]
         if not self.results[call_id]:
             del self.results[call_id]
-
-    def establish(self, call_id, timeout, limit=None, retry=None):
-        """Waits for the call is accepted by workers and starts to collect the
-        results.
-        """
-        rejected = 0
-        results = []
-        acks = self.acks[call_id]
-        try:
-            with Timeout(timeout, False):
-                while True:
-                    result = acks.get()
-                    if result is None:
-                        rejected += 1
-                        if retry is not None:
-                            retry()
-                    else:
-                        results.append(result)
-                        if limit is not None and len(results) == limit:
-                            break
-        finally:
-            del acks
-            self.remove_acks(call_id)
-        if not results:
-            if rejected:
-                raise Rejected('{0} workers rejected'.format(rejected)
-                               if rejected != 1 else 'A worker rejected')
-            else:
-                raise WorkerNotFound('Failed to find worker')
-        return results
