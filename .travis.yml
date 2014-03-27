@@ -1,0 +1,22 @@
+language: python
+python:
+- 2.7
+install:
+- wget http://download.zeromq.org/zeromq-4.0.4.tar.gz
+- tar xvzf zeromq-4.0.4.tar.gz
+- cd zeromq-4.0.4
+- ./configure --with-pgm --prefix=`pwd`/../local
+- make
+- make install
+- cd ..
+- git clone git@github.com:zeromq/pyzmq.git pyzmq
+- cd pyzmq
+- git checkout v14.1.1
+- python setup.py clean
+- python setup.py configure --zmq=../local
+- python setup.py build_ext --inplace
+- pip install -e .
+- cd ..
+- pip install -e .
+script:
+- python setup.py test
