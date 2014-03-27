@@ -6,6 +6,9 @@ env:
 - ZMQ_VERSION=3.2.4
 - ZMQ_VERSION=2.2.0
 before_install:
+# libcap2-bin
+- sudo apt-get install libcap2-bin
+- sudo setcap CAP_NET_RAW=ep `readlink -f \`which python\``
 # zeromq
 - wget http://download.zeromq.org/zeromq-$ZMQ_VERSION.tar.gz
 - tar xvzf zeromq-$ZMQ_VERSION.tar.gz
@@ -25,11 +28,7 @@ before_install:
 - python setup.py build_ext --inplace
 - pip install -e .
 - cd ..
-# libcap2-bin
-- sudo apt-get install libcap2-bin
 install:
 - pip install -e .
-before_script:
-- sudo setcap CAP_NET_RAW=ep `which python`
 script:
 - py.test -v --all
