@@ -17,7 +17,7 @@ from .helpers import make_repr
 from .messaging import DONE, RETURN, RAISE, YIELD, BREAK
 
 
-__all__ = ['RemoteResult', 'RemoteException', 'AsyncGenerator']
+__all__ = ['RemoteResult', 'RemoteException', 'RemoteIterator']
 
 
 class RemoteResult(AsyncResult):
@@ -36,35 +36,33 @@ class RemoteResult(AsyncResult):
         self.task_id = task_id
         self.worker_info = worker_info
 
-    def __call__(self):
-        return self.get()
-
     def close(self):
+        """Stops to collect replies from its task."""
         self.set_exception(TaskClosed)
         self.collector.remove_result(self)
 
-    # generator
+    # iterator
 
-    _generator = False
+    _iterator = False
 
-    def is_generator(self):
-        return self._generator
+    def is_iterator(self):
+        return self._iterator
 
-    def set_generator(self):
-        self._generator = True
-        self.set(AsyncGenerator())
+    def set_iterator(self):
+        self._iterator = True
+        self.set(RemoteIterator())
 
     # exception
 
     def set_remote_exception(self, remote_exc_info):
+        """Raises an exception as a :exc:`RemoteException`."""
         exctype, excmsg, filename, lineno = remote_exc_info
         exctype = RemoteException.compose(exctype)
         exc = exctype(excmsg, filename, lineno, self.worker_info)
         self.set_exception(exc)
 
     def set_exception(self, exc):
-        """Raises an exception in the reply as a :exc:`RemoteException`."""
-        if self.is_generator():
+        if self.is_iterator():
             self.get().throw(exc)
         else:
             super(RemoteResult, self).set_exception(exc)
@@ -88,15 +86,15 @@ class RemoteResult(AsyncResult):
         self.set(reply.data)
 
     def _yield(self, reply):
-        if not self.is_generator():
-            self.set_generator()
+        if not self.is_iterator():
+            self.set_iterator()
         self.get().send(reply.data)
 
     def _raise(self, reply):
         self.set_remote_exception(reply.data)
 
     def _break(self, reply):
-        if self.is_generator():
+        if self.is_iterator():
             self.get().close()
         else:
             self.set(iter([]))
@@ -137,10 +135,13 @@ class RemoteException(BaseException):
         return string
 
 
-class AsyncGenerator(object):
+class RemoteIterator(object):
 
     def __init__(self):
         self.queue = Queue()
+
+    def __iter__(self):
+        return self
 
     def send(self, value):
         if self.queue is None:
@@ -155,12 +156,12 @@ class AsyncGenerator(object):
     def close(self):
         self.throw(StopIteration)
 
-    def __iter__(self):
+    def next(self):
         if self.queue is None:
             raise StopIteration
-        for yields, value in self.queue:
-            if yields:
-                yield value
-            else:
-                self.queue = None
-                raise value
+        yields, value = self.queue.get()
+        if yields:
+            return value
+        else:
+            self.queue = None
+            raise value

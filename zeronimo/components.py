@@ -24,7 +24,8 @@ except ImportError:
 import zmq.green as zmq
 
 from .exceptions import (
-    WorkerNotFound, Rejected, Undelivered, TaskClosed, MalformedMessage)
+    EmissionError, WorkerNotFound, Rejected, Undelivered, TaskClosed,
+    MalformedMessage)
 from .helpers import cls_name, make_repr, socket_type_name
 from .messaging import (
     ACK, ACCEPT, REJECT, RETURN, RAISE, YIELD, BREAK, PACK, UNPACK,
@@ -348,7 +349,7 @@ class Fanout(_Emitter):
             return self._emit_nowait(funcname, args, kwargs, topic=topic)
         try:
             return self._emit(funcname, args, kwargs, topic=topic)
-        except WorkerNotFound:
+        except EmissionError:
             return []
 
 
