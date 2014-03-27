@@ -6,8 +6,6 @@ env:
 - ZMQ_VERSION=3.2.4
 - ZMQ_VERSION=2.2.0
 before_install:
-# cython, pytest
-- pip install cython pytest
 # zeromq
 - wget http://download.zeromq.org/zeromq-$ZMQ_VERSION.tar.gz
 - tar xvzf zeromq-$ZMQ_VERSION.tar.gz
@@ -16,6 +14,8 @@ before_install:
 - make
 - make install
 - cd ..
+# cython, pytest
+- pip install cython pytest
 # pyzmq-14.1.1
 - git clone https://github.com/zeromq/pyzmq.git pyzmq
 - cd pyzmq
@@ -25,6 +25,8 @@ before_install:
 - python setup.py build_ext --inplace
 - pip install -e .
 - cd ..
+# libcap2-bin
+- sudo apt-get install libcap2-bin
 install:
 - pip install -e .
 before_script:
