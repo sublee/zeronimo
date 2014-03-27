@@ -27,5 +27,7 @@ before_install:
 - cd ..
 install:
 - pip install -e .
+before_script:
+- sudo setcap CAP_NET_RAW=ep `which python`
 script:
 - py.test -v --all
