@@ -8,6 +8,7 @@ import platform
 import random
 import shutil
 import string
+import sys
 
 import gevent
 from gevent import socket
@@ -190,14 +191,14 @@ def adjust_patience(f):
     @functools.wraps(f)
     def patience_adjusted(**kwargs):
         patience = config.option.patience
-        for x in xrange(10):
+        for x in xrange(1):
             kwargs['patience'] = patience
             try:
                 return f(**kwargs)
-            except zeronimo.WorkerNotFound:
+            except:
+                exctype, exc, traceback = sys.exc_info()
                 patience *= 2
-        raise zeronimo.WorkerNotFound('Maybe --patience={0} is too low'
-                                      ''.format(config.option.patience))
+        raise exctype, exc, traceback
     return patience_adjusted
 
 

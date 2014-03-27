@@ -11,6 +11,7 @@ import zmq.green as zmq
 from conftest import (
     Application, link_sockets, run_device, running, sync_pubsub)
 import zeronimo
+import zeronimo.messaging
 
 
 warnings.simplefilter('always')
@@ -43,18 +44,18 @@ def test_messaging(ctx, addr, topic):
     pull = ctx.socket(zmq.PULL)
     link_sockets(addr, push, [pull])
     for t in [None, topic]:
-        zeronimo.send(push, 1, topic=t)
-        assert zeronimo.recv(pull) == 1
-        zeronimo.send(push, 'doctor', topic=t)
-        assert zeronimo.recv(pull) == 'doctor'
-        zeronimo.send(push, {'doctor': 'who'}, topic=t)
-        assert zeronimo.recv(pull) == {'doctor': 'who'}
-        zeronimo.send(push, ['doctor', 'who'], topic=t)
-        assert zeronimo.recv(pull) == ['doctor', 'who']
-        zeronimo.send(push, Exception, topic=t)
-        assert zeronimo.recv(pull) == Exception
-        zeronimo.send(push, Exception('Allons-y'), topic=t)
-        assert isinstance(zeronimo.recv(pull), Exception)
+        zeronimo.messaging.send(push, 1, topic=t)
+        assert zeronimo.messaging.recv(pull) == 1
+        zeronimo.messaging.send(push, 'doctor', topic=t)
+        assert zeronimo.messaging.recv(pull) == 'doctor'
+        zeronimo.messaging.send(push, {'doctor': 'who'}, topic=t)
+        assert zeronimo.messaging.recv(pull) == {'doctor': 'who'}
+        zeronimo.messaging.send(push, ['doctor', 'who'], topic=t)
+        assert zeronimo.messaging.recv(pull) == ['doctor', 'who']
+        zeronimo.messaging.send(push, Exception, topic=t)
+        assert zeronimo.messaging.recv(pull) == Exception
+        zeronimo.messaging.send(push, Exception('Allons-y'), topic=t)
+        assert isinstance(zeronimo.messaging.recv(pull), Exception)
 
 
 def test_from_socket(ctx, addr1, addr2):
@@ -467,13 +468,10 @@ def test_stopped_collector(worker, collector, push):
     collector.stop()
 
 
-def test_undelivered(worker, collector, push, pub, topic):
+def test_undelivered(collector, push, pub, topic):
     customer = zeronimo.Customer(push, collector)
     fanout = zeronimo.Fanout(pub, collector)
     customer_nowait = zeronimo.Customer(push)
-    worker.stop()
-    for sock in worker.sockets:
-        sock.close()
     with gevent.Timeout(1):
         with pytest.raises(zeronimo.Undelivered):
             customer.emit('zeronimo')

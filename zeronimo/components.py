@@ -379,7 +379,7 @@ class Collector(Component):
             except zmq.ZMQError:
                 exc = TaskClosed('Collector socket closed')
                 for results in self.results.viewvalues():
-                    for result in results:
+                    for result in results.viewvalues():
                         result.set_exception(exc)
                 break
             except:
@@ -414,14 +414,6 @@ class Collector(Component):
             result = self.results[call_id][task_id]
             result.set_reply(reply)
 
-    def remove_result(self, result):
-        call_id = result.call_id
-        task_id = result.task_id
-        assert self.results[call_id][task_id] is result
-        del self.results[call_id][task_id]
-        if not self.results[call_id]:
-            del self.results[call_id]
-
     def prepare(self, call_id):
         """"""
         if call_id in self.results:
@@ -431,6 +423,19 @@ class Collector(Component):
         # will be deleted at :meth:`establish`.
         self.acks[call_id] = Queue()
 
+    def remove_result(self, result):
+        call_id = result.call_id
+        task_id = result.task_id
+        assert self.results[call_id][task_id] is result
+        del self.results[call_id][task_id]
+        if call_id not in self.acks and not self.results[call_id]:
+            del self.results[call_id]
+
+    def remove_acks(self, call_id):
+        del self.acks[call_id]
+        if not self.results[call_id]:
+            del self.results[call_id]
+
     def establish(self, call_id, timeout, limit=None, retry=None):
         """Waits for the call is accepted by workers and starts to collect the
         results.
@@ -439,7 +444,7 @@ class Collector(Component):
         results = []
         acks = self.acks[call_id]
         try:
-            with Timeout(timeout):
+            with Timeout(timeout, False):
                 while True:
                     result = acks.get()
                     if result is None:
@@ -450,11 +455,9 @@ class Collector(Component):
                         results.append(result)
                         if limit is not None and len(results) == limit:
                             break
-        except Timeout:
-            pass
         finally:
             del acks
-            del self.acks[call_id]
+            self.remove_acks(call_id)
         if not results:
             if rejected:
                 raise Rejected('{0} workers rejected'.format(rejected)
