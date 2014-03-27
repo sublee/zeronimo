@@ -1,13 +1,17 @@
 language: python
 python:
 - 2.7
+env:
+- ZMQ_VERSION=4.0.4
+- ZMQ_VERSION=3.2.4
+- ZMQ_VERSION=2.2.0
 before_install:
 # cython
 - pip install cython
-# zeromq-4.0.4
-- wget http://download.zeromq.org/zeromq-4.0.4.tar.gz
-- tar xvzf zeromq-4.0.4.tar.gz
-- cd zeromq-4.0.4
+# zeromq
+- wget http://download.zeromq.org/zeromq-$ZMQ_VERSION.tar.gz
+- tar xvzf zeromq-$ZMQ_VERSION.tar.gz
+- cd zeromq-$ZMQ_VERSION
 - ./configure --with-pgm --prefix=`pwd`/../local
 - make
 - make install
