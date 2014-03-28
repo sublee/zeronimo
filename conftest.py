@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from collections import Counter, namedtuple
+from collections import defaultdict, namedtuple
 from contextlib import contextmanager
 from fnmatch import fnmatch
 import functools
@@ -400,7 +400,7 @@ class Application(object):
 
     def __new__(cls):
         obj = super(Application, cls).__new__(cls)
-        counter = Counter()
+        counter = defaultdict(int)
         def count(f):
             @functools.wraps(f)
             def wrapped(*args, **kwargs):
