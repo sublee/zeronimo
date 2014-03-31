@@ -43,4 +43,4 @@ before_script:
 # make sure to use PGM
 - sudo setcap CAP_NET_RAW=ep `readlink -f \`which python\``
 script:
-- py.test -v --all
+- py.test -v --all --incremental-patience
