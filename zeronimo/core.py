@@ -136,10 +136,11 @@ class Worker(Component):
     obj = None
     sockets = None
     info = None
-    accepting = True
+    greenlet_group = None
+    exception_handler = None
 
-    def __init__(self, obj, sockets, info=None, pack=PACK, unpack=UNPACK,
-                 exception_handler=None):
+    def __init__(self, obj, sockets, info=None, greenlet_group=None,
+                 exception_handler=None, pack=PACK, unpack=UNPACK):
         super(Worker, self).__init__()
         self.obj = obj
         socket_types = set(s.socket_type for s in sockets)
@@ -147,30 +148,21 @@ class Worker(Component):
             raise ValueError('Worker wraps one of PAIR, SUB, PULL, and XSUB')
         self.sockets = sockets
         self.info = info
+        if greenlet_group is None:
+            greenlet_group = Group()
+            greenlet_group.greenlet_class = self.greenlet_class
+        self.greenlet_group = greenlet_group
+        self.exception_handler = exception_handler
         self.pack = pack
         self.unpack = unpack
-        self.exception_handler = exception_handler
         self._cached_reply_sockets = {}
-
-    def accept_all(self):
-        """After calling this, the worker will accept all calls. This
-        will be called at the initialization of the worker.
-        """
-        self.accepting = True
-
-    def reject_all(self):
-        """After calling this, the worker will reject all calls. If the
-        worker is busy, it will be helpful.
-        """
-        self.accepting = False
 
     def run(self):
         """Runs the worker. While running, an RPC service is online."""
         poller = zmq.Poller()
         for socket in self.sockets:
             poller.register(socket, zmq.POLLIN)
-        group = Group()
-        group.greenlet_class = self.greenlet_class
+        group = self.greenlet_group
         try:
             while True:
                 for socket, event in poller.poll():
@@ -184,7 +176,10 @@ class Worker(Component):
                         warning.message = exc.message
                         warnings.warn(warning)
                         continue
-                    group.spawn(self.work, socket, call)
+                    if group.full():
+                        self.reject(socket, call)
+                    else:
+                        group.spawn(self.work, socket, call)
         finally:
             group.kill()
 
@@ -193,27 +188,33 @@ class Worker(Component):
         all of function actions. A function could return, yield, raise any
         packable objects.
         """
-        task_id = uuid4_bytes()
-        socket = self.get_reply_socket(socket, call.reply_to)
         channel = (None, None)
-        if socket is not None:
+        task_id = uuid4_bytes()
+        reply_socket = self.get_reply_socket(socket, call.reply_to)
+        if reply_socket is not None:
             channel = (call.call_id, task_id)
-            method = ACCEPT if self.accepting else REJECT
-            self.send_reply(socket, method, self.info, *channel)
-        if not self.accepting:
-            return
-        with self.exception_sending(socket, *channel) as raised:
+            self.send_reply(reply_socket, ACCEPT, self.info, *channel)
+        with self.exception_sending(reply_socket, *channel) as raised:
             val = self.call(call)
         if raised():
             return
         if is_iterator(val):
             vals = val
-            with self.exception_sending(socket, *channel):
+            with self.exception_sending(reply_socket, *channel):
                 for val in vals:
-                    socket and self.send_reply(socket, YIELD, val, *channel)
-                socket and self.send_reply(socket, BREAK, None, *channel)
-        else:
-            socket and self.send_reply(socket, RETURN, val, *channel)
+                    if reply_socket is not None:
+                        self.send_reply(reply_socket, YIELD, val, *channel)
+                if reply_socket is not None:
+                    self.send_reply(reply_socket, BREAK, None, *channel)
+        if reply_socket is not None:
+            self.send_reply(reply_socket, RETURN, val, *channel)
+
+    def reject(self, socket, call):
+        """Sends REJECT reply."""
+        reply_socket = self.get_reply_socket(socket, call.reply_to)
+        if reply_socket is None:
+            return
+        self.send_reply(reply_socket, REJECT, self.info, call.call_id, None)
 
     @contextmanager
     def exception_sending(self, socket, *channel):

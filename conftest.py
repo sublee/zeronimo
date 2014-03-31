@@ -118,6 +118,8 @@ def pytest_addoption(parser):
                      help='tests with epgm protocol.')
     parser.addoption('--patience', action='store', type=float, default=1.,
                      help='multiplier for default emitter timeout.')
+    parser.addoption('--incremental-patience', action='store_true',
+                     help='increase --patience when a test failed up to 5.')
     parser.addoption('--clear', action='store_true',
                      help='destroy context at each tests done.')
 
@@ -188,9 +190,11 @@ def get_testing_protocols(metafunc):
     return testing_protocols
 
 
-def adjust_patience(f):
+def incremental_patience(f):
+    if not config.option.incremental_patience:
+        return f
     @functools.wraps(f)
-    def patience_adjusted(**kwargs):
+    def patience_increased(**kwargs):
         patience = config.option.patience
         for x in xrange(5):
             kwargs['patience'] = patience
@@ -201,7 +205,7 @@ def adjust_patience(f):
                 patience *= 2
                 warnings.warn('Patience increased to {0}'.format(patience))
         raise exctype, exc, traceback
-    return patience_adjusted
+    return patience_increased
 
 
 customer_timeout = zeronimo.Customer.timeout
@@ -210,7 +214,7 @@ fanout_timeout = zeronimo.Fanout.timeout
 
 def resolve_fixtures(f, protocol):
     @functools.wraps(f)
-    @adjust_patience
+    @incremental_patience
     def fixture_resolved(**kwargs):
         ctx = zmq.Context()
         topic = rand_str()
@@ -235,7 +239,7 @@ def resolve_fixtures(f, protocol):
                 sub_sock.bind(sub_addr)
                 sub_addrs.add(sub_addr)
                 sub_socks.add(sub_sock)
-                worker_info = [pull_addr, sub_addr, topic]
+                worker_info = (pull_addr, sub_addr, topic)
                 val = zeronimo.Worker(app, [pull_sock, sub_sock], worker_info)
                 runners.add(val)
             elif isinstance(val, deferred_collector):

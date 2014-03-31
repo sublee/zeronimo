@@ -5,6 +5,7 @@ import warnings
 
 import gevent
 from gevent import joinall, spawn
+from gevent.pool import Pool
 import pytest
 import zmq.green as zmq
 
@@ -272,26 +273,26 @@ def test_slow(worker, collector, push):
 
 
 def test_reject(worker1, worker2, collector, push, pub, topic):
+    def count_workers(iteration=10):
+        worker_infos = set()
+        for x in xrange(iteration):
+            worker_infos.add(tuple(customer.emit('zeronimo').worker_info))
+        return len(worker_infos)
     customer = zeronimo.Customer(push, collector)
     fanout = zeronimo.Fanout(pub, collector)
-    assert worker1.accepting
-    assert worker2.accepting
-    assert len(fanout.emit(topic, 'zeronimo')) == 2
-    worker2.reject_all()
-    assert not worker2.accepting
-    assert customer.emit('zeronimo').worker_info == worker1.info
-    assert customer.emit('zeronimo').worker_info == worker1.info
-    assert len(fanout.emit(topic, 'zeronimo')) == 1
-    worker1.reject_all()
-    assert not worker1.accepting
-    with pytest.raises(zeronimo.Rejected):
-        customer.emit('zeronimo')
-    assert fanout.emit(topic, 'zeronimo') == []
-    worker1.accept_all()
-    worker2.accept_all()
-    assert worker1.accepting
-    assert worker2.accepting
-    assert len(fanout.emit(topic, 'zeronimo')) == 2
+    # count accepted workers
+    assert count_workers() == 2
+    # worker1 uses a greenlet pool sized by 1
+    worker1.stop()
+    worker1.greenlet_group = Pool(1)
+    worker1.start()
+    # emit long task
+    assert len(fanout.emit(topic, 'sleep', 0.5)) == 2
+    assert len(fanout.emit(topic, 'sleep', 0.5)) == 1
+    assert count_workers() == 1
+    # wait for long task done
+    worker1.greenlet_group.wait_available()
+    assert count_workers() == 2
 
 
 def test_subscription(worker1, worker2, collector, pub, topic):
@@ -617,6 +618,23 @@ def test_marshal_message(ctx, addr1, addr2):
     customer = zeronimo.Customer(customer_sock, collector, pack=pack)
     with running([worker], sockets=sockets):
         assert customer.emit('zeronimo').get() == 'zeronimo'
+
+
+def test_exception_handler(worker, collector, push, capsys):
+    customer = zeronimo.Customer(push, collector)
+    exceptions = []
+    def exception_handler(exc_info):
+        exceptions.append(exc_info[0])
+    customer.emit('zero_div').wait()
+    out, err = capsys.readouterr()
+    assert 'ZeroDivisionError' in err
+    assert len(exceptions) == 0
+    worker.exception_handler = exception_handler
+    with pytest.raises(ZeroDivisionError):
+        customer.emit('zero_div').get()
+    out, err = capsys.readouterr()
+    assert 'ZeroDivisionError' not in err
+    assert len(exceptions) == 1
 
 
 # catch leaks
