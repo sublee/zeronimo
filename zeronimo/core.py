@@ -50,8 +50,8 @@ except AttributeError:
 
 
 # default timeouts
-TIMEOUT = 0.01
-FANOUT_TIMEOUT = 0.1
+TIMEOUT = 0.05
+FANOUT_TIMEOUT = 0.5
 
 
 def is_iterator(obj):
