@@ -287,8 +287,8 @@ def test_reject(worker1, worker2, collector, push, pub, topic):
     worker1.greenlet_group = Pool(1)
     worker1.start()
     # emit long task
-    assert len(fanout.emit(topic, 'sleep', 0.5)) == 2
-    assert len(fanout.emit(topic, 'sleep', 0.5)) == 1
+    assert len(fanout.emit(topic, 'sleep', 1)) == 2
+    assert len(fanout.emit(topic, 'sleep', 1)) == 1
     assert count_workers() == 1
     # wait for long task done
     worker1.greenlet_group.wait_available()
