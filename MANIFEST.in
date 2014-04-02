@@ -1,1 +1,1 @@
-include zeronimotests.py conftest.py
+include test.py conftest.py
