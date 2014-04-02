@@ -143,7 +143,7 @@ class Worker(Component):
                  exception_handler=None, pack=PACK, unpack=UNPACK):
         super(Worker, self).__init__()
         self.obj = obj
-        socket_types = set(s.socket_type for s in sockets)
+        socket_types = set(s.type for s in sockets)
         if socket_types.difference([zmq.PAIR, zmq.SUB, zmq.PULL, ZMQ_XSUB]):
             raise ValueError('Worker wraps one of PAIR, SUB, PULL, and XSUB')
         self.sockets = sockets
