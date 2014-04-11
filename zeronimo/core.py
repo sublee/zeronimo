@@ -50,7 +50,7 @@ except AttributeError:
 
 
 # default timeouts
-TIMEOUT = 0.05
+TIMEOUT = 5.0
 FANOUT_TIMEOUT = 0.5
 
 
@@ -59,62 +59,7 @@ def is_iterator(obj):
     return (isinstance(obj, Iterable) and not isinstance(obj, serializable))
 
 
-class Component(object):
-    """A component should implement :meth:`run`. :attr:`running` is ensured to
-    be ``True`` while :meth:`run` is executing.
-    """
-
-    greenlet_class = Greenlet
-
-    def __new__(cls, *args, **kwargs):
-        obj = super(Component, cls).__new__(cls)
-        cls._patch(obj)
-        return obj
-
-    @classmethod
-    def _patch(cls, obj):
-        obj._running = None
-        def inner_run(self):
-            try:
-                cls.run(self)
-            except GreenletExit:
-                pass
-            finally:
-                self._running = None
-        def run(self):
-            self.start()
-            return self._running.get()
-        obj._inner_run = MethodType(inner_run, obj)
-        obj.run = MethodType(run, obj)
-
-    def run(self):
-        raise NotImplementedError(
-            '{0} has not implementation to run'.format(cls_name(self)))
-
-    def start(self):
-        if self.is_running():
-            raise RuntimeError('{0} already running'.format(cls_name(self)))
-        self._running = self.greenlet_class.spawn(self._inner_run)
-        self._running.join(0)
-        return self._running
-
-    def stop(self):
-        try:
-            self._running.kill()
-        except AttributeError:
-            raise RuntimeError('{0} not running'.format(cls_name(self)))
-
-    def wait(self, timeout=None):
-        try:
-            self._running.join(timeout)
-        except AttributeError:
-            raise RuntimeError('{0} not running'.format(cls_name(self)))
-
-    def is_running(self):
-        return self._running is not None
-
-
-class Worker(Component):
+class Worker(Greenlet):
     """Worker runs an RPC service of an object through ZeroMQ sockets. The
     ZeroMQ sockets should be PULL or SUB socket type. The PULL sockets receive
     Round-robin calls; the SUB sockets receive Publish-subscribe (fan-out)
@@ -150,7 +95,6 @@ class Worker(Component):
         self.info = info
         if greenlet_group is None:
             greenlet_group = Group()
-            greenlet_group.greenlet_class = self.greenlet_class
         self.greenlet_group = greenlet_group
         self.exception_handler = exception_handler
         self.pack = pack
@@ -162,26 +106,22 @@ class Worker(Component):
         poller = zmq.Poller()
         for socket in self.sockets:
             poller.register(socket, zmq.POLLIN)
-        group = self.greenlet_group
-        try:
-            while True:
-                for socket, event in poller.poll():
-                    assert event & zmq.POLLIN
-                    try:
-                        call = Call(*recv(socket, unpack=self.unpack))
-                    except BaseException as exc:
-                        warning = MalformedMessage(
-                            'Received malformed message: {!r}'
-                            ''.format(exc.message))
-                        warning.message = exc.message
-                        warnings.warn(warning)
-                        continue
-                    if group.full():
-                        self.reject(socket, call)
-                    else:
-                        group.spawn(self.work, socket, call)
-        finally:
-            group.kill()
+        while True:
+            for socket, event in poller.poll():
+                assert event & zmq.POLLIN
+                try:
+                    call = Call(*recv(socket, unpack=self.unpack))
+                except BaseException as exc:
+                    warning = MalformedMessage(
+                        'Received malformed message: {!r}'
+                        ''.format(exc.message))
+                    warning.message = exc.message
+                    warnings.warn(warning)
+                    continue
+                if self.greenlet_group.full():
+                    self.reject(socket, call)
+                else:
+                    self.greenlet_group.spawn(self.work, socket, call)
 
     def work(self, socket, call):
         """Calls a function and send results to the collector. It supports
@@ -303,7 +243,7 @@ class _Emitter(object):
     def _emit(self, funcname, args, kwargs,
               topic=None, limit=None, retry=False):
         """Allocates a call id and emit."""
-        if not self.collector.is_running():
+        if not self.collector.started:
             self.collector.start()
         call_id = uuid4_bytes()
         reply_to = self.collector.address
@@ -354,7 +294,7 @@ class Fanout(_Emitter):
             return []
 
 
-class Collector(Component):
+class Collector(Greenlet):
     """Collector receives results from the worker."""
 
     def __init__(self, socket, address=None, unpack=UNPACK):

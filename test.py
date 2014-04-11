@@ -27,17 +27,9 @@ def find_objects(cls):
     return [o for o in gc.get_objects() if isinstance(o, cls)]
 
 
-def test_running():
-    from zeronimo.core import Component
-    class NullRunner(Component):
-        def run(self):
-            gevent.sleep(0.1)
-    runner = NullRunner()
-    assert not runner.is_running()
-    runner.start()
-    assert runner.is_running()
-    runner.wait()
-    assert not runner.is_running()
+def is_running(greenlet):
+    print greenlet.started, greenlet.ready()
+    return greenlet.started and not greenlet.ready()
 
 
 def test_messaging(ctx, addr, topic):
@@ -152,8 +144,8 @@ def test_fixtures(worker, push, pub, collector, addr1, addr2, ctx):
     assert isinstance(collector, zeronimo.Collector)
     assert addr1 != addr2
     assert isinstance(ctx, zmq.Context)
-    assert worker.is_running()
-    assert collector.is_running()
+    assert is_running(worker)
+    assert is_running(collector)
 
 
 def test_nowait(worker, push):
@@ -283,12 +275,10 @@ def test_reject(worker1, worker2, collector, push, pub, topic):
     # count accepted workers
     assert count_workers() == 2
     # worker1 uses a greenlet pool sized by 1
-    worker1.stop()
     worker1.greenlet_group = Pool(1)
-    worker1.start()
     # emit long task
-    assert len(fanout.emit(topic, 'sleep', 1)) == 2
-    assert len(fanout.emit(topic, 'sleep', 1)) == 1
+    assert len(fanout.emit(topic, 'sleep', 0.3)) == 2
+    assert len(fanout.emit(topic, 'sleep', 0.3)) == 1
     assert count_workers() == 1
     # wait for long task done
     worker1.greenlet_group.wait_available()
@@ -303,17 +293,11 @@ def test_subscription(worker1, worker2, collector, pub, topic):
     assert len(fanout.emit(topic, 'zeronimo')) == 1
     sub2.set(zmq.UNSUBSCRIBE, topic)
     assert fanout.emit(topic, 'zeronimo') == []
-    worker1.stop()
     sub1.set(zmq.SUBSCRIBE, topic)
     sync_pubsub(pub, [sub1], topic)
-    worker1.start()
     assert len(fanout.emit(topic, 'zeronimo')) == 1
-    worker1.stop()
-    worker2.stop()
     sub2.set(zmq.SUBSCRIBE, topic)
     sync_pubsub(pub, [sub2], topic)
-    worker1.start()
-    worker2.start()
     assert len(fanout.emit(topic, 'zeronimo')) == 2
 
 
@@ -370,8 +354,8 @@ def test_device(ctx, collector, topic, addr1, addr2, addr3, addr4):
             forwarder.kill()
             push.close()
             pub.close()
-            worker1.stop()
-            worker2.stop()
+            worker1.kill()
+            worker2.kill()
         except UnboundLocalError:
             pass
 
@@ -427,23 +411,25 @@ def test_proxied_collector(ctx, worker, push, addr1, addr2):
     finally:
         try:
             streamer.kill()
-            collector.stop()
+            collector.kill()
             collector_sock.close()
         except UnboundLocalError:
             pass
 
 
 def test_2nd_start(worker, collector):
-    assert worker.is_running()
-    worker.stop()
-    assert not worker.is_running()
+    # 1st starting should be successful
+    assert is_running(worker)
+    assert is_running(collector)
+    worker.kill()
+    collector.kill()
+    assert not is_running(worker)
+    assert not is_running(collector)
+    # 2nd starting should be failed
     worker.start()
-    assert worker.is_running()
-    assert collector.is_running()
-    collector.stop()
-    assert not collector.is_running()
     collector.start()
-    assert collector.is_running()
+    assert not worker.started
+    assert not collector.started
 
 
 def test_concurrent_collector(worker, collector, push, pub, topic):
@@ -459,14 +445,13 @@ def test_concurrent_collector(worker, collector, push, pub, topic):
     assert len(done) == times
 
 
-def test_stopped_collector(worker, collector, push):
+def test_killed_collector(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
-    collector.stop()
-    assert not collector.is_running()
-    result = customer.emit('zeronimo')
-    assert result.get() == 'zeronimo'
-    assert collector.is_running()
-    collector.stop()
+    collector.kill()
+    assert not is_running(collector)
+    with pytest.raises(zeronimo.WorkerNotFound):
+        customer.emit('zeronimo')
+    assert not is_running(collector)
 
 
 def test_undelivered(collector, push, pub, topic):
@@ -493,9 +478,9 @@ def test_pgm_connect(ctx, fanout_addr):
     pub2 = ctx.socket(zmq.PUB)
     pub2.connect(fanout_addr)  # in zmq-3.2, pgm-connect sends an empty message
     try:
-        worker.wait(0.1)
+        worker.join(0.1)
     finally:
-        worker.stop()
+        worker.kill()
         sub.close()
         pub1.close()
         pub2.close()
