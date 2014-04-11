@@ -199,7 +199,7 @@ def incremental_patience(f):
         for x in xrange(5):
             kwargs['patience'] = patience
             try:
-                f(**kwargs)
+                return f(**kwargs)
             except:
                 exctype, exc, traceback = sys.exc_info()
                 patience *= 2
