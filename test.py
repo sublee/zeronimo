@@ -28,7 +28,6 @@ def find_objects(cls):
 
 
 def is_running(greenlet):
-    print greenlet.started, greenlet.ready()
     return greenlet.started and not greenlet.ready()
 
 
@@ -422,12 +421,16 @@ def test_2nd_start(worker, collector):
     # 1st starting should be successful
     assert is_running(worker)
     assert is_running(collector)
+    print 1
     worker.kill()
+    print 2
     collector.kill()
     assert not is_running(worker)
     assert not is_running(collector)
     # 2nd starting should be failed
+    print 3
     worker.start()
+    print 4
     collector.start()
     assert not worker.started
     assert not collector.started
