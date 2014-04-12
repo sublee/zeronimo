@@ -268,7 +268,7 @@ def test_reject(worker1, worker2, collector, push, pub, topic):
     def count_workers(iteration=10):
         worker_infos = set()
         for x in xrange(iteration):
-            worker_infos.add(tuple(customer.emit('zeronimo').worker_info))
+            worker_infos.add(customer.emit('zeronimo').worker_info)
         return len(worker_infos)
     customer = zeronimo.Customer(push, collector)
     fanout = zeronimo.Fanout(pub, collector)
@@ -277,7 +277,7 @@ def test_reject(worker1, worker2, collector, push, pub, topic):
     # worker1 uses a greenlet pool sized by 1
     worker1.greenlet_group = Pool(1)
     # emit slow task
-    how_slow = zeronimo.Fanout.timeout * 2
+    how_slow = zeronimo.Fanout.timeout * 4
     assert len(fanout.emit(topic, 'sleep', how_slow)) == 2
     assert len(fanout.emit(topic, 'sleep', how_slow)) == 1
     assert count_workers() == 1
