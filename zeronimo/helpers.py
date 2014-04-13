@@ -11,10 +11,10 @@
 import zmq
 
 
-__all__ = ['cls_name', 'make_repr']
+__all__ = ['class_name', 'make_repr']
 
 
-def cls_name(obj):
+def class_name(obj):
     """Returns the class name of the object."""
     return type(obj).__name__
 
@@ -58,7 +58,7 @@ def make_repr(obj, params=None, keywords=None, data=None, name=None,
             '{0}={1}'.format(attr, _repr_attr(obj, attr, data, reprs))
             for attr in keywords))
     if name is None:
-        name = cls_name(obj)
+        name = class_name(obj)
     return '{0}({1})'.format(name, ', '.join(opts))
 
 

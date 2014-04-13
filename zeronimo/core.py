@@ -26,7 +26,7 @@ import zmq.green as zmq
 from .exceptions import (
     EmissionError, WorkerNotFound, Rejected, Undelivered, TaskClosed,
     MalformedMessage)
-from .helpers import cls_name, make_repr, socket_type_name
+from .helpers import class_name, socket_type_name
 from .messaging import (
     ACK, ACCEPT, REJECT, RETURN, RAISE, YIELD, BREAK, PACK, UNPACK,
     Call, Reply, send, recv)
@@ -50,8 +50,8 @@ except AttributeError:
 
 
 # default timeouts
-TIMEOUT = 0.05
-FANOUT_TIMEOUT = 0.5
+CUSTOMER_TIMEOUT = 5
+FANOUT_TIMEOUT = 0.1
 
 
 def is_iterator(obj):
@@ -89,11 +89,11 @@ class Component(object):
 
     def run(self):
         raise NotImplementedError(
-            '{0} has not implementation to run'.format(cls_name(self)))
+            '{0} has not implementation to run'.format(class_name(self)))
 
     def start(self):
         if self.is_running():
-            raise RuntimeError('{0} already running'.format(cls_name(self)))
+            raise RuntimeError('{0} already running'.format(class_name(self)))
         self._running = self.greenlet_class.spawn(self._inner_run)
         self._running.join(0)
         return self._running
@@ -102,19 +102,35 @@ class Component(object):
         try:
             self._running.kill()
         except AttributeError:
-            raise RuntimeError('{0} not running'.format(cls_name(self)))
+            raise RuntimeError('{0} not running'.format(class_name(self)))
 
     def wait(self, timeout=None):
         try:
             self._running.join(timeout)
         except AttributeError:
-            raise RuntimeError('{0} not running'.format(cls_name(self)))
+            raise RuntimeError('{0} not running'.format(class_name(self)))
 
     def is_running(self):
         return self._running is not None
 
 
-class Worker(Component):
+class Greenlet_(Greenlet):
+
+    def start(self):
+        super(Greenlet_, self).start()
+        self.join(0)
+
+    def stop(self):
+        self.kill()
+
+    def is_running(self):
+        return self.started and not self.dead
+
+    def wait(self, timeout=None):
+        self.join(timeout)
+
+
+class Worker(Greenlet_):
     """Worker runs an RPC service of an object through ZeroMQ sockets. The
     ZeroMQ sockets should be PULL or SUB socket type. The PULL sockets receive
     Round-robin calls; the SUB sockets receive Publish-subscribe (fan-out)
@@ -150,19 +166,17 @@ class Worker(Component):
         self.info = info
         if greenlet_group is None:
             greenlet_group = Group()
-            greenlet_group.greenlet_class = self.greenlet_class
         self.greenlet_group = greenlet_group
         self.exception_handler = exception_handler
         self.pack = pack
         self.unpack = unpack
         self._cached_reply_sockets = {}
 
-    def run(self):
+    def _run(self):
         """Runs the worker. While running, an RPC service is online."""
         poller = zmq.Poller()
         for socket in self.sockets:
             poller.register(socket, zmq.POLLIN)
-        group = self.greenlet_group
         try:
             while True:
                 for socket, event in poller.poll():
@@ -176,12 +190,12 @@ class Worker(Component):
                         warning.message = exc.message
                         warnings.warn(warning)
                         continue
-                    if group.full():
+                    if self.greenlet_group.full():
                         self.reject(socket, call)
                     else:
-                        group.spawn(self.work, socket, call)
+                        self.greenlet_group.spawn(self.work, socket, call)
         finally:
-            group.kill()
+            self.greenlet_group.kill()
 
     def work(self, socket, call):
         """Calls a function and send results to the collector. It supports
@@ -269,8 +283,7 @@ class Worker(Component):
             pass
 
     def __repr__(self):
-        keywords = ['info'] if self.info is not None else []
-        return make_repr(self, ['obj', 'sockets'], keywords)
+        return '<{0} info={1!r}>'.format(class_name(self), self.info)
 
 
 class _Emitter(object):
@@ -328,7 +341,7 @@ class Customer(_Emitter):
     """
 
     available_socket_types = [zmq.PAIR, zmq.PUSH]
-    timeout = 0.01
+    timeout = CUSTOMER_TIMEOUT
 
     def emit(self, funcname, *args, **kwargs):
         if self.collector is None:
@@ -343,7 +356,7 @@ class Fanout(_Emitter):
     """
 
     available_socket_types = [zmq.PUB, ZMQ_XPUB]
-    timeout = 0.1
+    timeout = FANOUT_TIMEOUT
 
     def emit(self, topic, funcname, *args, **kwargs):
         if self.collector is None:
@@ -354,7 +367,7 @@ class Fanout(_Emitter):
             return []
 
 
-class Collector(Component):
+class Collector(Greenlet_):
     """Collector receives results from the worker."""
 
     def __init__(self, socket, address=None, unpack=UNPACK):
@@ -408,7 +421,7 @@ class Collector(Component):
                 raise WorkerNotFound('Failed to find worker')
         return results
 
-    def run(self):
+    def _run(self):
         while True:
             try:
                 reply = Reply(*recv(self.socket, unpack=self.unpack))
