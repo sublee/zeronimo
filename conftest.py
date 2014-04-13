@@ -239,7 +239,8 @@ def resolve_fixtures(f, protocol):
                 sub_sock.bind(sub_addr)
                 sub_addrs.add(sub_addr)
                 sub_socks.add(sub_sock)
-                worker_info = (pull_addr, sub_addr, topic)
+                worker_info = '{0}[{1}]({2})' \
+                              ''.format(f.__name__, protocol, param)
                 val = zeronimo.Worker(app, [pull_sock, sub_sock], worker_info)
                 greenlets.add(val)
             elif isinstance(val, deferred_collector):

@@ -185,8 +185,8 @@ class Worker(Component):
                         call = Call(*recv(socket, unpack=self.unpack))
                     except BaseException as exc:
                         warning = MalformedMessage(
-                            'Received malformed message: {!r}'
-                            ''.format(exc.message))
+                            '{0} received malformed message: {1!r}'
+                            ''.format(self, exc.message))
                         warning.message = exc.message
                         warnings.warn(warning)
                         continue
