@@ -285,8 +285,9 @@ def test_reject(worker1, worker2, collector, push, pub, topic):
     # worker1 uses a greenlet pool sized by 1
     worker1.greenlet_group = Pool(1)
     # emit long task
-    assert len(fanout.emit(topic, 'sleep', 1)) == 2
-    assert len(fanout.emit(topic, 'sleep', 1)) == 1
+    how_slow = zeronimo.Fanout.timeout * 4
+    assert len(fanout.emit(topic, 'sleep', how_slow)) == 2
+    assert len(fanout.emit(topic, 'sleep', how_slow)) == 1
     assert count_workers() == 1
     # wait for long task done
     worker1.greenlet_group.wait_available()
