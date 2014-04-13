@@ -76,7 +76,7 @@ class Component(object):
         obj._running = None
         def inner_run(self):
             try:
-                cls.run(self)
+                cls._run(self)
             except GreenletExit:
                 pass
             finally:
@@ -130,7 +130,7 @@ class Greenlet_(Greenlet):
         self.join(timeout)
 
 
-class Worker(Greenlet_):
+class Worker(Component):
     """Worker runs an RPC service of an object through ZeroMQ sockets. The
     ZeroMQ sockets should be PULL or SUB socket type. The PULL sockets receive
     Round-robin calls; the SUB sockets receive Publish-subscribe (fan-out)
@@ -367,7 +367,7 @@ class Fanout(_Emitter):
             return []
 
 
-class Collector(Greenlet_):
+class Collector(Component):
     """Collector receives results from the worker."""
 
     def __init__(self, socket, address=None, unpack=UNPACK):

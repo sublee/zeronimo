@@ -30,7 +30,7 @@ def find_objects(cls):
 def test_running():
     from zeronimo.core import Component
     class NullRunner(Component):
-        def run(self):
+        def _run(self):
             gevent.sleep(0.1)
     runner = NullRunner()
     assert not runner.is_running()

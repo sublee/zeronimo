@@ -281,13 +281,14 @@ def resolve_fixtures(f, protocol):
             return f(**kwargs)
         finally:
             for greenlet in greenlets:
-                greenlet.kill()
+                if greenlet.is_running():
+                    greenlet.stop()
                 try:
                     sockets = greenlet.sockets
                 except AttributeError:
                     sockets = [greenlet.socket]
-                for socket in sockets:
-                    socket.close()
+                for sock in sockets:
+                    sock.close()
     return fixture_resolved
 
 
@@ -295,6 +296,8 @@ def resolve_fixtures(f, protocol):
 # automatically.
 import _pytest.python
 genfunctions = _pytest.python.PyCollector._genfunctions
+
+
 def patched_genfunctions(*args, **kwargs):
     for function in genfunctions(*args, **kwargs):
         try:
@@ -387,7 +390,7 @@ def running(greenlets, sockets=None):
         yield
     finally:
         for greenlet in greenlets:
-            greenlet.kill()
+            greenlet.stop()
         if sockets is not None:
             for sock in sockets:
                 sock.close()
