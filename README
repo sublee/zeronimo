@@ -5,4 +5,4 @@ RPC between distributed workers.
 
 To test Zeronimo, run this:
 
-  $ py.test --all zeronimotests.py
+  $ py.test --all
