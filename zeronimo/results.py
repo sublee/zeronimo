@@ -56,9 +56,12 @@ class RemoteResult(AsyncResult):
 
     def set_remote_exception(self, remote_exc_info):
         """Raises an exception as a :exc:`RemoteException`."""
-        exctype, excmsg, filename, lineno = remote_exc_info
+        exctype, excmsg, filename, lineno = remote_exc_info[:4]
         exctype = RemoteException.compose(exctype)
         exc = exctype(excmsg, filename, lineno, self.worker_info)
+        if len(remote_exc_info) > 4:
+            state = remote_exc_info[4]
+            exc.__setstate__(state)
         self.set_exception(exc)
 
     def set_exception(self, exc):

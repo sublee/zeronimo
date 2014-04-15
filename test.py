@@ -28,16 +28,16 @@ def find_objects(cls):
 
 
 def test_running():
-    from zeronimo.core import Component
-    class NullRunner(Component):
-        def _run(self):
+    from zeronimo.core import Background
+    class NullBG(Background):
+        def __call__(self):
             gevent.sleep(0.1)
-    runner = NullRunner()
-    assert not runner.is_running()
-    runner.start()
-    assert runner.is_running()
-    runner.wait()
-    assert not runner.is_running()
+    bg = NullBG()
+    assert not bg.running()
+    bg.start()
+    assert bg.running()
+    bg.wait()
+    assert not bg.running()
 
 
 def test_messaging(ctx, addr, topic):
@@ -67,7 +67,7 @@ def test_from_socket(ctx, addr1, addr2):
     collector_sock.bind(addr2)
     push = ctx.socket(zmq.PUSH)
     push.connect(addr1)
-    # components
+    # logic
     app = Application()
     worker = zeronimo.Worker(app, [worker_sock])
     collector = zeronimo.Collector(collector_sock, addr2)
@@ -152,8 +152,8 @@ def test_fixtures(worker, push, pub, collector, addr1, addr2, ctx):
     assert isinstance(collector, zeronimo.Collector)
     assert addr1 != addr2
     assert isinstance(ctx, zmq.Context)
-    assert worker.is_running()
-    assert collector.is_running()
+    assert worker.running()
+    assert collector.running()
 
 
 def test_nowait(worker, push):
@@ -303,10 +303,17 @@ def test_subscription(worker1, worker2, collector, pub, topic):
     sub2.set(zmq.UNSUBSCRIBE, topic)
     assert fanout.emit(topic, 'zeronimo') == []
     sub1.set(zmq.SUBSCRIBE, topic)
+    # sync_pubsub will disturb the worker. so the worker should be stopped
+    # during sync_pubsub works.
+    worker2.stop()
     sync_pubsub(pub, [sub1], topic)
+    worker2.start()
     assert len(fanout.emit(topic, 'zeronimo')) == 1
     sub2.set(zmq.SUBSCRIBE, topic)
+    # same reason
+    worker2.stop()
     sync_pubsub(pub, [sub2], topic)
+    worker2.start()
     assert len(fanout.emit(topic, 'zeronimo')) == 2
 
 
@@ -426,17 +433,19 @@ def test_proxied_collector(ctx, worker, push, addr1, addr2):
             pass
 
 
-def _test_2nd_start(worker, collector):
-    assert worker.is_running()
+def test_2nd_start(worker, collector):
+    assert worker.running()
+    print '- 1'
     worker.stop()
-    assert not worker.is_running()
+    assert not worker.running()
+    print '- 2'
     worker.start()
-    assert worker.is_running()
-    assert collector.is_running()
+    assert worker.running()
+    assert collector.running()
     collector.stop()
-    assert not collector.is_running()
+    assert not collector.running()
     collector.start()
-    assert collector.is_running()
+    assert collector.running()
 
 
 def test_concurrent_collector(worker, collector, push, pub, topic):
@@ -452,13 +461,13 @@ def test_concurrent_collector(worker, collector, push, pub, topic):
     assert len(done) == times
 
 
-def _test_stopped_collector(worker, collector, push):
+def test_stopped_collector(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
     collector.stop()
-    assert not collector.is_running()
+    assert not collector.running()
     result = customer.emit('zeronimo')
     assert result.get() == 'zeronimo'
-    assert collector.is_running()
+    assert collector.running()
     collector.stop()
 
 
@@ -571,7 +580,7 @@ def test_direct_xpub_xsub(ctx, addr1, addr2):
     collector_sock.bind(addr2)
     xpub = ctx.socket(zmq.XPUB)
     xpub.connect(addr1)
-    # components
+    # logic
     app = Application()
     worker = zeronimo.Worker(app, [worker_sock])
     collector = zeronimo.Collector(collector_sock, addr2)
@@ -604,7 +613,7 @@ def test_marshal_message(ctx, addr1, addr2):
     collector_sock = ctx.socket(zmq.PULL)
     collector_sock.bind(addr2)
     sockets = [worker_sock, collector_sock, customer_sock]
-    # components
+    # logic
     app = Application()
     worker = zeronimo.Worker(app, [worker_sock], pack=pack, unpack=unpack)
     collector = zeronimo.Collector(collector_sock, addr2, unpack=unpack)
@@ -628,6 +637,54 @@ def test_exception_handler(worker, collector, push, capsys):
     out, err = capsys.readouterr()
     assert 'ZeroDivisionError' not in err
     assert len(exceptions) == 1
+
+
+class ExampleException(BaseException):
+
+    errno = None
+    initialized = False
+
+    def __init__(self, errno):
+        self.errno = errno
+        self.initialized = True
+
+    def __getstate__(self):
+        return self.errno
+
+    def __setstate__(self, errno):
+        self.errno = errno
+
+
+class ExampleExceptionRaiser(object):
+
+    def throw(self, errno):
+        raise ExampleException(errno)
+
+
+def test_exception_state(ctx, addr1, addr2):
+    # sockets
+    worker_sock = ctx.socket(zmq.PULL)
+    worker_sock.bind(addr1)
+    collector_sock = ctx.socket(zmq.PULL)
+    collector_sock.bind(addr2)
+    push = ctx.socket(zmq.PUSH)
+    push.connect(addr1)
+    # logic
+    app = ExampleExceptionRaiser()
+    worker = zeronimo.Worker(app, [worker_sock])
+    collector = zeronimo.Collector(collector_sock, addr2)
+    customer = zeronimo.Customer(push, collector)
+    with running([worker], sockets=[worker_sock, collector_sock, push]):
+        result = customer.emit('throw', 2007)
+        try:
+            result.get()
+        except BaseException as exc:
+            assert isinstance(exc, zeronimo.RemoteException)
+            assert isinstance(exc, ExampleException)
+            assert exc.errno == 2007
+            assert not exc.initialized
+        else:
+            assert False
 
 
 # catch leaks

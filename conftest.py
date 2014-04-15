@@ -282,7 +282,7 @@ def resolve_fixtures(f, protocol):
             return f(**kwargs)
         finally:
             for greenlet in greenlets:
-                if greenlet.is_running():
+                if greenlet.running():
                     greenlet.stop()
                 try:
                     sockets = greenlet.sockets

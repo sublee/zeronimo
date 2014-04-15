@@ -10,7 +10,6 @@ from __future__ import absolute_import
 from collections import Iterable, Mapping, Sequence, Set
 from contextlib import contextmanager
 import sys
-from types import MethodType
 import warnings
 
 from gevent import Greenlet, GreenletExit, Timeout
@@ -59,78 +58,52 @@ def is_iterator(obj):
     return (isinstance(obj, Iterable) and not isinstance(obj, serializable))
 
 
-class Component(object):
-    """A component should implement :meth:`run`. :attr:`running` is ensured to
-    be ``True`` while :meth:`run` is executing.
+class Background(object):
+    """A background object spawns one greenlet at a time. The greenlet will
+    call :meth:`__call__`.
     """
 
+    #: The greenlet class to be spawned.
     greenlet_class = Greenlet
 
-    def __new__(cls, *args, **kwargs):
-        obj = super(Component, cls).__new__(cls)
-        cls._patch(obj)
-        return obj
+    #: The current running greenlet.
+    greenlet = None
 
-    @classmethod
-    def _patch(cls, obj):
-        obj._running = None
-        def inner_run(self):
-            try:
-                cls._run(self)
-            except GreenletExit:
-                pass
-            finally:
-                self._running = None
-        def run(self):
-            self.start()
-            return self._running.get()
-        obj._inner_run = MethodType(inner_run, obj)
-        obj.run = MethodType(run, obj)
+    def __call__(self):
+        # should be implemented by subclass.
+        raise NotImplementedError(
+            '{0} has no __call__ implementation'.format(class_name(self)))
 
     def run(self):
-        raise NotImplementedError(
-            '{0} has not implementation to run'.format(class_name(self)))
+        try:
+            self()
+        except GreenletExit:
+            pass
+        finally:
+            del self.greenlet
 
     def start(self):
-        if self.is_running():
+        if self.running():
             raise RuntimeError('{0} already running'.format(class_name(self)))
-        self._running = self.greenlet_class.spawn(self._inner_run)
-        self._running.join(0)
-        return self._running
+        self.greenlet = self.greenlet_class.spawn(self.run)
+        self.greenlet.join(0)
+        return self.greenlet
 
     def stop(self):
-        try:
-            self._running.kill()
-        except AttributeError:
+        if not self.running():
             raise RuntimeError('{0} not running'.format(class_name(self)))
+        self.greenlet.kill(block=True)
 
     def wait(self, timeout=None):
-        try:
-            self._running.join(timeout)
-        except AttributeError:
+        if not self.running():
             raise RuntimeError('{0} not running'.format(class_name(self)))
+        self.greenlet.join(timeout)
 
-    def is_running(self):
-        return self._running is not None
-
-
-class Greenlet_(Greenlet):
-
-    def start(self):
-        super(Greenlet_, self).start()
-        self.join(0)
-
-    def stop(self):
-        self.kill()
-
-    def is_running(self):
-        return self.started and not self.dead
-
-    def wait(self, timeout=None):
-        self.join(timeout)
+    def running(self):
+        return self.greenlet is not None  # and not self.greenlet.dead
 
 
-class Worker(Component):
+class Worker(Background):
     """Worker runs an RPC service of an object through ZeroMQ sockets. The
     ZeroMQ sockets should be PULL or SUB socket type. The PULL sockets receive
     Round-robin calls; the SUB sockets receive Publish-subscribe (fan-out)
@@ -172,7 +145,7 @@ class Worker(Component):
         self.unpack = unpack
         self._cached_reply_sockets = {}
 
-    def _run(self):
+    def __call__(self):
         """Runs the worker. While running, an RPC service is online."""
         poller = zmq.Poller()
         for socket in self.sockets:
@@ -244,6 +217,12 @@ class Worker(Component):
             filename = tb.tb_frame.f_code.co_filename
             lineno = tb.tb_lineno
             val = (type(exc), str(exc), filename, lineno)
+            try:
+                state = exc.__getstate__()
+            except AttributeError:
+                pass
+            else:
+                val += (state,)
             socket and self.send_reply(socket, RAISE, val, *channel)
             raised.append(True)
             if self.exception_handler is None:
@@ -316,7 +295,7 @@ class _Emitter(object):
     def _emit(self, funcname, args, kwargs,
               topic=None, limit=None, retry=False):
         """Allocates a call id and emit."""
-        if not self.collector.is_running():
+        if not self.collector.running():
             self.collector.start()
         call_id = uuid4_bytes()
         reply_to = self.collector.address
@@ -367,7 +346,7 @@ class Fanout(_Emitter):
             return []
 
 
-class Collector(Component):
+class Collector(Background):
     """Collector receives results from the worker."""
 
     def __init__(self, socket, address=None, unpack=UNPACK):
@@ -421,7 +400,7 @@ class Collector(Component):
                 raise WorkerNotFound('Failed to find worker')
         return results
 
-    def _run(self):
+    def __call__(self):
         while True:
             try:
                 reply = Reply(*recv(self.socket, unpack=self.unpack))
