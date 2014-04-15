@@ -33,10 +33,13 @@ The address is 192.168.0.41. The worker will listen at 24600.
                yield word
 
    ctx = zmq.Context()
+
+   # make worker
    worker_sock = ctx.socket(zmq.PULL)
    worker_sock.bind('tcp://*:24600')
-
    worker = zeronimo.Worker(Application(), [worker_sock])
+
+   # run worker forever
    worker.run()
 
 Client-side
@@ -51,15 +54,19 @@ The address is 192.168.0.42. The reply collector will listen at 24601.
 
    ctx = zmq.Context()
 
+   # make remote result collector
    collector_sock = ctx.socket(zmq.PULL)
    collector_sock.bind('tcp://*:24601)
    collector = zeronimo.Collector(collector_sock, 'tcp://192.168.0.42:24601')
 
+   # make customer
    customer_sock = ctx.socket(zmq.PUSH)
    customer_sock.connect('tcp://192.168.0.41:24600')
    customer = zeronimo.Customer(customer_sock, collector)
 
-   for line in customer.rycbar123():
+   # rpc
+   remote_result = customer.emit('rycbar123')
+   for line in remote_result.get():
        print line
 
 """
