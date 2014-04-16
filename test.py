@@ -305,14 +305,16 @@ def test_subscription(worker1, worker2, collector, pub, topic):
     sub1.set(zmq.SUBSCRIBE, topic)
     # sync_pubsub will disturb the worker. so the worker should be stopped
     # during sync_pubsub works.
-    worker2.stop()
+    worker1.stop()
     sync_pubsub(pub, [sub1], topic)
-    worker2.start()
+    worker1.start()
     assert len(fanout.emit(topic, 'zeronimo')) == 1
     sub2.set(zmq.SUBSCRIBE, topic)
     # same reason
+    worker1.stop()
     worker2.stop()
     sync_pubsub(pub, [sub2], topic)
+    worker1.start()
     worker2.start()
     assert len(fanout.emit(topic, 'zeronimo')) == 2
 
