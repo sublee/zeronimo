@@ -226,7 +226,7 @@ class Worker(Background):
             socket and self.send_reply(socket, RAISE, val, *channel)
             raised.append(True)
             if self.exception_handler is None:
-                raise
+                raise exc_info[0], exc_info[1], exc_info[2]
             else:
                 self.exception_handler(exc_info)
 

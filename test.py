@@ -626,19 +626,22 @@ def test_marshal_message(ctx, addr1, addr2):
 
 def test_exception_handler(worker, collector, push, capsys):
     customer = zeronimo.Customer(push, collector)
+    # without exception handler
+    with pytest.raises(ZeroDivisionError):
+        customer.emit('zero_div').get()
+    out, err = capsys.readouterr()
+    assert 'ZeroDivisionError:' in err
+    # with exception handler
     exceptions = []
     def exception_handler(exc_info):
         exceptions.append(exc_info[0])
-    customer.emit('zero_div').wait()
-    out, err = capsys.readouterr()
-    assert 'ZeroDivisionError' in err
-    assert len(exceptions) == 0
     worker.exception_handler = exception_handler
     with pytest.raises(ZeroDivisionError):
         customer.emit('zero_div').get()
     out, err = capsys.readouterr()
-    assert 'ZeroDivisionError' not in err
+    assert 'ZeroDivisionError:' not in err
     assert len(exceptions) == 1
+    assert exceptions[0] is ZeroDivisionError
 
 
 class ExampleException(BaseException):
