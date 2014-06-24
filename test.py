@@ -1,17 +1,20 @@
 # -*- coding: utf-8 -*-
 import gc
+import os
 import time
 import warnings
 
 import gevent
 from gevent import joinall, spawn
 from gevent.pool import Pool
+from psutil import Process
 import pytest
 import zmq.green as zmq
 
 from conftest import (
     Application, link_sockets, run_device, running, sync_pubsub)
 import zeronimo
+from zeronimo.core import Background
 import zeronimo.messaging
 
 
@@ -28,7 +31,6 @@ def find_objects(cls):
 
 
 def test_running():
-    from zeronimo.core import Background
     class NullBG(Background):
         def __call__(self):
             gevent.sleep(0.1)
@@ -57,6 +59,8 @@ def test_messaging(ctx, addr, topic):
         assert zeronimo.messaging.recv(pull) == Exception
         zeronimo.messaging.send(push, Exception('Allons-y'), topic=t)
         assert isinstance(zeronimo.messaging.recv(pull), Exception)
+    push.close()
+    pull.close()
 
 
 def test_from_socket(ctx, addr1, addr2):
@@ -719,3 +723,16 @@ def test_no_call_leak():
 @pytest.mark.trylast
 def test_no_reply_leak():
     assert not find_objects(zeronimo.messaging.Reply)
+
+
+@pytest.mark.trylast
+def test_no_socket_leak():
+    proc = Process(os.getpid())
+    for x in xrange(3):
+        conns = [conn for conn in proc.connections()
+                 if conn.status not in ('CLOSE_WAIT', 'NONE')]
+        if not conns:
+            break
+        gevent.sleep(0.1)
+    else:
+        pytest.fail('{0} connections leacked'.format(len(conns)))

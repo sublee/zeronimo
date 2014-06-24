@@ -169,6 +169,10 @@ class Worker(Background):
                         self.greenlet_group.spawn(self.work, socket, call)
         finally:
             self.greenlet_group.kill()
+            for sockets in self._cached_reply_sockets.viewvalues():
+                for socket in sockets.viewvalues():
+                    socket.close()
+            self._cached_reply_sockets.clear()
 
     def work(self, socket, call):
         """Calls a function and send results to the collector. It supports
