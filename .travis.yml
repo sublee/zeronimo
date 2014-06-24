@@ -16,8 +16,8 @@ env:
 - ZMQ_VERSION=2.1.7
 - ZMQ_VERSION=2.1.4
 before_install:
-# cython, pytest
-- pip install cython pytest
+# cython, pytest, psutil
+- pip install cython pytest psutil
 # libcap2-bin, uuid-dev
 - sudo apt-get install libcap2-bin uuid-dev
 # zeromq
