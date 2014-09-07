@@ -41,6 +41,7 @@ env:
 #- pip install -e .
 before_script:
 # make sure to use PGM
+- sudo apt-get install libcap2-bin
 - which python
 - readlink -f `which python`
 - sudo setcap CAP_NET_RAW=ep `readlink -f \`which python\``
