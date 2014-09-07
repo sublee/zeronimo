@@ -1,6 +1,9 @@
 language: python
 python:
 - 2.7
+os:
+- linux
+- osx
 env:
 - ZMQ_VERSION=4.0.4
 #- ZMQ_VERSION=4.0.3
@@ -15,39 +18,29 @@ env:
 #- ZMQ_VERSION=2.1.9
 #- ZMQ_VERSION=2.1.7
 #- ZMQ_VERSION=2.1.4
-#before_install:
-## cython, pytest, psutil, lru-dict
-#- pip install cython pytest psutil pylru
-## libcap2-bin, uuid-dev
-#- sudo apt-get install libcap2-bin uuid-dev
-## zeromq
-#- wget http://download.zeromq.org/zeromq-$ZMQ_VERSION.tar.gz
-#- tar xvzf zeromq-$ZMQ_VERSION.tar.gz
-#- cd zeromq-$ZMQ_VERSION
-#- ./configure --with-pgm --prefix=`pwd`/../local
-#- make
-#- make install
-#- cd ..
-## pyzmq-14.1.1
-#- git clone https://github.com/zeromq/pyzmq.git pyzmq
-#- cd pyzmq
-#- git checkout v14.1.1
-#- python setup.py clean
-#- python setup.py configure --zmq=../local
-#- python setup.py build_ext --inplace
-#- pip install -e .
-#- cd ..
-#install:
-#- pip install -e .
-before_script:
-# make sure to use PGM
-- sudo apt-get install libcap2-bin
-- which python
-- readlink -f `which python`
-- ls `readlink -f \`which python\``
-- sleep 1
-- getcap `readlink -f \`which python\``
-- sudo getcap `readlink -f \`which python\``
-- sudo setcap CAP_NET_RAW=ep `readlink -f \`which python\``
+before_install:
+# cython, pytest, psutil, lru-dict
+- pip install cython pytest psutil pylru
+# uuid-dev
+- sudo apt-get install uuid-dev
+# zeromq
+- wget http://download.zeromq.org/zeromq-$ZMQ_VERSION.tar.gz
+- tar xvzf zeromq-$ZMQ_VERSION.tar.gz
+- cd zeromq-$ZMQ_VERSION
+- ./configure --with-pgm --prefix=`pwd`/../local
+- make
+- make install
+- cd ..
+# pyzmq-14.3.1
+- git clone https://github.com/zeromq/pyzmq.git pyzmq
+- cd pyzmq
+- git checkout v14.3.1
+- python setup.py clean
+- python setup.py configure --zmq=../local
+- python setup.py build_ext --inplace
+- pip install -e .
+- cd ..
+install:
+- pip install -e .
 script:
-- py.test -v --all --incremental-patience
+- py.test -v --inproc --ipc --tcp --epgm --incremental-patience
