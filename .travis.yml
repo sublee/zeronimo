@@ -20,9 +20,7 @@ matrix:
   allow_failures:
   - env: ZMQ_VERSION=
 before_install:
-- # test requires
-  pip install cython pytest psutil pylru
-- # install zeromq
+- | # install zeromq
   if [ $ZMQ_VERSION ]
   then
     if [[ $ZMQ_VERSION == 2.* ]]
@@ -40,7 +38,8 @@ before_install:
   make
   make install
   cd ..
-- # pyzmq-14.3.1
+- | # install pyzmq
+  pip install cython
   git clone -b v14.3.1 https://github.com/zeromq/pyzmq.git pyzmq
   cd pyzmq
   python setup.py clean
@@ -48,6 +47,8 @@ before_install:
   python setup.py build_ext --inplace
   pip install -e .
   cd ..
+- | # test requires
+  pip install pytest psutil pylru
 install:
 - pip install -e .
 script:
