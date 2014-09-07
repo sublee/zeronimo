@@ -31,8 +31,10 @@ before_install:
     tar xvzf zeromq-$ZMQ_VERSION.tar.gz
     cd zeromq-$ZMQ_VERSION
   else
+    sudo apt-get install libtool
     git clone https://github.com/zeromq/libzmq.git libzmq
     cd libzmq
+    ./autogen.sh
   fi
   ./configure --with-pgm --prefix=`pwd`/../local
   make
