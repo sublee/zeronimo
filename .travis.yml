@@ -3,18 +3,18 @@ python:
 - 2.7
 env:
 - ZMQ_VERSION=4.0.4
-- ZMQ_VERSION=4.0.3
-- ZMQ_VERSION=4.0.2
-- ZMQ_VERSION=4.0.1
-- ZMQ_VERSION=3.2.4
-- ZMQ_VERSION=3.2.3
-- ZMQ_VERSION=3.2.2
-- ZMQ_VERSION=2.2.0
-- ZMQ_VERSION=2.1.11
-- ZMQ_VERSION=2.1.10
-- ZMQ_VERSION=2.1.9
-- ZMQ_VERSION=2.1.7
-- ZMQ_VERSION=2.1.4
+#- ZMQ_VERSION=4.0.3
+#- ZMQ_VERSION=4.0.2
+#- ZMQ_VERSION=4.0.1
+#- ZMQ_VERSION=3.2.4
+#- ZMQ_VERSION=3.2.3
+#- ZMQ_VERSION=3.2.2
+#- ZMQ_VERSION=2.2.0
+#- ZMQ_VERSION=2.1.11
+#- ZMQ_VERSION=2.1.10
+#- ZMQ_VERSION=2.1.9
+#- ZMQ_VERSION=2.1.7
+#- ZMQ_VERSION=2.1.4
 before_install:
 # cython, pytest, psutil, lru-dict
 - pip install cython pytest psutil lru-dict
@@ -41,6 +41,6 @@ install:
 - pip install -e .
 before_script:
 # make sure to use PGM
-- sudo setcap CAP_NET_RAW=ep `readlink -f \`which python\``
+- sudo setcap CAP_NET_RAW=ep `readlink -f \`which python\`` || true
 script:
 - py.test -v --all --incremental-patience
