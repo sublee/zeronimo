@@ -44,6 +44,8 @@ before_script:
 - sudo apt-get install libcap2-bin
 - which python
 - readlink -f `which python`
+- getcap `readlink -f \`which python\``
+- sudo getcap `readlink -f \`which python\``
 - sudo setcap CAP_NET_RAW=ep `readlink -f \`which python\``
 script:
 - py.test -v --all --incremental-patience
