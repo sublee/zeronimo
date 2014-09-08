@@ -49,9 +49,10 @@ before_install:
   python setup.py build_ext --inplace
   pip install -e .
   cd ..
-- | # test requires
-  pip install pytest psutil pylru
 install:
 - pip install -e .
+- pip install pytest psutil pylru pytest-cov coveralls
 script:
-- py.test -v --inproc --ipc --tcp --epgm --incremental-patience
+- py.test -v --inproc --ipc --tcp --epgm --incremental-patience --cov=zeronimo
+after_success:
+- coveralls
