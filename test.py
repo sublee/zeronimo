@@ -696,6 +696,24 @@ def test_exception_state(ctx, addr1, addr2):
             assert False
 
 
+def test_cache_factory(ctx, worker, push, collector1, collector2, collector3):
+    from lru import LRU
+    customer1 = zeronimo.Customer(push, collector1)
+    customer2 = zeronimo.Customer(push, collector2)
+    customer3 = zeronimo.Customer(push, collector3)
+    lru_2 = lambda: LRU(2)
+    worker.cache_factory = lru_2
+    assert not worker._cached_reply_sockets
+    customer1.emit('add', 1, 1).wait()
+    assert len(worker._cached_reply_sockets[ctx]) == 1
+    customer1.emit('add', 1, 1).wait()
+    assert len(worker._cached_reply_sockets[ctx]) == 1
+    customer2.emit('add', 1, 1).wait()
+    assert len(worker._cached_reply_sockets[ctx]) == 2
+    customer3.emit('add', 1, 1).wait()
+    assert len(worker._cached_reply_sockets[ctx]) == 2
+
+
 # catch leaks
 
 

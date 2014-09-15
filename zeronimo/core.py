@@ -127,9 +127,13 @@ class Worker(Background):
     info = None
     greenlet_group = None
     exception_handler = None
+    cache_factory = None
+    pack = None
+    unpack = None
 
     def __init__(self, obj, sockets, info=None, greenlet_group=None,
-                 exception_handler=None, pack=PACK, unpack=UNPACK):
+                 exception_handler=None, cache_factory=dict,
+                 pack=PACK, unpack=UNPACK):
         super(Worker, self).__init__()
         self.obj = obj
         socket_types = set(s.type for s in sockets)
@@ -141,6 +145,7 @@ class Worker(Background):
             greenlet_group = Group()
         self.greenlet_group = greenlet_group
         self.exception_handler = exception_handler
+        self.cache_factory = cache_factory
         self.pack = pack
         self.unpack = unpack
         self._cached_reply_sockets = {}
@@ -247,7 +252,7 @@ class Worker(Background):
         try:
             sockets = self._cached_reply_sockets[context]
         except KeyError:
-            sockets = {}
+            sockets = self.cache_factory()
             self._cached_reply_sockets[context] = sockets
         try:
             return sockets[address]
@@ -352,6 +357,10 @@ class Fanout(_Emitter):
 
 class Collector(Background):
     """Collector receives results from the worker."""
+
+    socket = None
+    address = None
+    unpack = None
 
     def __init__(self, socket, address=None, unpack=UNPACK):
         super(Collector, self).__init__()
