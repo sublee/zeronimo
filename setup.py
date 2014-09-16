@@ -116,5 +116,5 @@ setup(
                  'Topic :: Software Development'],
     install_requires=['gevent>=1', 'pyzmq>=14'],
     test_suite='',
-    tests_require=['pytest', 'psutil', 'lru-dict'],
+    tests_require=['pytest', 'psutil', 'pylru'],
 )

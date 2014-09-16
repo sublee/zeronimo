@@ -697,12 +697,15 @@ def test_exception_state(ctx, addr1, addr2):
 
 
 def test_cache_factory(ctx, worker, push, collector1, collector2, collector3):
-    from lru import LRU
+    from pylru import lrucache
+    gc.collect()
+    num_sockets_before = \
+        len([x for x in gc.get_objects() if isinstance(x, zmq.Socket)])
+    lru_2 = lambda: lrucache(2, lambda k, v: v.close())
+    worker.cache_factory = lru_2
     customer1 = zeronimo.Customer(push, collector1)
     customer2 = zeronimo.Customer(push, collector2)
     customer3 = zeronimo.Customer(push, collector3)
-    lru_2 = lambda: LRU(2)
-    worker.cache_factory = lru_2
     assert not worker._cached_reply_sockets
     customer1.emit('add', 1, 1).wait()
     assert len(worker._cached_reply_sockets[ctx]) == 1
@@ -712,6 +715,12 @@ def test_cache_factory(ctx, worker, push, collector1, collector2, collector3):
     assert len(worker._cached_reply_sockets[ctx]) == 2
     customer3.emit('add', 1, 1).wait()
     assert len(worker._cached_reply_sockets[ctx]) == 2
+    customer1.emit('add', 1, 1).wait()
+    assert len(worker._cached_reply_sockets[ctx]) == 2
+    gc.collect()
+    num_sockets = \
+        len([x for x in gc.get_objects() if isinstance(x, zmq.Socket)])
+    assert num_sockets - num_sockets_before == 2
 
 
 # catch leaks
