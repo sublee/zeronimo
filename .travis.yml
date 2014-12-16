@@ -2,26 +2,29 @@ language: python
 python:
 - 2.7
 env:
-- ZMQ_VERSION=
+#- ZMQ_VERSION=
 - ZMQ_VERSION=4.1.0-rc1
-- ZMQ_VERSION=4.0.5
-- ZMQ_VERSION=4.0.4
-- ZMQ_VERSION=4.0.3
-- ZMQ_VERSION=4.0.2
-- ZMQ_VERSION=4.0.1
-- ZMQ_VERSION=3.2.4
-- ZMQ_VERSION=3.2.3
-- ZMQ_VERSION=3.2.2
-- ZMQ_VERSION=2.2.0
-- ZMQ_VERSION=2.1.11
-- ZMQ_VERSION=2.1.10
-- ZMQ_VERSION=2.1.9
-- ZMQ_VERSION=2.1.7
-- ZMQ_VERSION=2.1.4
+# - ZMQ_VERSION=4.0.5
+# - ZMQ_VERSION=4.0.4
+# - ZMQ_VERSION=4.0.3
+# - ZMQ_VERSION=4.0.2
+# - ZMQ_VERSION=4.0.1
+# - ZMQ_VERSION=3.2.4
+# - ZMQ_VERSION=3.2.3
+# - ZMQ_VERSION=3.2.2
+# - ZMQ_VERSION=2.2.0
+# - ZMQ_VERSION=2.1.11
+# - ZMQ_VERSION=2.1.10
+# - ZMQ_VERSION=2.1.9
+# - ZMQ_VERSION=2.1.7
+# - ZMQ_VERSION=2.1.4
 matrix:
   allow_failures:
   - env: ZMQ_VERSION=
 before_install:
+- |
+  pwd
+  ls
 - | # install zeromq
   if [ $ZMQ_VERSION ]
   then
@@ -47,8 +50,9 @@ before_install:
   git clone -b v14.3.1 https://github.com/zeromq/pyzmq.git pyzmq
   cd pyzmq
   python setup.py clean
-  python setup.py configure --zmq=../local
+  python setup.py configure --zmq=`pwd`/../local
   python setup.py build_ext --inplace
+  ls
   pip install -e .
   cd ..
 install:
