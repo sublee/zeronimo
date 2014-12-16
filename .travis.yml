@@ -40,9 +40,10 @@ before_install:
     git clone git://github.com/jedisct1/libsodium.git
     cd libsodium
     ./autogen.sh
-    ./configure --prefix=$TRAVIS_BUILD_DIR/local
+    ./configure
     make check
-    make install
+    sudo make install
+    sudo ldconfig
     # libzmq
     cd $TRAVIS_BUILD_DIR
     git clone https://github.com/zeromq/libzmq.git
