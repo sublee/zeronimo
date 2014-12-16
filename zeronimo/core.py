@@ -7,7 +7,7 @@
     :license: BSD, see LICENSE for more details.
 """
 from __future__ import absolute_import
-from collections import Iterable, Mapping, Sequence, Set
+from collections import Iterator
 from contextlib import contextmanager
 import sys
 import warnings
@@ -51,11 +51,6 @@ except AttributeError:
 # default timeouts
 CUSTOMER_TIMEOUT = 5
 FANOUT_TIMEOUT = 0.1
-
-
-def is_iterator(obj):
-    serializable = (Sequence, Set, Mapping)
-    return (isinstance(obj, Iterable) and not isinstance(obj, serializable))
 
 
 class Background(object):
@@ -194,7 +189,7 @@ class Worker(Background):
             val = self.call(call)
         if raised():
             return
-        if is_iterator(val):
+        if isinstance(val, Iterator):
             vals = val
             with self.exception_sending(reply_socket, *channel):
                 for val in vals:

@@ -429,6 +429,12 @@ class Application(object):
     def dict_view(self, *args):
         return dict((x, x) for x in xrange(*args)).viewkeys()
 
+    def iter_xrange(self, *args):
+        return iter(self.xrange(*args))
+
+    def iter_dict_view(self, *args):
+        return iter(self.dict_view(*args))
+
     def dont_yield(self):
         if False:
             yield 'it should\'t be sent'

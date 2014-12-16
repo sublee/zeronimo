@@ -211,9 +211,12 @@ def test_raise(worker, collector, push):
 
 def test_iterator(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
-    assert list(customer.emit('xrange', 1, 100, 10).get()) == range(1, 100, 10)
+    assert isinstance(customer.emit('xrange', 1, 100, 10).get(), xrange)
     assert \
-        set(customer.emit('dict_view', 1, 100, 10).get()) == \
+        list(customer.emit('iter_xrange', 1, 100, 10).get()) == \
+        range(1, 100, 10)
+    assert \
+        set(customer.emit('iter_dict_view', 1, 100, 10).get()) == \
         set(range(1, 100, 10))
 
 
