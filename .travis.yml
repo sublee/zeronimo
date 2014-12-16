@@ -30,9 +30,9 @@ before_install:
     then
       sudo apt-get install uuid-dev
     fi
-    wget http://download.zeromq.org/zeromq-$ZMQ_VERSION.tar.gz
-    tar xvzf zeromq-$ZMQ_VERSION.tar.gz
-    cd zeromq-$ZMQ_VERSION
+    mkdir src && cd src
+    curl http://download.zeromq.org/zeromq-$ZMQ_VERSION.tar.gz | tar xv
+    cd zeromq-*
   else
     sudo apt-get install libtool
     git clone https://github.com/zeromq/libzmq.git libzmq
