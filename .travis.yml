@@ -39,7 +39,7 @@ before_install:
     cd libzmq
     ./autogen.sh
   fi
-  ./configure --with-pgm --prefix=`pwd`/../local
+  ./configure --with-pgm --prefix=$TRAVIS_BUILD_DIR/local
   make
   make install
 - | # install pyzmq
@@ -48,7 +48,7 @@ before_install:
   git clone -b v14.3.1 https://github.com/zeromq/pyzmq.git pyzmq
   cd pyzmq
   python setup.py clean
-  python setup.py configure --zmq=`pwd`/../local
+  python setup.py configure --zmq=$TRAVIS_BUILD_DIR/local
   python setup.py build_ext --inplace
   pip install -e .
 install:
