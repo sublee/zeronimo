@@ -3,21 +3,21 @@ python:
 - 2.7
 env:
 - ZMQ_VERSION=
-- ZMQ_VERSION=4.1.0-rc1
-- ZMQ_VERSION=4.0.5
-- ZMQ_VERSION=4.0.4
-- ZMQ_VERSION=4.0.3
-- ZMQ_VERSION=4.0.2
-- ZMQ_VERSION=4.0.1
-- ZMQ_VERSION=3.2.4
-- ZMQ_VERSION=3.2.3
-- ZMQ_VERSION=3.2.2
-- ZMQ_VERSION=2.2.0
-- ZMQ_VERSION=2.1.11
-- ZMQ_VERSION=2.1.10
-- ZMQ_VERSION=2.1.9
-- ZMQ_VERSION=2.1.7
-- ZMQ_VERSION=2.1.4
+# - ZMQ_VERSION=4.1.0-rc1
+# - ZMQ_VERSION=4.0.5
+# - ZMQ_VERSION=4.0.4
+# - ZMQ_VERSION=4.0.3
+# - ZMQ_VERSION=4.0.2
+# - ZMQ_VERSION=4.0.1
+# - ZMQ_VERSION=3.2.4
+# - ZMQ_VERSION=3.2.3
+# - ZMQ_VERSION=3.2.2
+# - ZMQ_VERSION=2.2.0
+# - ZMQ_VERSION=2.1.11
+# - ZMQ_VERSION=2.1.10
+# - ZMQ_VERSION=2.1.9
+# - ZMQ_VERSION=2.1.7
+# - ZMQ_VERSION=2.1.4
 matrix:
   allow_failures:
   - env: ZMQ_VERSION=
@@ -35,7 +35,17 @@ before_install:
     cd zeromq-*
   else
     sudo apt-get install libtool
-    git clone https://github.com/zeromq/libzmq.git libzmq
+    # libsodium
+    cd $TRAVIS_BUILD_DIR
+    git clone git://github.com/jedisct1/libsodium.git
+    cd libsodium
+    ./autogen.sh
+    ./configure --prefix=$TRAVIS_BUILD_DIR/local
+    make check
+    make install
+    # libzmq
+    cd $TRAVIS_BUILD_DIR
+    git clone https://github.com/zeromq/libzmq.git
     cd libzmq
     ./autogen.sh
   fi
