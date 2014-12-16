@@ -22,10 +22,8 @@ matrix:
   allow_failures:
   - env: ZMQ_VERSION=
 before_install:
-- |
-  pwd
-  ls
 - | # install zeromq
+  cd $TRAVIS_BUILD_DIR
   if [ $ZMQ_VERSION ]
   then
     if [[ $ZMQ_VERSION == 2.* ]]
@@ -44,21 +42,21 @@ before_install:
   ./configure --with-pgm --prefix=`pwd`/../local
   make
   make install
-  cd ..
 - | # install pyzmq
+  cd $TRAVIS_BUILD_DIR
   pip install cython
   git clone -b v14.3.1 https://github.com/zeromq/pyzmq.git pyzmq
   cd pyzmq
   python setup.py clean
   python setup.py configure --zmq=`pwd`/../local
   python setup.py build_ext --inplace
-  ls
   pip install -e .
-  cd ..
 install:
-- pip install -e .
+- pip install -e $TRAVIS_BUILD_DIR
 - pip install pytest psutil pylru pytest-cov coveralls
 script:
-- py.test -v --inproc --ipc --tcp --epgm --incremental-patience --cov=zeronimo
+- |
+  cd $TRAVIS_BUILD_DIR
+  py.test -v --inproc --ipc --tcp --epgm --incremental-patience --cov=zeronimo
 after_success:
 - coveralls
