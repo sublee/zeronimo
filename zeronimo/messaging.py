@@ -88,5 +88,5 @@ def recv(socket, flags=0, unpack=UNPACK):
     try:
         return unpack(message)
     except BaseException as exc:
-        exc.message = message
+        exc._zeronimo_message = message
         raise

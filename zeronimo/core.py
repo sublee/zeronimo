@@ -10,6 +10,7 @@ from __future__ import absolute_import
 from collections import Iterator
 from contextlib import contextmanager
 import sys
+from traceback import format_exception_only
 import warnings
 
 from gevent import Greenlet, GreenletExit, Timeout
@@ -95,7 +96,7 @@ class Background(object):
         self.greenlet.join(timeout)
 
     def running(self):
-        return self.greenlet is not None  # and not self.greenlet.dead
+        return self.greenlet is not None
 
 
 class Worker(Background):
@@ -157,10 +158,20 @@ class Worker(Background):
                     try:
                         call = Call(*recv(socket, unpack=self.unpack))
                     except BaseException as exc:
-                        warning = MalformedMessage(
-                            '{0} received malformed message: {1!r}'
-                            ''.format(self, exc.message))
-                        warning.message = exc.message
+                        # received malformed message.
+                        message = exc._zeronimo_message
+                        del exc._zeronimo_message
+                        # format exception as a single line.
+                        exc_strs = format_exception_only(type(exc), exc)
+                        exc_str = exc_strs[0].strip()
+                        if len(exc_strs) > 1:
+                            exc_str += '...'
+                        # make and warn a warning with metadata.
+                        warning = MalformedMessage('<{0}> occurred by: {1!r}'
+                                                   ''.format(exc_str, message))
+                        warning.exception = exc
+                        warning.received_message = message
+                        warning.worker_info = self.info
                         warnings.warn(warning)
                         continue
                     if self.greenlet_group.full():
@@ -258,7 +269,7 @@ class Worker(Background):
             return socket
 
     def send_reply(self, socket, method, data, call_id, task_id):
-        # normal tuple is faster than namedtuple
+        # normal tuple is faster than namedtuple.
         reply = (method, data, call_id, task_id)
         try:
             return send(socket, reply, zmq.NOBLOCK, pack=self.pack)
@@ -303,9 +314,9 @@ class _Emitter(object):
             self.collector.start()
         call_id = uuid4_bytes()
         reply_to = self.collector.address
-        # normal tuple is faster than namedtuple
+        # normal tuple is faster than namedtuple.
         call = (funcname, args, kwargs, call_id, reply_to)
-        # use short names
+        # use short names.
         def send_call():
             try:
                 send(self.socket, call, zmq.NOBLOCK, topic, self.pack)

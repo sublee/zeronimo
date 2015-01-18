@@ -513,15 +513,28 @@ def test_pgm_connect(ctx, fanout_addr):
 
 
 def test_malformed_message(worker, push):
-    push.send('Zeronimo!')  # indicates to ExtraData
-    push.send('')  # indicates to UnpackValueError
+    try:
+        from cPickle import UnpicklingError
+    except ImportError:
+        from pickle import UnpicklingError
+    push.send('')  # EOFError
+    push.send('Zeronimo!')  # UnpicklingError
+    push.send('c__main__\nNOTEXIST\np0\n.')  # AttributeError
     with warnings.catch_warnings(record=True) as w:
         gevent.sleep(0.1)
-    assert len(w) == 2
-    assert w[0].category is zeronimo.MalformedMessage
-    assert w[1].category is zeronimo.MalformedMessage
-    assert w[0].message.message == 'Zeronimo!'
-    assert w[1].message.message == ''
+    assert len(w) == 3
+    for w_ in w:
+        assert w_.category is zeronimo.MalformedMessage
+        assert w_.message.worker_info == worker.info
+    assert w[0].message.received_message == ''
+    assert w[1].message.received_message == 'Zeronimo!'
+    assert w[2].message.received_message == 'c__main__\nNOTEXIST\np0\n.'
+    assert type(w[0].message.exception) is EOFError
+    assert type(w[1].message.exception) is UnpicklingError
+    assert type(w[2].message.exception) is AttributeError
+    assert 'EOFError' in str(w[0].message)
+    assert 'UnpicklingError' in str(w[1].message)
+    assert 'AttributeError' in str(w[2].message)
 
 
 def test_queue_leaking_on_fanout(worker, collector, pub, topic):

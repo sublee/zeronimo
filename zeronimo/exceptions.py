@@ -52,4 +52,6 @@ class TaskClosed(TaskError):
 class MalformedMessage(ZeronimoException, RuntimeWarning):
     """Warns when a received message is not expected format."""
 
-    pass
+    exception = None
+    received_message = None
+    worker_info = None
