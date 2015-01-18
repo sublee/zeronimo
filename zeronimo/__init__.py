@@ -3,9 +3,9 @@
     zeronimo
     ~~~~~~~~
 
-    RPC to distributed workers.
+    RPC between distributed workers.
 
-    :copyright: (c) 2013-2014 by Heungsub Lee
+    :copyright: (c) 2013-2015 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
 from __future__ import absolute_import
@@ -17,7 +17,7 @@ from .exceptions import (
 from .results import RemoteResult, RemoteException
 
 
-__version__ = '0.2.7'
+__version__ = '0.2.8'
 __all__ = [
     # components
     'Worker', 'Customer', 'Fanout', 'Collector',
@@ -25,4 +25,5 @@ __all__ = [
     'ZeronimoException', 'EmissionError', 'TaskError', 'WorkerNotFound',
     'Rejected', 'Undelivered', 'TaskClosed', 'MalformedMessage',
     # results
-    'RemoteResult', 'RemoteException']
+    'RemoteResult', 'RemoteException',
+]

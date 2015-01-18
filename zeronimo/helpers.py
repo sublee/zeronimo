@@ -5,13 +5,13 @@
 
     Helper functions.
 
-    :copyright: (c) 2013-2014 by Heungsub Lee
+    :copyright: (c) 2013-2015 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
 import zmq
 
 
-__all__ = ['class_name', 'make_repr']
+__all__ = ['class_name', 'make_repr', 'socket_type_name']
 
 
 def class_name(obj):
@@ -32,7 +32,7 @@ def _repr_attr(obj, attr, data=None, reprs=None):
 
 def make_repr(obj, params=None, keywords=None, data=None, name=None,
               reprs=None):
-    """Generates a string of object initialization code style. It is useful
+    """Generates a string of object initialization code style.  It is useful
     for custom __repr__ methods::
 
        class Example(object):
@@ -74,4 +74,5 @@ for name in ('PAIR PUB SUB REQ REP DEALER ROUTER PULL PUSH XPUB XSUB '
 
 
 def socket_type_name(socket_type):
+    """Gets the ZeroMQ socket type name."""
     return _socket_type_names[socket_type]

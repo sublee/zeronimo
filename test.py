@@ -645,7 +645,7 @@ def test_exception_handler(worker, collector, push, capsys):
     assert 'ZeroDivisionError:' in err
     # with exception handler
     exceptions = []
-    def exception_handler(exc_info, worker_info):
+    def exception_handler(worker, exc_info):
         exceptions.append(exc_info[0])
     worker.exception_handler = exception_handler
     with pytest.raises(ZeroDivisionError):
@@ -656,9 +656,38 @@ def test_exception_handler(worker, collector, push, capsys):
     assert exceptions[0] is ZeroDivisionError
 
 
+def test_old_style_exception_handler(ctx, addr1, addr2):
+    # compatible with <0.2.8.
+    # prepare stuffs
+    worker_sock = ctx.socket(zmq.PULL)
+    worker_sock.bind(addr1)
+    collector_sock = ctx.socket(zmq.PULL)
+    collector_sock.bind(addr2)
+    push = ctx.socket(zmq.PUSH)
+    push.connect(addr1)
+    collector = zeronimo.Collector(collector_sock, addr2)
+    customer = zeronimo.Customer(push, collector)
+    # make a worker
+    app = Application()
+    exceptions = []
+    def exception_handler(exc_info):  # takes exc_info only.
+        exceptions.append(exc_info[0])
+    with warnings.catch_warnings(record=True) as w:
+        worker = zeronimo.Worker(app, [worker_sock],
+                                 exception_handler=exception_handler)
+    # test
+    assert len(w) == 1
+    assert w[0].category is FutureWarning
+    with running([worker], sockets=[worker_sock, collector_sock, push]):
+        with pytest.raises(ZeroDivisionError):
+            customer.emit('zero_div').get()
+    assert len(exceptions) == 1
+    assert exceptions[0] is ZeroDivisionError
+
+
 def test_malformed_message_handler(worker, push, capsys):
     messages = []
-    def malformed_message_handler(message, exc_info, worker_info):
+    def malformed_message_handler(worker, exc_info, message):
         messages.append(message)
         raise exc_info[0], exc_info[1], exc_info[2]
     worker.malformed_message_handler = malformed_message_handler

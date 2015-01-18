@@ -3,12 +3,13 @@
     zeronimo.core
     ~~~~~~~~~~~~~
 
-    :copyright: (c) 2013-2014 by Heungsub Lee
+    :copyright: (c) 2013-2015 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
 from __future__ import absolute_import
 from collections import Iterator
 from contextlib import contextmanager
+import inspect
 import sys
 import traceback
 from warnings import warn
@@ -55,7 +56,7 @@ FANOUT_TIMEOUT = 0.1
 
 
 class Background(object):
-    """A background object spawns one greenlet at a time. The greenlet will
+    """A background object spawns one greenlet at a time.  The greenlet will
     call :meth:`__call__`.
     """
 
@@ -67,8 +68,8 @@ class Background(object):
 
     def __call__(self):
         # should be implemented by subclass.
-        raise NotImplementedError(
-            '{0} has no __call__ implementation'.format(class_name(self)))
+        raise NotImplementedError('{0} has no __call__ implementation'
+                                  ''.format(class_name(self)))
 
     def run(self):
         try:
@@ -99,11 +100,17 @@ class Background(object):
         return self.greenlet is not None
 
 
-def default_exception_handler(exc_info, worker_info):
+def default_exception_handler(worker, exc_info):
+    """The default exception handler for :class:`Worker`.  It just raises
+    the given ``exc_info``.
+    """
     raise exc_info[0], exc_info[1], exc_info[2]
 
 
-def default_malformed_message_handler(message, exc_info, worker_info):
+def default_malformed_message_handler(worker, exc_info, message):
+    """The default malformed message handler for :class:`Worker`.  It warns
+    as a :exc:`MalformedMessage`.
+    """
     exc_strs = traceback.format_exception_only(exc_info[0], exc_info[1])
     exc_str = exc_strs[0].strip()
     if len(exc_strs) > 1:
@@ -112,8 +119,8 @@ def default_malformed_message_handler(message, exc_info, worker_info):
 
 
 class Worker(Background):
-    """Worker runs an RPC service of an object through ZeroMQ sockets. The
-    ZeroMQ sockets should be PULL or SUB socket type. The PULL sockets receive
+    """Worker runs an RPC service of an object through ZeroMQ sockets.  The
+    ZeroMQ sockets should be PULL or SUB socket type.  The PULL sockets receive
     Round-robin calls; the SUB sockets receive Publish-subscribe (fan-out)
     calls.
 
@@ -126,7 +133,7 @@ class Worker(Background):
     :param obj: the object to be shared by an RPC service.
     :param sockets: the ZeroMQ sockets of PULL or SUB socket type.
     :param info: (optional) the worker will send this value to customers at
-                 accepting an call. it might be identity of the worker to
+                 accepting an call.  it might be identity of the worker to
                  let the customer's know what worker accepted.
     """
 
@@ -154,6 +161,16 @@ class Worker(Background):
         if greenlet_group is None:
             greenlet_group = Group()
         self.greenlet_group = greenlet_group
+        # to be compatible with <0.2.8.
+        if exception_handler is not None:
+            spec = inspect.getargspec(exception_handler)
+            if len(spec.args) == 1:
+                # exception handler has only exc_info parameter before 0.2.8.
+                exception_handler = \
+                    lambda __, exc_info, f=exception_handler: f(exc_info)
+                warn('Parameters of exception_handler were changed from '
+                     '(exc_info) to (worker, exc_info) since 0.2.8',
+                     FutureWarning)
         self.exception_handler = exception_handler
         self.malformed_message_handler = malformed_message_handler
         self.cache_factory = cache_factory
@@ -162,7 +179,7 @@ class Worker(Background):
         self._cached_reply_sockets = {}
 
     def __call__(self):
-        """Runs the worker. While running, an RPC service is online."""
+        """Runs the worker.  While running, an RPC service is online."""
         poller = zmq.Poller()
         for socket in self.sockets:
             poller.register(socket, zmq.POLLIN)
@@ -174,13 +191,11 @@ class Worker(Background):
                         data = recv(socket, unpack=self.unpack)
                     except:
                         # the worker received a malformed message.
-                        handler = self.malformed_message_handler
-                        if handler is not None:
+                        if self.malformed_message_handler is not None:
                             exc_info = sys.exc_info()
-                            message = exc_info[1]._zeronimo_message
+                            msg = exc_info[1]._zeronimo_message
                             del exc_info[1]._zeronimo_message
-                            handler(message, exc_info, self.info)
-                        del handler
+                            self.malformed_message_handler(self, exc_info, msg)
                         continue
                     call = Call(*data)
                     if self.greenlet_group.full():
@@ -195,8 +210,8 @@ class Worker(Background):
             self._cached_reply_sockets.clear()
 
     def work(self, socket, call):
-        """Calls a function and send results to the collector. It supports
-        all of function actions. A function could return, yield, raise any
+        """Calls a function and send results to the collector.  It supports
+        all of function actions.  A function could return, yield, raise any
         packable objects.
         """
         channel = (None, None)
@@ -250,7 +265,7 @@ class Worker(Background):
             socket and self.send_reply(socket, RAISE, val, *channel)
             raised.append(True)
             if self.exception_handler is not None:
-                self.exception_handler(exc_info, self.info)
+                self.exception_handler(self, exc_info)
 
     def call(self, call):
         """Calls a function."""
@@ -336,8 +351,8 @@ class _Emitter(object):
 
 
 class Customer(_Emitter):
-    """Customer sends RPC calls to the workers. But it could not receive the
-    result by itself. It should work with :class:`Collector` to receive
+    """Customer sends RPC calls to the workers.  But it could not receive the
+    result by itself.  It should work with :class:`Collector` to receive
     worker's results.
     """
 
@@ -351,8 +366,8 @@ class Customer(_Emitter):
 
 
 class Fanout(_Emitter):
-    """Customer sends RPC calls to the workers. But it could not receive the
-    result by itself. It should work with :class:`Collector` to receive
+    """Customer sends RPC calls to the workers.  But it could not receive the
+    result by itself.  It should work with :class:`Collector` to receive
     worker's results.
     """
 
@@ -390,7 +405,6 @@ class Collector(Background):
         self.result_queues = {}
 
     def prepare(self, call_id):
-        """"""
         if call_id in self.results:
             raise KeyError('Call {0} already prepared'.format(call_id))
         self.results[call_id] = {}

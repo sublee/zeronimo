@@ -3,7 +3,7 @@
 Zeronimo
 ~~~~~~~~
 
-A distributed RPC solution based on ØMQ_ and gevent_. Follow the features:
+A distributed RPC solution based on ØMQ_ and gevent_.  Follow the features:
 
 - A worker can return, yield, raise any picklable object to the remote
   customer.

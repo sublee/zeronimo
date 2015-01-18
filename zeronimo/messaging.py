@@ -3,7 +3,7 @@
     zeronimo.messaging
     ~~~~~~~~~~~~~~~~~~
 
-    :copyright: (c) 2013-2014 by Heungsub Lee
+    :copyright: (c) 2013-2015 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
 from __future__ import absolute_import
@@ -43,19 +43,13 @@ PACK = pickle.dumps
 UNPACK = pickle.loads
 
 
-_Call = namedtuple(
-    '_Call', ['funcname', 'args', 'kwargs', 'call_id', 'reply_to'])
-_Reply = namedtuple(
-    '_Reply', ['method', 'data', 'call_id', 'task_id'])
-
-
-class Call(_Call):
+class Call(namedtuple('Call', 'funcname args kwargs call_id reply_to')):
 
     def __repr__(self):
         return make_repr(self, keywords=self._fields)
 
 
-class Reply(_Reply):
+class Reply(namedtuple('Reply', 'method data call_id task_id')):
 
     def __repr__(self):
         method = {
@@ -78,15 +72,15 @@ def send(socket, obj, flags=0, topic=None, pack=PACK):
     """
     if topic:
         socket.send(topic, flags | zmq.SNDMORE)
-    message = pack(obj)
-    return socket.send(message, flags)
+    msg = pack(obj)
+    return socket.send(msg, flags)
 
 
 def recv(socket, flags=0, unpack=UNPACK):
     """Receives a Python object via a ZeroMQ socket."""
-    message = socket.recv_multipart(flags)[-1]
+    msg = socket.recv_multipart(flags)[-1]
     try:
-        return unpack(message)
+        return unpack(msg)
     except BaseException as exc:
-        exc._zeronimo_message = message  # temporarily
+        exc._zeronimo_message = msg  # temporarily
         raise

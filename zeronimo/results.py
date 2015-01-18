@@ -3,7 +3,7 @@
     zeronimo.results
     ~~~~~~~~~~~~~~~~
 
-    :copyright: (c) 2013-2014 by Heungsub Lee
+    :copyright: (c) 2013-2015 by Heungsub Lee
     :license: BSD, see LICENSE for more details.
 """
 from __future__ import absolute_import
