@@ -10,8 +10,8 @@ from __future__ import absolute_import
 from collections import Iterator
 from contextlib import contextmanager
 import sys
-from traceback import format_exception_only
-import warnings
+import traceback
+from warnings import warn
 
 from gevent import Greenlet, GreenletExit, Timeout
 from gevent.pool import Group
@@ -99,6 +99,18 @@ class Background(object):
         return self.greenlet is not None
 
 
+def default_exception_handler(exc_info, worker_info):
+    raise exc_info[0], exc_info[1], exc_info[2]
+
+
+def default_malformed_message_handler(message, exc_info, worker_info):
+    exc_strs = traceback.format_exception_only(exc_info[0], exc_info[1])
+    exc_str = exc_strs[0].strip()
+    if len(exc_strs) > 1:
+        exc_str += '...'
+    warn('<{0}> occurred by: {1!r}'.format(exc_str, message), MalformedMessage)
+
+
 class Worker(Background):
     """Worker runs an RPC service of an object through ZeroMQ sockets. The
     ZeroMQ sockets should be PULL or SUB socket type. The PULL sockets receive
@@ -123,13 +135,15 @@ class Worker(Background):
     info = None
     greenlet_group = None
     exception_handler = None
+    malformed_message_handler = None
     cache_factory = None
     pack = None
     unpack = None
 
     def __init__(self, obj, sockets, info=None, greenlet_group=None,
-                 exception_handler=None, cache_factory=dict,
-                 pack=PACK, unpack=UNPACK):
+                 exception_handler=default_exception_handler,
+                 malformed_message_handler=default_malformed_message_handler,
+                 cache_factory=dict, pack=PACK, unpack=UNPACK):
         super(Worker, self).__init__()
         self.obj = obj
         socket_types = set(s.type for s in sockets)
@@ -141,6 +155,7 @@ class Worker(Background):
             greenlet_group = Group()
         self.greenlet_group = greenlet_group
         self.exception_handler = exception_handler
+        self.malformed_message_handler = malformed_message_handler
         self.cache_factory = cache_factory
         self.pack = pack
         self.unpack = unpack
@@ -156,24 +171,18 @@ class Worker(Background):
                 for socket, event in poller.poll():
                     assert event & zmq.POLLIN
                     try:
-                        call = Call(*recv(socket, unpack=self.unpack))
-                    except BaseException as exc:
-                        # received malformed message.
-                        message = exc._zeronimo_message
-                        del exc._zeronimo_message
-                        # format exception as a single line.
-                        exc_strs = format_exception_only(type(exc), exc)
-                        exc_str = exc_strs[0].strip()
-                        if len(exc_strs) > 1:
-                            exc_str += '...'
-                        # make and warn a warning with metadata.
-                        warning = MalformedMessage('<{0}> occurred by: {1!r}'
-                                                   ''.format(exc_str, message))
-                        warning.exception = exc
-                        warning.received_message = message
-                        warning.worker_info = self.info
-                        warnings.warn(warning)
+                        data = recv(socket, unpack=self.unpack)
+                    except:
+                        # the worker received a malformed message.
+                        handler = self.malformed_message_handler
+                        if handler is not None:
+                            exc_info = sys.exc_info()
+                            message = exc_info[1]._zeronimo_message
+                            del exc_info[1]._zeronimo_message
+                            handler(message, exc_info, self.info)
+                        del handler
                         continue
+                    call = Call(*data)
                     if self.greenlet_group.full():
                         self.reject(socket, call)
                     else:
@@ -223,7 +232,7 @@ class Worker(Background):
         """Sends an exception which occurs in the context to the collector."""
         raised = []
         try:
-            yield lambda: bool(raised)
+            yield lambda: bool(raised)  # test whether an error was raised.
         except BaseException as exc:
             exc_info = sys.exc_info()
             tb = exc_info[-1]
@@ -240,10 +249,8 @@ class Worker(Background):
                 val += (state,)
             socket and self.send_reply(socket, RAISE, val, *channel)
             raised.append(True)
-            if self.exception_handler is None:
-                raise exc_info[0], exc_info[1], exc_info[2]
-            else:
-                self.exception_handler(exc_info)
+            if self.exception_handler is not None:
+                self.exception_handler(exc_info, self.info)
 
     def call(self, call):
         """Calls a function."""

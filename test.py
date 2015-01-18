@@ -513,28 +513,20 @@ def test_pgm_connect(ctx, fanout_addr):
 
 
 def test_malformed_message(worker, push):
-    try:
-        from cPickle import UnpicklingError
-    except ImportError:
-        from pickle import UnpicklingError
     push.send('')  # EOFError
     push.send('Zeronimo!')  # UnpicklingError
     push.send('c__main__\nNOTEXIST\np0\n.')  # AttributeError
     with warnings.catch_warnings(record=True) as w:
         gevent.sleep(0.1)
     assert len(w) == 3
-    for w_ in w:
-        assert w_.category is zeronimo.MalformedMessage
-        assert w_.message.worker_info == worker.info
-    assert w[0].message.received_message == ''
-    assert w[1].message.received_message == 'Zeronimo!'
-    assert w[2].message.received_message == 'c__main__\nNOTEXIST\np0\n.'
-    assert type(w[0].message.exception) is EOFError
-    assert type(w[1].message.exception) is UnpicklingError
-    assert type(w[2].message.exception) is AttributeError
-    assert 'EOFError' in str(w[0].message)
-    assert 'UnpicklingError' in str(w[1].message)
-    assert 'AttributeError' in str(w[2].message)
+    assert all(w_.category is zeronimo.MalformedMessage for w_ in w)
+    w1, w2, w3 = w[0].message, w[1].message, w[2].message
+    assert 'EOFError' in str(w1)
+    assert 'UnpicklingError' in str(w2)
+    assert 'AttributeError' in str(w3)
+    assert str(w1).endswith(repr(''))
+    assert str(w2).endswith(repr('Zeronimo!'))
+    assert str(w3).endswith(repr('c__main__\nNOTEXIST\np0\n.'))
 
 
 def test_queue_leaking_on_fanout(worker, collector, pub, topic):
@@ -653,7 +645,7 @@ def test_exception_handler(worker, collector, push, capsys):
     assert 'ZeroDivisionError:' in err
     # with exception handler
     exceptions = []
-    def exception_handler(exc_info):
+    def exception_handler(exc_info, worker_info):
         exceptions.append(exc_info[0])
     worker.exception_handler = exception_handler
     with pytest.raises(ZeroDivisionError):
@@ -662,6 +654,20 @@ def test_exception_handler(worker, collector, push, capsys):
     assert 'ZeroDivisionError:' not in err
     assert len(exceptions) == 1
     assert exceptions[0] is ZeroDivisionError
+
+
+def test_malformed_message_handler(worker, push, capsys):
+    messages = []
+    def malformed_message_handler(message, exc_info, worker_info):
+        messages.append(message)
+        raise exc_info[0], exc_info[1], exc_info[2]
+    worker.malformed_message_handler = malformed_message_handler
+    push.send('Zeronimo!')
+    worker.wait()
+    out, err = capsys.readouterr()
+    assert not worker.running()
+    assert 'UnpicklingError' in err
+    assert 'Zeronimo!' in messages
 
 
 class ExampleException(BaseException):
