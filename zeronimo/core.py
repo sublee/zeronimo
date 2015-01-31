@@ -311,15 +311,12 @@ class _Emitter(object):
     collector = None
     pack = None
 
-    def __init__(self, socket, collector=None, timeout=None, pack=PACK):
-        super(_Emitter, self).__init__()
+    def __init__(self, socket, collector=None, pack=PACK):
         if socket.type not in self.available_socket_types:
             raise ValueError('{0} is not available socket type'
                              ''.format(socket_type_name(socket.type)))
         self.socket = socket
         self.collector = collector
-        if timeout is not None:
-            self.timeout = timeout
         self.pack = pack
 
     def _emit_nowait(self, funcname, args, kwargs, topic=None):
