@@ -17,7 +17,7 @@ from .exceptions import (
 from .results import RemoteResult, RemoteException
 
 
-__version__ = '0.2.8'
+__version__ = '0.2.9.dev'
 __all__ = [
     # components
     'Worker', 'Customer', 'Fanout', 'Collector',

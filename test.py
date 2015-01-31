@@ -6,7 +6,7 @@ import warnings
 
 import gevent
 from gevent import joinall, spawn
-from gevent.pool import Pool
+from gevent.pool import Group, Pool
 from psutil import Process
 import pytest
 import zmq.green as zmq
@@ -15,6 +15,7 @@ from conftest import (
     Application, link_sockets, run_device, running, sync_pubsub)
 import zeronimo
 from zeronimo.core import Background
+from zeronimo.exceptions import Rejected
 import zeronimo.messaging
 
 
@@ -280,25 +281,46 @@ def test_slow(worker, collector, push):
 
 
 def test_reject(worker1, worker2, collector, push, pub, topic):
+    customer = zeronimo.Customer(push, collector)
+    fanout = zeronimo.Fanout(pub, collector)
     def count_workers(iteration=10):
         worker_infos = set()
         for x in xrange(iteration):
             worker_infos.add(tuple(customer.emit('zeronimo').worker_info))
         return len(worker_infos)
-    customer = zeronimo.Customer(push, collector)
-    fanout = zeronimo.Fanout(pub, collector)
-    # count accepted workers
+    # count accepted workers.
     assert count_workers() == 2
-    # worker1 uses a greenlet pool sized by 1
+    # worker1 uses a greenlet pool sized by 1.
     worker1.greenlet_group = Pool(1)
-    # emit long task
+    # emit long task.
     how_slow = zeronimo.Fanout.timeout * 4
     assert len(fanout.emit(topic, 'sleep', how_slow)) == 2
     assert len(fanout.emit(topic, 'sleep', how_slow)) == 1
     assert count_workers() == 1
-    # wait for long task done
+    # wait for long task done.
     worker1.greenlet_group.wait_available()
     assert count_workers() == 2
+
+
+def test_max_retries(worker, collector, push):
+    def start_accepting():
+        worker.greenlet_group = Group()
+    def stop_accepting():
+        worker.greenlet_group = Pool(0)
+    customer = zeronimo.Customer(push, collector)
+    # don't retry.
+    customer.max_retries = 0
+    stop_accepting()
+    g = gevent.spawn_later(0.01, start_accepting)
+    with pytest.raises(Rejected):
+        customer.emit('zeronimo')
+    g.join()
+    # do retry.
+    customer.max_retries = 1000
+    stop_accepting()
+    g = gevent.spawn_later(0.01, start_accepting)
+    assert customer.emit('zeronimo').get() == 'zeronimo'
+    g.join()
 
 
 def test_subscription(worker1, worker2, collector, pub, topic):

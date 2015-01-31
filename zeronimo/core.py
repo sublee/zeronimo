@@ -330,7 +330,7 @@ class _Emitter(object):
             pass  # ignore
 
     def _emit(self, funcname, args, kwargs,
-              topic=None, limit=None, retry=False):
+              topic=None, limit=None, retry=False, max_retries=None):
         """Allocates a call id and emit."""
         if not self.collector.running():
             self.collector.start()
@@ -347,7 +347,8 @@ class _Emitter(object):
         self.collector.prepare(call_id)
         send_call()
         return self.collector.establish(call_id, self.timeout, limit,
-                                        send_call if retry else None)
+                                        send_call if retry else None,
+                                        max_retries=max_retries)
 
 
 class Customer(_Emitter):
@@ -358,11 +359,14 @@ class Customer(_Emitter):
 
     available_socket_types = [zmq.PAIR, zmq.PUSH]
     timeout = CUSTOMER_TIMEOUT
+    max_retries = None
 
     def emit(self, funcname, *args, **kwargs):
         if self.collector is None:
             return self._emit_nowait(funcname, args, kwargs)
-        return self._emit(funcname, args, kwargs, limit=1, retry=True)[0]
+        results = self._emit(funcname, args, kwargs, limit=1,
+                             retry=True, max_retries=self.max_retries)
+        return results[0]
 
 
 class Fanout(_Emitter):
@@ -410,11 +414,13 @@ class Collector(Background):
         self.results[call_id] = {}
         self.result_queues[call_id] = Queue()
 
-    def establish(self, call_id, timeout, limit=None, retry=None):
+    def establish(self, call_id, timeout, limit=None,
+                  retry=None, max_retries=None):
         """Waits for the call is accepted by workers and starts to collect the
         results.
         """
         rejected = 0
+        retried = 0
         results = []
         result_queue = self.result_queues[call_id]
         try:
@@ -424,11 +430,14 @@ class Collector(Background):
                     if result is None:
                         rejected += 1
                         if retry is not None:
+                            if retried == max_retries:
+                                break
                             retry()
-                    else:
-                        results.append(result)
-                        if limit is not None and len(results) == limit:
-                            break
+                            retried += 1
+                        continue
+                    results.append(result)
+                    if len(results) == limit:
+                        break
         finally:
             del result_queue
             self.remove_result_queue(call_id)
