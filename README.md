@@ -5,7 +5,7 @@ Zeronimo!
 (https://travis-ci.org/sublee/zeronimo.svg)]
 (https://travis-ci.org/sublee/zeronimo)
 [![Coverage Status]
-(https://coveralls.io/repos/sublee/zeronimo/badge.png)]
+(https://img.shields.io/coveralls/sublee/zeronimo.svg)]
 (https://coveralls.io/r/sublee/zeronimo)
 
 RPC between distributed workers.
