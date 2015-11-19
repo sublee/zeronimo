@@ -71,35 +71,37 @@ The address is 192.168.0.42. The reply collector will listen at 24601.
 
 """
 from __future__ import with_statement
-import re
-from setuptools import setup
-from setuptools.command.test import test
-import subprocess
+
+import os
 import sys
 
+from setuptools import setup
+from setuptools.command.test import test
 
-# prevent error in sys.exitfunc when testing
+
+# prevent error in sys.exitfunc when testing.
 __import__('zmq') if 'test' in sys.argv else None
 
 
-# detect the current version
-with open('zeronimo/__init__.py') as f:
-    version = re.search(r'__version__\s*=\s*\'(.+?)\'', f.read()).group(1)
-assert version
+# include __about__.py.
+__dir__ = os.path.dirname(__file__)
+about = {}
+with open(os.path.join(__dir__, 'zeronimo', '__about__.py')) as f:
+    exec(f.read(), about)
 
 
-# use pytest instead
+# use pytest instead.
 def run_tests(self):
-    raise SystemExit(subprocess.call(['py.test', '-v', '--all']))
+    raise SystemExit(__import__('pytest').main(['-v', '--all']))
 test.run_tests = run_tests
 
 
 setup(
     name='zeronimo',
-    version=version,
-    license='BSD',
-    author='Heungsub Lee',
-    author_email=re.sub('((sub).)(.*)', r'\2@\1.\3', 'sublee'),
+    version=about['__version__'],
+    license=about['__license__'],
+    author=about['__author__'],
+    author_email=about['__author_email__'],
     url='http://github.com/sublee/zeronimo/',
     description='RPC between distributed workers',
     long_description=__doc__,
@@ -115,6 +117,6 @@ setup(
                  'Programming Language :: Python :: Implementation :: CPython',
                  'Topic :: Software Development'],
     install_requires=['gevent>=1', 'pyzmq>=14'],
-    test_suite='',
+    test_suite='...',
     tests_require=['pytest', 'psutil', 'pylru'],
 )
