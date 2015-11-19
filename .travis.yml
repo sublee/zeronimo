@@ -64,10 +64,11 @@ before_install:
   pip install -e .
 install:
 - pip install -e $TRAVIS_BUILD_DIR
-- pip install pytest psutil pylru pytest-cov coveralls
+- pip install pytest psutil pylru flake8 pytest-cov coveralls
 script:
 - |
   cd $TRAVIS_BUILD_DIR
+  flake8 zeronimo test.py conftest.py setup.py -v --show-source
   py.test -v --inproc --ipc --tcp --epgm --incremental-patience --cov=zeronimo
 after_success:
 - coveralls

@@ -295,7 +295,7 @@ def resolve_fixtures(f, protocol):
 
 # decorate functions which use deferred fixtures with resolve_fixtures
 # automatically.
-import _pytest.python
+import _pytest.python  # noqa
 genfunctions = _pytest.python.PyCollector._genfunctions
 
 
