@@ -11,6 +11,7 @@
 """
 from __future__ import absolute_import
 
+from .__about__ import __version__  # noqa
 from .core import Collector, Customer, Fanout, Worker
 from .exceptions import (
     EmissionError, MalformedMessage, Rejected, TaskClosed, TaskError,
@@ -18,7 +19,6 @@ from .exceptions import (
 from .results import RemoteException, RemoteResult
 
 
-__version__ = '0.2.9'
 __all__ = [
     # components
     'Worker', 'Customer', 'Fanout', 'Collector',
