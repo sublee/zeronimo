@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import gc
+import itertools
 import os
+import signal
 import time
 import warnings
 
@@ -16,6 +18,7 @@ from conftest import (
 import zeronimo
 from zeronimo.core import Background
 from zeronimo.exceptions import Rejected
+from zeronimo.helpers import eintr_retry_zmq
 import zeronimo.messaging
 
 
@@ -794,6 +797,31 @@ def test_cache_factory(ctx, worker, push, collector1, collector2, collector3):
     num_sockets = \
         len([x for x in gc.get_objects() if isinstance(x, zmq.Socket)])
     assert num_sockets - num_sockets_before == 2
+
+
+@pytest.mark.parametrize('itimer, signo', [
+    (signal.ITIMER_REAL, signal.SIGALRM),
+    (signal.ITIMER_VIRTUAL, signal.SIGVTALRM),
+    (signal.ITIMER_PROF, signal.SIGPROF),
+])
+def test_eintr_retry_zmq(itimer, signo, ctx, addr):
+    push = ctx.socket(zmq.PUSH)
+    pull = ctx.socket(zmq.PULL)
+    link_sockets(addr, push, [pull])
+    interrupted_frames = []
+    def handler(signo, frame):
+        interrupted_frames.append(frame)
+    prev_handler = signal.signal(signo, handler)
+    prev_itimer = signal.setitimer(itimer, 0.001, 0.001)
+    for x in itertools.count():
+        eintr_retry_zmq(push.send, str(x))
+        assert eintr_retry_zmq(pull.recv) == str(x)
+        if len(interrupted_frames) > 100:
+            break
+    signal.setitimer(itimer, *prev_itimer)
+    signal.signal(signo, prev_handler)
+    push.close()
+    pull.close()
 
 
 # catch leaks

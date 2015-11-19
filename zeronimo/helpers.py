@@ -1,17 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-    zeronimo.helpers
-    ~~~~~~~~~~~~~~~~
+   zeronimo.helpers
+   ~~~~~~~~~~~~~~~~
 
-    Helper functions.
+   Helper functions.
 
-    :copyright: (c) 2013-2015 by Heungsub Lee
-    :license: BSD, see LICENSE for more details.
+   :copyright: (c) 2013-2015 by Heungsub Lee
+   :license: BSD, see LICENSE for more details.
+
 """
+from errno import EINTR
+
 import zmq
 
 
-__all__ = ['class_name', 'make_repr', 'socket_type_name']
+__all__ = ['class_name', 'make_repr', 'socket_type_name',
+           'eintr_retry', 'eintr_retry_zmq']
 
 
 def class_name(obj):
@@ -76,3 +80,22 @@ for name in ('PAIR PUB SUB REQ REP DEALER ROUTER PULL PUSH XPUB XSUB '
 def socket_type_name(socket_type):
     """Gets the ZeroMQ socket type name."""
     return _socket_type_names[socket_type]
+
+
+def eintr_retry(exc_type, f, *args, **kwargs):
+    """Calls a function.  If an error of the given exception type with
+    interrupted system call (EINTR) occurs calls the function again.
+    """
+    while True:
+        try:
+            return f(*args, **kwargs)
+        except exc_type as exc:
+            if exc.errno != EINTR:
+                raise
+        else:
+            break
+
+
+def eintr_retry_zmq(f, *args, **kwargs):
+    """The specialization of :func:`eintr_retry` by :exc:`zmq.ZMQError`."""
+    return eintr_retry(zmq.ZMQError, f, *args, **kwargs)
