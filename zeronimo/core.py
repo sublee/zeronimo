@@ -29,7 +29,7 @@ import zmq.green as zmq
 from .exceptions import (
     EmissionError, MalformedMessage, Rejected, TaskClosed, Undelivered,
     WorkerNotFound)
-from .helpers import class_name, socket_type_name
+from .helpers import class_name, eintr_retry_zmq, socket_type_name
 from .messaging import (
     ACCEPT, ACK, BREAK, Call, PACK, RAISE, recv, REJECT, Reply, RETURN, send,
     UNPACK, YIELD)
@@ -187,7 +187,7 @@ class Worker(Background):
             poller.register(socket, zmq.POLLIN)
         try:
             while True:
-                for socket, event in poller.poll():
+                for socket, event in eintr_retry_zmq(poller.poll):
                     assert event & zmq.POLLIN
                     try:
                         data = recv(socket, unpack=self.unpack)

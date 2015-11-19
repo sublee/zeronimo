@@ -17,7 +17,7 @@ except ImportError:
 
 import zmq
 
-from .helpers import make_repr
+from .helpers import eintr_retry_zmq, make_repr
 
 
 __all__ = ['ACK', 'DONE', 'ITER', 'ACCEPT', 'REJECT', 'RETURN', 'RAISE',
@@ -72,10 +72,10 @@ def send(socket, obj, flags=0, topic=None, pack=PACK):
     """Sends a Python object via a ZeroMQ socket. It also can append PUB/SUB
     topic.
     """
-    if topic:
-        socket.send(topic, flags | zmq.SNDMORE)
     msg = pack(obj)
-    return socket.send(msg, flags)
+    if topic:
+        eintr_retry_zmq(socket.send, topic, flags | zmq.SNDMORE)
+    return eintr_retry_zmq(socket.send, msg, flags)
 
 
 def recv(socket, flags=0, unpack=UNPACK):
