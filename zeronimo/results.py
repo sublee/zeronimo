@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-    zeronimo.results
-    ~~~~~~~~~~~~~~~~
+   zeronimo.results
+   ~~~~~~~~~~~~~~~~
 
-    :copyright: (c) 2013-2015 by Heungsub Lee
-    :license: BSD, see LICENSE for more details.
+   :copyright: (c) 2013-2015 by Heungsub Lee
+   :license: BSD, see LICENSE for more details.
+
 """
 from __future__ import absolute_import
+
 from binascii import hexlify
 
 from gevent.event import AsyncResult
@@ -14,7 +16,7 @@ from gevent.queue import Queue
 
 from .exceptions import TaskClosed
 from .helpers import make_repr
-from .messaging import DONE, RETURN, RAISE, YIELD, BREAK
+from .messaging import BREAK, DONE, RAISE, RETURN, YIELD
 
 
 __all__ = ['RemoteResult', 'RemoteException', 'RemoteIterator']

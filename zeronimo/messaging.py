@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-    zeronimo.messaging
-    ~~~~~~~~~~~~~~~~~~
+   zeronimo.messaging
+   ~~~~~~~~~~~~~~~~~~
 
-    :copyright: (c) 2013-2015 by Heungsub Lee
-    :license: BSD, see LICENSE for more details.
+   :copyright: (c) 2013-2015 by Heungsub Lee
+   :license: BSD, see LICENSE for more details.
+
 """
 from __future__ import absolute_import
+
 from collections import namedtuple
 try:
     import cPickle as pickle

@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-    zeronimo.core
-    ~~~~~~~~~~~~~
+   zeronimo.core
+   ~~~~~~~~~~~~~
 
-    :copyright: (c) 2013-2015 by Heungsub Lee
-    :license: BSD, see LICENSE for more details.
+   :copyright: (c) 2013-2015 by Heungsub Lee
+   :license: BSD, see LICENSE for more details.
+
 """
 from __future__ import absolute_import
+
 from collections import Iterator
 from contextlib import contextmanager
 import inspect
@@ -25,12 +27,12 @@ except ImportError:
 import zmq.green as zmq
 
 from .exceptions import (
-    EmissionError, WorkerNotFound, Rejected, Undelivered, TaskClosed,
-    MalformedMessage)
+    EmissionError, MalformedMessage, Rejected, TaskClosed, Undelivered,
+    WorkerNotFound)
 from .helpers import class_name, socket_type_name
 from .messaging import (
-    ACK, ACCEPT, REJECT, RETURN, RAISE, YIELD, BREAK, PACK, UNPACK,
-    Call, Reply, send, recv)
+    ACCEPT, ACK, BREAK, Call, PACK, RAISE, recv, REJECT, Reply, RETURN, send,
+    UNPACK, YIELD)
 from .results import RemoteResult
 
 

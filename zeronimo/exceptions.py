@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-    zeronimo.exceptions
-    ~~~~~~~~~~~~~~~~~~~
+   zeronimo.exceptions
+   ~~~~~~~~~~~~~~~~~~~
 
-    :copyright: (c) 2013-2014 by Heungsub Lee
-    :license: BSD, see LICENSE for more details.
+   :copyright: (c) 2013-2015 by Heungsub Lee
+   :license: BSD, see LICENSE for more details.
+
 """
 
 
