@@ -164,6 +164,7 @@ def test_fixtures(worker, push, pub, collector, addr1, addr2, ctx):
     assert collector.running()
 
 
+@pytest.mark.flaky(reruns=3)
 def test_nowait(worker, push):
     customer = zeronimo.Customer(push)
     assert worker.obj.counter['zeronimo'] == 0
@@ -174,6 +175,7 @@ def test_nowait(worker, push):
     assert worker.obj.counter['zeronimo'] == 5
 
 
+@pytest.mark.flaky(reruns=3)
 def test_fanout_nowait(worker, worker2, worker3, worker4, worker5, pub, topic):
     fanout = zeronimo.Fanout(pub)
     assert worker.obj.counter['zeronimo'] == 0
@@ -537,6 +539,7 @@ def test_pgm_connect(ctx, fanout_addr):
         pub2.close()
 
 
+@pytest.mark.flaky(reruns=3)
 def test_malformed_message(worker, push):
     push.send('')  # EOFError
     push.send('Zeronimo!')  # UnpicklingError
@@ -554,6 +557,7 @@ def test_malformed_message(worker, push):
     assert str(w3).endswith(repr('c__main__\nNOTEXIST\np0\n.'))
 
 
+@pytest.mark.flaky(reruns=3)
 def test_queue_leaking_on_fanout(worker, collector, pub, topic):
     from gevent.queue import Queue
     fanout = zeronimo.Fanout(pub, collector)
