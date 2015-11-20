@@ -39,7 +39,7 @@ from .results import RemoteResult
 __all__ = ['Worker', 'Customer', 'Fanout', 'Collector']
 
 
-# compatible zmq constants
+# compatible zmq constants.
 try:
     ZMQ_XPUB = zmq.XPUB
     ZMQ_XSUB = zmq.XSUB
@@ -52,7 +52,7 @@ except AttributeError:
     ZMQ_STREAM = -1
 
 
-# default timeouts
+# default timeouts.
 CUSTOMER_TIMEOUT = 5
 FANOUT_TIMEOUT = 0.1
 
@@ -288,7 +288,7 @@ class Worker(Background):
             return sockets[address]
         except KeyError:
             socket = context.socket(zmq.PUSH)
-            socket.connect(address)
+            eintr_retry_zmq(socket.connect, address)
             sockets[address] = socket
             return socket
 
@@ -296,9 +296,9 @@ class Worker(Background):
         # normal tuple is faster than namedtuple.
         reply = (method, data, call_id, task_id)
         try:
-            return send(socket, reply, zmq.NOBLOCK, pack=self.pack)
+            eintr_retry_zmq(send, socket, reply, zmq.NOBLOCK, pack=self.pack)
         except (zmq.Again, zmq.ZMQError):
-            pass
+            pass  # ignore.
 
     def __repr__(self):
         return '<{0} info={1!r}>'.format(class_name(self), self.info)
@@ -324,9 +324,10 @@ class _Emitter(object):
     def _emit_nowait(self, funcname, args, kwargs, topic=None):
         call = (funcname, args, kwargs, None, None)
         try:
-            send(self.socket, call, zmq.NOBLOCK, topic, self.pack)
+            eintr_retry_zmq(send, self.socket, call,
+                            zmq.NOBLOCK, topic, self.pack)
         except zmq.Again:
-            pass  # ignore
+            pass  # ignore.
 
     def _emit(self, funcname, args, kwargs,
               topic=None, limit=None, retry=False, max_retries=None):
@@ -340,7 +341,8 @@ class _Emitter(object):
         # use short names.
         def send_call():
             try:
-                send(self.socket, call, zmq.NOBLOCK, topic, self.pack)
+                eintr_retry_zmq(send, self.socket, call,
+                                zmq.NOBLOCK, topic, self.pack)
             except zmq.Again:
                 raise Undelivered('Emission was not delivered')
         self.collector.prepare(call_id)
