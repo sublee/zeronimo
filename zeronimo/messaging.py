@@ -80,7 +80,7 @@ def send(socket, obj, flags=0, topic=None, pack=PACK):
 
 def recv(socket, flags=0, unpack=UNPACK):
     """Receives a Python object via a ZeroMQ socket."""
-    msg = socket.recv_multipart(flags)[-1]
+    msg = eintr_retry_zmq(socket.recv_multipart, flags)[-1]
     try:
         return unpack(msg)
     except BaseException as exc:
