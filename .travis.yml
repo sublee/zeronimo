@@ -32,9 +32,20 @@ matrix:
   - env: ZMQ_VERSION=
 before_install:
 - sudo apt-get update -qq
-- | # Install ZeroMQ.
+- | # install ZeroMQ
   cd $TRAVIS_BUILD_DIR
-  if [[ "$ZMQ_VERSION" == 4.1.* ]]
+  if [[ -z "$ZMQ_VERSION" ]]
+  then
+    # use the latest version of ZeroMQ if not specified.
+    git clone https://github.com/zeromq/libzmq.git
+    cd libzmq
+    ./autogen.sh
+  else
+    mkdir src && cd src
+    curl http://download.zeromq.org/zeromq-$ZMQ_VERSION.tar.gz | tar xz
+    cd zeromq-*
+  fi
+  if [[ "$ZMQ_VERSION" == 4.1.* ]] || [[ -z "$ZMQ_VERSION" ]]
   then
     # zeromq-4.1.x requires libpgm and libsodium.
     sudo apt-get install libpgm-dev
@@ -54,22 +65,11 @@ before_install:
     # zeromq-2.x requires uuid-dev.
     sudo apt-get install uuid-dev
   fi
-  if [[ -z "$ZMQ_VERSION" ]]
-  then
-    # Use the latest version of ZeroMQ if not specified.
-    git clone https://github.com/zeromq/libzmq.git
-    cd libzmq
-    ./autogen.sh
-  else
-    mkdir src && cd src
-    curl http://download.zeromq.org/zeromq-$ZMQ_VERSION.tar.gz | tar xz
-    cd zeromq-*
-  fi
   sudo apt-get install libtool pkg-configbuild-essential autoconf
   ./configure --with-pgm --prefix=$TRAVIS_BUILD_DIR/local
   make
   make install
-- | # Install pyzmq.
+- | # install pyzmq
   cd $TRAVIS_BUILD_DIR
   pip install cython
   git clone -b v$PYZMQ_VERSION https://github.com/zeromq/pyzmq.git pyzmq
