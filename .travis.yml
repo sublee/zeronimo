@@ -2,61 +2,92 @@ language: python
 python:
 - 2.7
 env:
-# - ZMQ_VERSION=
-- ZMQ_VERSION=4.1.0-rc1
-- ZMQ_VERSION=4.0.5
-- ZMQ_VERSION=4.0.4
-- ZMQ_VERSION=4.0.3
-- ZMQ_VERSION=4.0.2
-- ZMQ_VERSION=4.0.1
-- ZMQ_VERSION=3.2.4
-- ZMQ_VERSION=3.2.3
-- ZMQ_VERSION=3.2.2
-- ZMQ_VERSION=2.2.0
-- ZMQ_VERSION=2.1.11
-- ZMQ_VERSION=2.1.10
-- ZMQ_VERSION=2.1.9
-- ZMQ_VERSION=2.1.7
-- ZMQ_VERSION=2.1.4
+  global:
+  # default versions
+  - ZMQ_VERSION=4.1.3
+  - PYZMQ_VERSION=15.1.0
+  matrix:
+  -
+  # older pyzmq versions
+  - PYZMQ_VERSION=15.0.0
+  - PYZMQ_VERSION=14.7.0
+  - PYZMQ_VERSION=14.6.0
+  - PYZMQ_VERSION=14.5.0
+  - PYZMQ_VERSION=14.4.1
+  - PYZMQ_VERSION=14.4.0
+  - PYZMQ_VERSION=14.3.1
+  - PYZMQ_VERSION=14.3.0
+  - PYZMQ_VERSION=14.2.0
+  - PYZMQ_VERSION=14.1.0
+  - PYZMQ_VERSION=14.0.1
+  - PYZMQ_VERSION=14.0.0
+  # older ZeroMQ versions
+  - ZMQ_VERSION=4.1.2
+  - ZMQ_VERSION=4.1.1
+  - ZMQ_VERSION=4.1.0-rc1
+  - ZMQ_VERSION=4.0.5
+  - ZMQ_VERSION=4.0.4
+  - ZMQ_VERSION=4.0.3
+  - ZMQ_VERSION=4.0.2
+  - ZMQ_VERSION=4.0.1
+  - ZMQ_VERSION=3.2.5
+  - ZMQ_VERSION=3.2.4
+  - ZMQ_VERSION=3.2.3
+  - ZMQ_VERSION=3.2.2
+  - ZMQ_VERSION=2.2.0
+  - ZMQ_VERSION=2.1.11
+  - ZMQ_VERSION=2.1.10
+  - ZMQ_VERSION=2.1.9
+  - ZMQ_VERSION=2.1.7
+  - ZMQ_VERSION=2.1.4
+  # the latest version of ZeroMQ under development
+  - ZMQ_VERSION=
 matrix:
   allow_failures:
   - env: ZMQ_VERSION=
 before_install:
-- | # install zeromq
+- sudo apt-get update -qq
+- | # install ZeroMQ
   cd $TRAVIS_BUILD_DIR
-  if [ $ZMQ_VERSION ]
+  if [[ -z "$ZMQ_VERSION" ]]
   then
-    if [[ $ZMQ_VERSION == 2.* ]]
-    then
-      sudo apt-get install uuid-dev
-    fi
+    # use the latest version of ZeroMQ if not specified.
+    git clone https://github.com/zeromq/libzmq.git
+    cd libzmq
+    ./autogen.sh
+  else
     mkdir src && cd src
     curl http://download.zeromq.org/zeromq-$ZMQ_VERSION.tar.gz | tar xz
     cd zeromq-*
-  else
-    sudo apt-get install libtool
-    # libsodium
-    cd $TRAVIS_BUILD_DIR
-    git clone git://github.com/jedisct1/libsodium.git
+  fi
+  if [[ "$ZMQ_VERSION" == 4.1.* ]] || [[ -z "$ZMQ_VERSION" ]]
+  then
+    # zeromq-4.1.x requires libpgm and libsodium.
+    sudo apt-get install libpgm-dev
+    # ZeroMQ installation fails with libsodium-1.0.6:
+    # https://github.com/zeromq/libzmq/issues/1632
+    git clone -b 1.0.5 https://github.com/jedisct1/libsodium.git
     cd libsodium
     ./autogen.sh
     ./configure
     make check
     sudo make install
     sudo ldconfig
-    # libzmq
-    cd $TRAVIS_BUILD_DIR
-    git clone https://github.com/zeromq/libzmq.git
-    cd libzmq
-    ./autogen.sh
+    cd ..
   fi
+  if [[ "$ZMQ_VERSION" == 2.* ]]
+  then
+    # zeromq-2.x requires uuid-dev.
+    sudo apt-get install uuid-dev
+  fi
+  sudo apt-get install libtool pkg-configbuild-essential autoconf
   ./configure --with-pgm --prefix=$TRAVIS_BUILD_DIR/local
   make
   make install
 - | # install pyzmq
   cd $TRAVIS_BUILD_DIR
   pip install cython
-  git clone -b v14.3.1 https://github.com/zeromq/pyzmq.git pyzmq
+  git clone -b v$PYZMQ_VERSION https://github.com/zeromq/pyzmq.git pyzmq
   cd pyzmq
   python setup.py clean
   python setup.py configure --zmq=$TRAVIS_BUILD_DIR/local
