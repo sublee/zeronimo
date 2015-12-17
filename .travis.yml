@@ -3,31 +3,32 @@ python:
 - 2.7
 env:
 # - ZMQ_VERSION=
-- ZMQ_VERSION=4.1.0-rc1
+# - ZMQ_VERSION=4.1.0-rc1
 - ZMQ_VERSION=4.0.5
-- ZMQ_VERSION=4.0.4
-- ZMQ_VERSION=4.0.3
-- ZMQ_VERSION=4.0.2
-- ZMQ_VERSION=4.0.1
-- ZMQ_VERSION=3.2.4
-- ZMQ_VERSION=3.2.3
+# - ZMQ_VERSION=4.0.4
+# - ZMQ_VERSION=4.0.3
+# - ZMQ_VERSION=4.0.2
+# - ZMQ_VERSION=4.0.1
+# - ZMQ_VERSION=3.2.4
+# - ZMQ_VERSION=3.2.3
 - ZMQ_VERSION=3.2.2
 - ZMQ_VERSION=2.2.0
-- ZMQ_VERSION=2.1.11
-- ZMQ_VERSION=2.1.10
-- ZMQ_VERSION=2.1.9
-- ZMQ_VERSION=2.1.7
-- ZMQ_VERSION=2.1.4
+# - ZMQ_VERSION=2.1.11
+# - ZMQ_VERSION=2.1.10
+# - ZMQ_VERSION=2.1.9
+# - ZMQ_VERSION=2.1.7
+# - ZMQ_VERSION=2.1.4
 matrix:
   allow_failures:
   - env: ZMQ_VERSION=
 before_install:
 - | # install zeromq
   cd $TRAVIS_BUILD_DIR
-  if [ $ZMQ_VERSION ]
+  if [[ "$ZMQ_VERSION" ]]
   then
-    if [[ $ZMQ_VERSION == 2.* ]]
+    if [[ "$ZMQ_VERSION" == 2.* ]]
     then
+      sudo apt-get update
       sudo apt-get install uuid-dev
     fi
     mkdir src && cd src
