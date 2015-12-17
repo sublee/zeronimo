@@ -39,7 +39,7 @@ BREAK = ITER | DONE | 0b10
 
 
 #: The default function to pack message.
-PACK = pickle.dumps
+PACK = lambda obj: pickle.dumps(obj, pickle.HIGHEST_PROTOCOL)
 
 #: The default function to unpack message.
 UNPACK = pickle.loads
