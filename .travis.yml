@@ -31,8 +31,8 @@ before_install:
   cd $TRAVIS_BUILD_DIR
   if [[ "$ZMQ_VERSION" == 4.1.* ]]
   then
-    # zmq-4.1.x requires libpgm-5.1 and libsodium.
-    sudo apt-get install libpgm-5.1
+    # zmq-4.1.x requires libpgm and libsodium.
+    sudo apt-get install libpgm-dev
     sudo apt-get install libtool
     git clone https://github.com/jedisct1/libsodium.git
     cd libsodium
