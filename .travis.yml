@@ -26,11 +26,13 @@ matrix:
   allow_failures:
   - env: ZMQ_VERSION=
 before_install:
+- sudo apt-get update -qq
 - | # Install ZeroMQ.
   cd $TRAVIS_BUILD_DIR
   if [[ "$ZMQ_VERSION" == 4.1.* ]]
   then
-    # zmq-4.1.x requires libsodium.
+    # zmq-4.1.x requires libpgm-5.1 and libsodium.
+    sudo apt-get install libpgm-5.1
     sudo apt-get install libtool
     git clone https://github.com/jedisct1/libsodium.git
     cd libsodium
@@ -44,7 +46,6 @@ before_install:
   if [[ "$ZMQ_VERSION" == 2.* ]]
   then
     # zmq-2.x requires uuid-dev.
-    sudo apt-get update
     sudo apt-get install uuid-dev
   fi
   if [[ -z "$ZMQ_VERSION" ]]
