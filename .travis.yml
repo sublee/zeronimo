@@ -2,18 +2,15 @@ language: python
 python:
 - 2.7
 env:
-  global:
   # - ZMQ_VERSION=
-  - ZMQ_VERSION=4.1.3
-  - ZMQ_VERSION=4.1.2
-  - ZMQ_VERSION=4.1.1
+  # - ZMQ_VERSION=4.1.2
+  # - ZMQ_VERSION=4.1.1
   # - ZMQ_VERSION=4.1.0-rc1
   # - ZMQ_VERSION=4.0.5
   # - ZMQ_VERSION=4.0.4
   # - ZMQ_VERSION=4.0.3
   # - ZMQ_VERSION=4.0.2
   # - ZMQ_VERSION=4.0.1
-  - ZMQ_VERSION=3.2.5
   # - ZMQ_VERSION=3.2.4
   # - ZMQ_VERSION=3.2.3
   # - ZMQ_VERSION=3.2.2
@@ -24,6 +21,8 @@ env:
   # - ZMQ_VERSION=2.1.7
   # - ZMQ_VERSION=2.1.4
   matrix:
+  - ZMQ_VERSION=4.1.3
+  - ZMQ_VERSION=3.2.5
   - PYZMQ_VERSION=15.1.0
   - PYZMQ_VERSION=14.7.0
   - PYZMQ_VERSION=14.3.1
