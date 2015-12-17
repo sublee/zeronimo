@@ -26,39 +26,42 @@ matrix:
   allow_failures:
   - env: ZMQ_VERSION=
 before_install:
-- | # install zeromq
+- | # Install ZeroMQ.
   cd $TRAVIS_BUILD_DIR
-  if [[ "$ZMQ_VERSION" ]]
+  if [[ "$ZMQ_VERSION" == 4.1.* ]]
   then
-    if [[ "$ZMQ_VERSION" == 2.* ]]
-    then
-      sudo apt-get update
-      sudo apt-get install uuid-dev
-    fi
-    mkdir src && cd src
-    curl http://download.zeromq.org/zeromq-$ZMQ_VERSION.tar.gz | tar xz
-    cd zeromq-*
-  else
+    # zmq-4.1.x requires libsodium.
     sudo apt-get install libtool
-    # libsodium
-    cd $TRAVIS_BUILD_DIR
-    git clone git://github.com/jedisct1/libsodium.git
+    git clone https://github.com/jedisct1/libsodium.git
     cd libsodium
     ./autogen.sh
     ./configure
     make check
     sudo make install
     sudo ldconfig
-    # libzmq
-    cd $TRAVIS_BUILD_DIR
+    cd ..
+  fi
+  if [[ "$ZMQ_VERSION" == 2.* ]]
+  then
+    # zmq-2.x requires uuid-dev.
+    sudo apt-get update
+    sudo apt-get install uuid-dev
+  fi
+  if [[ -z "$ZMQ_VERSION" ]]
+  then
+    # Use the latest version of ZeroMQ if not specified.
     git clone https://github.com/zeromq/libzmq.git
     cd libzmq
     ./autogen.sh
+  else
+    mkdir src && cd src
+    curl http://download.zeromq.org/zeromq-$ZMQ_VERSION.tar.gz | tar xz
+    cd zeromq-*
   fi
   ./configure --with-pgm --prefix=$TRAVIS_BUILD_DIR/local
   make
   make install
-- | # install pyzmq
+- | # Install pyzmq
   cd $TRAVIS_BUILD_DIR
   pip install cython
   git clone -b v14.3.1 https://github.com/zeromq/pyzmq.git pyzmq
