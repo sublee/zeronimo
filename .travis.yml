@@ -31,10 +31,11 @@ before_install:
   cd $TRAVIS_BUILD_DIR
   if [[ "$ZMQ_VERSION" == 4.1.* ]]
   then
-    # zmq-4.1.x requires libpgm and libsodium.
+    # zeromq-4.1.x requires libpgm and libsodium.
     sudo apt-get install libpgm-dev
-    sudo apt-get install libtool
-    git clone https://github.com/jedisct1/libsodium.git
+    # ZeroMQ installation fails with libsodium-1.0.6:
+    # https://github.com/zeromq/libzmq/issues/1632
+    git clone -b 1.0.5 https://github.com/jedisct1/libsodium.git
     cd libsodium
     ./autogen.sh
     ./configure
@@ -45,7 +46,7 @@ before_install:
   fi
   if [[ "$ZMQ_VERSION" == 2.* ]]
   then
-    # zmq-2.x requires uuid-dev.
+    # zeromq-2.x requires uuid-dev.
     sudo apt-get install uuid-dev
   fi
   if [[ -z "$ZMQ_VERSION" ]]
@@ -59,10 +60,11 @@ before_install:
     curl http://download.zeromq.org/zeromq-$ZMQ_VERSION.tar.gz | tar xz
     cd zeromq-*
   fi
+  sudo apt-get install libtool pkg-configbuild-essential autoconf
   ./configure --with-pgm --prefix=$TRAVIS_BUILD_DIR/local
   make
   make install
-- | # Install pyzmq
+- | # Install pyzmq.
   cd $TRAVIS_BUILD_DIR
   pip install cython
   git clone -b v14.3.1 https://github.com/zeromq/pyzmq.git pyzmq
