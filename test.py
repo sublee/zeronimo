@@ -16,7 +16,7 @@ import zmq.green as zmq
 from conftest import (
     Application, link_sockets, run_device, running, sync_pubsub)
 import zeronimo
-from zeronimo.core import Background
+from zeronimo.core import Background, uuid4_bytes
 from zeronimo.exceptions import Rejected
 from zeronimo.helpers import eintr_retry_zmq
 import zeronimo.messaging
@@ -316,7 +316,7 @@ def test_max_retries(worker, collector, push):
     # don't retry.
     customer.max_retries = 0
     stop_accepting()
-    g = gevent.spawn_later(0.01, start_accepting)
+    g = gevent.spawn_later(1, start_accepting)
     with pytest.raises(Rejected):
         customer.emit('zeronimo')
     g.join()
@@ -826,6 +826,28 @@ def test_eintr_retry_zmq(itimer, signo, ctx, addr):
     signal.signal(signo, prev_handler)
     push.close()
     pull.close()
+
+
+def test_many_calls(request, mocker):
+    worker = zeronimo.Worker(Application(), [])
+    call = ('zeronimo', (), {}, uuid4_bytes(), None)
+    msg = zeronimo.messaging.PACK(call)
+    class fake_socket(object):
+        def recv_multipart(self, *args, **kwargs):
+            return [msg]
+    class infinite_events(object):
+        def __iter__(self):
+            return self
+        def __next__(self):
+            return fake_socket(), zmq.POLLIN
+        next = __next__
+    mocker.patch('zmq.green.Poller.poll', return_value=infinite_events())
+    # Emit many calls.
+    signal.alarm(10)
+    worker.start()
+    request.addfinalizer(worker.stop)
+    gevent.sleep(1)
+    assert worker.obj.counter['zeronimo'] > 0
 
 
 # catch leaks
