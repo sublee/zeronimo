@@ -204,7 +204,7 @@ class Worker(Background):
                         self.reject(socket, call)
                         continue
                     self.greenlet_group.spawn(self.work, socket, call)
-                    # self.greenlet_group.join(0)
+                    self.greenlet_group.join(0)
         finally:
             self.greenlet_group.kill()
             for sockets in self._cached_reply_sockets.viewvalues():

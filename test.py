@@ -833,6 +833,7 @@ def test_many_calls(request, mocker):
     call = ('zeronimo', (), {}, uuid4_bytes(), None)
     msg = zeronimo.messaging.PACK(call)
     class fake_socket(object):
+        type = zmq.PULL
         def recv_multipart(self, *args, **kwargs):
             return [msg]
     class infinite_events(object):
