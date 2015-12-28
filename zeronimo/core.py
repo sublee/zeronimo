@@ -305,7 +305,7 @@ class Worker(Background):
         return '<{0} info={1!r}>'.format(class_name(self), self.info)
 
 
-class _Emitter(object):
+class _Caller(object):
 
     available_socket_types = NotImplemented
     timeout = NotImplemented
@@ -322,7 +322,7 @@ class _Emitter(object):
         self.collector = collector
         self.pack = pack
 
-    def _emit_nowait(self, funcname, args, kwargs, topic=None):
+    def _call_nowait(self, funcname, args, kwargs, topic=None):
         call = (funcname, args, kwargs, None, None)
         try:
             eintr_retry_zmq(send, self.socket, call,
@@ -330,7 +330,7 @@ class _Emitter(object):
         except zmq.Again:
             pass  # ignore.
 
-    def _emit(self, funcname, args, kwargs,
+    def _call(self, funcname, args, kwargs,
               topic=None, limit=None, retry=False, max_retries=None):
         """Allocates a call id and emit."""
         if not self.collector.running():
@@ -353,7 +353,7 @@ class _Emitter(object):
                                         max_retries=max_retries)
 
 
-class Customer(_Emitter):
+class Customer(_Caller):
     """Customer sends RPC calls to the workers.  But it could not receive the
     result by itself.  It should work with :class:`Collector` to receive
     worker's results.
@@ -363,15 +363,19 @@ class Customer(_Emitter):
     timeout = CUSTOMER_TIMEOUT
     max_retries = None
 
-    def emit(self, funcname, *args, **kwargs):
+    def call(self, funcname, *args, **kwargs):
         if self.collector is None:
-            return self._emit_nowait(funcname, args, kwargs)
-        results = self._emit(funcname, args, kwargs, limit=1,
+            return self._call_nowait(funcname, args, kwargs)
+        results = self._call(funcname, args, kwargs, limit=1,
                              retry=True, max_retries=self.max_retries)
         return results[0]
 
+    def emit(self, funcname, *args, **kwargs):
+        warn('Use call() instead for Customer', DeprecationWarning)
+        return self.call(funcname, *args, **kwargs)
 
-class Fanout(_Emitter):
+
+class Fanout(_Caller):
     """Customer sends RPC calls to the workers.  But it could not receive the
     result by itself.  It should work with :class:`Collector` to receive
     worker's results.
@@ -382,9 +386,9 @@ class Fanout(_Emitter):
 
     def emit(self, topic, funcname, *args, **kwargs):
         if self.collector is None:
-            return self._emit_nowait(funcname, args, kwargs, topic=topic)
+            return self._call_nowait(funcname, args, kwargs, topic=topic)
         try:
-            return self._emit(funcname, args, kwargs, topic=topic)
+            return self._call(funcname, args, kwargs, topic=topic)
         except EmissionError:
             return []
 
