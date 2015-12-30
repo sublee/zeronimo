@@ -534,7 +534,7 @@ def test_undelivered(collector, push, pub, topic):
         with pytest.raises(zeronimo.Undelivered):
             customer.call('zeronimo')
         assert fanout.emit(topic, 'zeronimo') == []
-        assert customer_nowait.emit('zeronimo') is None
+        assert customer_nowait.call('zeronimo') is None
 
 
 def test_pgm_connect(ctx, fanout_addr):
@@ -704,35 +704,6 @@ def test_exception_handler(worker, collector, push, capsys):
     assert exceptions[0] is ZeroDivisionError
 
 
-def test_old_style_exception_handler(ctx, addr1, addr2):
-    # compatible with <0.2.8.
-    # prepare stuffs
-    worker_sock = ctx.socket(zmq.PULL)
-    worker_sock.bind(addr1)
-    collector_sock = ctx.socket(zmq.PULL)
-    collector_sock.bind(addr2)
-    push = ctx.socket(zmq.PUSH)
-    push.connect(addr1)
-    collector = zeronimo.Collector(collector_sock, addr2)
-    customer = zeronimo.Customer(push, collector)
-    # make a worker
-    app = Application()
-    exceptions = []
-    def exception_handler(exc_info):  # takes exc_info only.
-        exceptions.append(exc_info[0])
-    with warnings.catch_warnings(record=True) as w:
-        worker = zeronimo.Worker(app, [worker_sock],
-                                 exception_handler=exception_handler)
-    # test
-    assert len(w) == 1
-    assert w[0].category is FutureWarning
-    with running([worker], sockets=[worker_sock, collector_sock, push]):
-        with pytest.raises(ZeroDivisionError):
-            customer.call('zero_div').get()
-    assert len(exceptions) == 1
-    assert exceptions[0] is ZeroDivisionError
-
-
 def test_malformed_message_handler(worker, push, capsys):
     messages = []
     def malformed_message_handler(worker, exc_info, message):
@@ -868,12 +839,6 @@ def test_many_calls(request, mocker):
     request.addfinalizer(worker.stop)
     gevent.sleep(1)
     assert worker.app.counter['zeronimo'] > 0
-
-
-def test_deprecation_of_customer_emit(worker, push):
-    customer = zeronimo.Customer(push)
-    with pytest.warns(DeprecationWarning):
-        customer.emit('zeronimo')
 
 
 # catch leaks
