@@ -39,7 +39,7 @@ from .results import RemoteResult
 __all__ = ['Worker', 'Customer', 'Fanout', 'Collector']
 
 
-# compatible zmq constants.
+# Compatible zmq constants.
 try:
     ZMQ_XPUB = zmq.XPUB
     ZMQ_XSUB = zmq.XSUB
@@ -52,7 +52,7 @@ except AttributeError:
     ZMQ_STREAM = -1
 
 
-# default timeouts.
+# Default timeouts.
 CUSTOMER_TIMEOUT = 5
 FANOUT_TIMEOUT = 0.1
 
@@ -183,6 +183,11 @@ class Worker(Background):
         del self._app
         del self.rpc_table
 
+    @property
+    def obj(self):
+        warn('Use app instead', DeprecationWarning)
+        return self.app
+
     def __call__(self):
         """Runs the worker.  While running, an RPC service is online."""
         poller = zmq.Poller()
@@ -206,7 +211,7 @@ class Worker(Background):
                     if self.greenlet_group.full():
                         reply_socket = \
                             self.get_reply_socket(socket, call.reply_to)
-                        reply_socket and self.reject(reply_socket, call)
+                        self.reject(reply_socket, call)
                         continue
                     self.greenlet_group.spawn(self.work, socket, call)
                     self.greenlet_group.join(0)
@@ -224,40 +229,46 @@ class Worker(Background):
         """
         task_id = uuid4_bytes()
         reply_socket = self.get_reply_socket(socket, call.reply_to)
-        if reply_socket is None:
-            channel = (None, None)
-        else:
-            channel = (call.call_id, task_id)
+        channel = (call.call_id, task_id) if reply_socket else (None, None)
         try:
             f, rpc_mark = self.rpc_table[call.name]
         except KeyError:
             f, rpc_mark = getattr(self.app, call.name), default_rpc_mark
-        reject_on_exception = (reply_socket is not None and
-                               rpc_mark.reject_on_exception)
-        if not reject_on_exception:
-            reply_socket and self.accept(reply_socket, *channel)
-        with self.exception_sending(reply_socket, *channel) as raised:
+        ack_deferred = (reply_socket and rpc_mark.defer_ack)
+        if not ack_deferred:
+            self.accept(reply_socket, channel)
+        success = False
+        with self.catch_exceptions():
             try:
                 val = f(*call.args, **call.kwargs)
+            except rpc_mark.reject_on:
+                exc_info = sys.exc_info()
+                ack_deferred and self.reject(reply_socket, call)
+                raise exc_info[0], exc_info[1], exc_info[2]
             except:
-                reject_on_exception and self.reject(reply_socket, call)
-                raise
+                exc_info = sys.exc_info()
+                ack_deferred and self.accept(reply_socket, channel)
+                self.raise_(reply_socket, channel, exc_info)
+                raise exc_info[0], exc_info[1], exc_info[2]
             else:
-                reject_on_exception and self.accept(reply_socket, *channel)
-        if raised():
+                success = True
+                ack_deferred and self.accept(reply_socket, channel)
+        if not success:
             return
         if isinstance(val, Iterator):
             vals = val
-            with self.exception_sending(reply_socket, *channel):
-                for val in vals:
-                    if reply_socket is not None:
+            with self.catch_exceptions():
+                try:
+                    for val in vals:
                         self.send_reply(reply_socket, YIELD, val, *channel)
-                if reply_socket is not None:
                     self.send_reply(reply_socket, BREAK, None, *channel)
-        if reply_socket is not None:
-            self.send_reply(reply_socket, RETURN, val, *channel)
+                except:
+                    exc_info = sys.exc_info()
+                    self.raise_(reply_socket, channel, exc_info)
+                    raise exc_info[0], exc_info[1], exc_info[2]
+        self.send_reply(reply_socket, RETURN, val, *channel)
 
-    def accept(self, reply_socket, *channel):
+    def accept(self, reply_socket, channel):
         """Sends ACCEPT reply."""
         self.send_reply(reply_socket, ACCEPT, self.info, *channel)
 
@@ -265,29 +276,32 @@ class Worker(Background):
         """Sends REJECT reply."""
         self.send_reply(reply_socket, REJECT, self.info, call.call_id, None)
 
-    @contextmanager
-    def exception_sending(self, socket, *channel):
-        """Sends an exception which occurs in the context to the collector."""
-        raised = []
-        try:
-            yield lambda: bool(raised)  # test whether an error was raised.
-        except BaseException as exc:
+    def raise_(self, reply_socket, channel, exc_info=None):
+        """Sends RAISE reply."""
+        if not reply_socket:
+            return
+        if exc_info is None:
             exc_info = sys.exc_info()
-            tb = exc_info[-1]
-            while tb.tb_next is not None:
-                tb = tb.tb_next
-            filename = tb.tb_frame.f_code.co_filename
-            lineno = tb.tb_lineno
-            val = (type(exc), str(exc), filename, lineno)
-            try:
-                state = exc.__getstate__()
-            except AttributeError:
-                pass
-            else:
-                val += (state,)
-            socket and self.send_reply(socket, RAISE, val, *channel)
-            raised.append(True)
+        exc_type, exc, tb = exc_info
+        while tb.tb_next is not None:
+            tb = tb.tb_next
+        filename, lineno = tb.tb_frame.f_code.co_filename, tb.tb_lineno
+        val = (exc_type, str(exc), filename, lineno)
+        try:
+            state = exc.__getstate__()
+        except AttributeError:
+            pass
+        else:
+            val += (state,)
+        self.send_reply(reply_socket, RAISE, val, *channel)
+
+    @contextmanager
+    def catch_exceptions(self):
+        try:
+            yield
+        except:
             if self.exception_handler is not None:
+                exc_info = sys.exc_info()
                 self.exception_handler(self, exc_info)
 
     def get_reply_socket(self, socket, address):
@@ -310,6 +324,8 @@ class Worker(Background):
             return socket
 
     def send_reply(self, socket, method, data, call_id, task_id):
+        if not socket:
+            return
         # normal tuple is faster than namedtuple.
         reply = (method, data, call_id, task_id)
         try:
@@ -319,11 +335,6 @@ class Worker(Background):
 
     def __repr__(self):
         return '<{0} info={1!r}>'.format(class_name(self), self.info)
-
-    @property
-    def obj(self):
-        warn('Use app instead', DeprecationWarning)
-        return self.app
 
 
 class _Caller(object):
