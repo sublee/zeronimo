@@ -25,7 +25,7 @@ except ImportError:
     uuid4_bytes = lambda: uuid.uuid4().get_bytes()
 import zmq.green as zmq
 
-from .application import default_rpc_mark, rpc_table
+from .application import default_rpc_spec, rpc_table
 from .exceptions import (
     EmissionError, MalformedMessage, Rejected, TaskClosed, Undelivered,
     WorkerNotFound)
@@ -230,15 +230,15 @@ class Worker(Background):
         task_id = uuid4_bytes()
         reply_socket = self.get_reply_socket(socket, call.reply_to)
         channel = (call.call_id, task_id) if reply_socket else (None, None)
-        f, rpc_mark = self.find_call_target(call)
-        ack_deferred = (reply_socket and rpc_mark.defer_ack)
+        f, rpc_spec = self.find_call_target(call)
+        ack_deferred = (reply_socket and rpc_spec.defer_ack)
         if not ack_deferred:
             self.accept(reply_socket, channel)
         success = False
         with self.catch_exceptions():
             try:
-                val = self.call(call, f, rpc_mark)
-            except rpc_mark.reject_on:
+                val = self.call(call, f, rpc_spec)
+            except rpc_spec.reject_on:
                 exc_info = sys.exc_info()
                 ack_deferred and self.reject(reply_socket, call)
                 raise exc_info[0], exc_info[1], exc_info[2]
@@ -269,11 +269,11 @@ class Worker(Background):
         try:
             return self.rpc_table[call.name]
         except KeyError:
-            return getattr(self.app, call.name), default_rpc_mark
+            return getattr(self.app, call.name), default_rpc_spec
 
-    def call(self, call, f=None, rpc_mark=None):
-        if f is None and rpc_mark is None:
-            f, rpc_mark = self.find_call_target(call)
+    def call(self, call, f=None, rpc_spec=None):
+        if f is None and rpc_spec is None:
+            f, rpc_spec = self.find_call_target(call)
         return f(*call.args, **call.kwargs)
 
     def accept(self, reply_socket, channel):

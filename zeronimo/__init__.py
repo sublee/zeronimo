@@ -12,7 +12,7 @@
 from __future__ import absolute_import
 
 from .__about__ import __version__  # noqa
-from .application import get_rpc_mark, rpc
+from .application import get_rpc_spec, rpc
 from .core import Collector, Customer, Fanout, Worker
 from .exceptions import (
     EmissionError, MalformedMessage, Reject, Rejected, TaskClosed, TaskError,
@@ -22,7 +22,7 @@ from .results import RemoteException, RemoteResult
 
 __all__ = [
     # application
-    'rpc', 'get_rpc_mark',
+    'rpc', 'get_rpc_spec',
     # components
     'Worker', 'Customer', 'Fanout', 'Collector',
     # exceptions

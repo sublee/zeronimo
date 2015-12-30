@@ -406,7 +406,7 @@ class Application(object):
         def count(f):
             @functools.wraps(f)
             def wrapped(*args, **kwargs):
-                name = zeronimo.get_rpc_mark(f).name or f.__name__
+                name = zeronimo.get_rpc_spec(f).name or f.__name__
                 counter[name] += 1
                 return f(*args, **kwargs)
             return wrapped

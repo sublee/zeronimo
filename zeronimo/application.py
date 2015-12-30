@@ -18,29 +18,29 @@ import inspect
 from .exceptions import Reject
 
 
-__all__ = ['default_rpc_mark', 'rpc', 'rpc_table', 'get_rpc_mark']
+__all__ = ['default_rpc_spec', 'rpc', 'rpc_table', 'get_rpc_spec']
 
 
-RPC_MARK_ATTR = '__zeronimo_rpc__'
+RPC_SPEC_ATTR = '__zeronimo_rpc__'
 
 
-RPCMark = namedtuple('RPCMark', ['name', 'defer_ack', 'reject_on'])
+RPCSpec = namedtuple('RPCSpec', ['name', 'defer_ack', 'reject_on'])
 
 
-def _mark_as_rpc(f, name=None, defer_ack=False, reject_on=Reject):
+def _spec_as_rpc(f, name=None, defer_ack=False, reject_on=Reject):
     if name is None:
         name = f.__name__
-    rpc_mark = RPCMark(name, defer_ack, reject_on)
-    setattr(f, RPC_MARK_ATTR, rpc_mark)
+    rpc_spec = RPCSpec(name, defer_ack, reject_on)
+    setattr(f, RPC_SPEC_ATTR, rpc_spec)
     return f
 
 
-#: The :class:`RPCMark` with default values.
-default_rpc_mark = RPCMark(*inspect.getargspec(_mark_as_rpc).defaults)
+#: The :class:`RPCSpec` with default values.
+default_rpc_spec = RPCSpec(*inspect.getargspec(_spec_as_rpc).defaults)
 
 
 def rpc(f=None, **kwargs):
-    """Mark a method as RPC."""
+    """Spec a method as RPC."""
     if f is not None:
         if isinstance(f, basestring):
             if 'name' in kwargs:
@@ -48,20 +48,20 @@ def rpc(f=None, **kwargs):
             kwargs['name'] = f
         else:
             return rpc(**kwargs)(f)
-    return functools.partial(_mark_as_rpc, **kwargs)
+    return functools.partial(_spec_as_rpc, **kwargs)
 
 
 def rpc_table(app):
-    """Collects methods which are marked as RPC."""
+    """Collects methods which are speced as RPC."""
     table = {}
     for attr, value in inspect.getmembers(app):
-        rpc_mark = get_rpc_mark(value, default=None)
-        if rpc_mark is None:
+        rpc_spec = get_rpc_spec(value, default=None)
+        if rpc_spec is None:
             continue
-        table[rpc_mark.name] = (value, rpc_mark)
+        table[rpc_spec.name] = (value, rpc_spec)
     return table
 
 
-def get_rpc_mark(f, default=default_rpc_mark):
-    """Gets an RPC mark from a method."""
-    return getattr(f, RPC_MARK_ATTR, default)
+def get_rpc_spec(f, default=default_rpc_spec):
+    """Gets an RPC spec from a method."""
+    return getattr(f, RPC_SPEC_ATTR, default)
