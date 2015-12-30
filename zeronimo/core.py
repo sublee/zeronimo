@@ -26,6 +26,7 @@ except ImportError:
     uuid4_bytes = lambda: uuid.uuid4().get_bytes()
 import zmq.green as zmq
 
+from .application import default_rpc_mark, rpc_table
 from .exceptions import (
     EmissionError, MalformedMessage, Rejected, TaskClosed, Undelivered,
     WorkerNotFound)
@@ -132,14 +133,13 @@ class Worker(Background):
        worker = Worker(os, [sock1, sock2], info='doctor')
        worker.run()
 
-    :param obj: the object to be shared by an RPC service.
+    :param app: the application to be shared by an RPC service.
     :param sockets: the ZeroMQ sockets of PULL or SUB socket type.
     :param info: (optional) the worker will send this value to customers at
                  accepting an call.  it might be identity of the worker to
                  let the customer's know what worker accepted.
     """
 
-    obj = None
     sockets = None
     info = None
     greenlet_group = None
@@ -149,12 +149,12 @@ class Worker(Background):
     pack = None
     unpack = None
 
-    def __init__(self, obj, sockets, info=None, greenlet_group=None,
+    def __init__(self, app, sockets, info=None, greenlet_group=None,
                  exception_handler=default_exception_handler,
                  malformed_message_handler=default_malformed_message_handler,
                  cache_factory=dict, pack=PACK, unpack=UNPACK):
         super(Worker, self).__init__()
-        self.obj = obj
+        self.app = app
         socket_types = set(s.type for s in sockets)
         if socket_types.difference([zmq.PAIR, zmq.SUB, zmq.PULL, ZMQ_XSUB]):
             raise ValueError('Worker wraps one of PAIR, SUB, PULL, and XSUB')
@@ -179,6 +179,20 @@ class Worker(Background):
         self.pack = pack
         self.unpack = unpack
         self._cached_reply_sockets = {}
+
+    @property
+    def app(self):
+        return self._app
+
+    @app.setter
+    def app(self, app):
+        self._app = app
+        self.rpc_table = rpc_table(app)
+
+    @app.deleter
+    def app(self):
+        del self._app
+        del self.rpc_table
 
     def __call__(self):
         """Runs the worker.  While running, an RPC service is online."""
@@ -225,9 +239,12 @@ class Worker(Background):
             channel = (None, None)
         else:
             channel = (call.call_id, task_id)
-        f = getattr(self.obj, call.funcname)
-        reject_on_exception = reply_socket is not None and \
-            getattr(f, '_zeronimo_reject_on_exception', False)
+        try:
+            f, rpc_mark = self.rpc_table[call.name]
+        except KeyError:
+            f, rpc_mark = getattr(self.app, call.name), default_rpc_mark
+        reject_on_exception = (reply_socket is not None and
+                               rpc_mark.reject_on_exception)
         if not reject_on_exception:
             reply_socket and self.accept(reply_socket, *channel)
         with self.exception_sending(reply_socket, *channel) as raised:
@@ -284,10 +301,6 @@ class Worker(Background):
             if self.exception_handler is not None:
                 self.exception_handler(self, exc_info)
 
-    def call(self, call):
-        """Calls a function."""
-        return getattr(self.obj, call.funcname)(*call.args, **call.kwargs)
-
     def get_reply_socket(self, socket, address):
         if socket.type == zmq.PAIR:
             return socket
@@ -318,6 +331,11 @@ class Worker(Background):
     def __repr__(self):
         return '<{0} info={1!r}>'.format(class_name(self), self.info)
 
+    @property
+    def obj(self):
+        warn('Use app instead', DeprecationWarning)
+        return self.app
+
 
 class _Caller(object):
 
@@ -336,15 +354,15 @@ class _Caller(object):
         self.collector = collector
         self.pack = pack
 
-    def _call_nowait(self, funcname, args, kwargs, topic=None):
-        call = (funcname, args, kwargs, None, None)
+    def _call_nowait(self, name, args, kwargs, topic=None):
+        call = (name, args, kwargs, None, None)
         try:
             eintr_retry_zmq(send, self.socket, call,
                             zmq.NOBLOCK, topic, self.pack)
         except zmq.Again:
             pass  # ignore.
 
-    def _call(self, funcname, args, kwargs,
+    def _call(self, name, args, kwargs,
               topic=None, limit=None, retry=False, max_retries=None):
         """Allocates a call id and emit."""
         if not self.collector.running():
@@ -352,7 +370,7 @@ class _Caller(object):
         call_id = uuid4_bytes()
         reply_to = self.collector.address
         # normal tuple is faster than namedtuple.
-        call = (funcname, args, kwargs, call_id, reply_to)
+        call = (name, args, kwargs, call_id, reply_to)
         # use short names.
         def send_call():
             try:
@@ -377,16 +395,16 @@ class Customer(_Caller):
     timeout = CUSTOMER_TIMEOUT
     max_retries = None
 
-    def call(self, funcname, *args, **kwargs):
+    def call(self, name, *args, **kwargs):
         if self.collector is None:
-            return self._call_nowait(funcname, args, kwargs)
-        results = self._call(funcname, args, kwargs, limit=1,
+            return self._call_nowait(name, args, kwargs)
+        results = self._call(name, args, kwargs, limit=1,
                              retry=True, max_retries=self.max_retries)
         return results[0]
 
-    def emit(self, funcname, *args, **kwargs):
+    def emit(self, name, *args, **kwargs):
         warn('Use call() instead for Customer', DeprecationWarning)
-        return self.call(funcname, *args, **kwargs)
+        return self.call(name, *args, **kwargs)
 
 
 class Fanout(_Caller):
@@ -398,11 +416,11 @@ class Fanout(_Caller):
     available_socket_types = [zmq.PUB, ZMQ_XPUB]
     timeout = FANOUT_TIMEOUT
 
-    def emit(self, topic, funcname, *args, **kwargs):
+    def emit(self, topic, name, *args, **kwargs):
         if self.collector is None:
-            return self._call_nowait(funcname, args, kwargs, topic=topic)
+            return self._call_nowait(name, args, kwargs, topic=topic)
         try:
-            return self._call(funcname, args, kwargs, topic=topic)
+            return self._call(name, args, kwargs, topic=topic)
         except EmissionError:
             return []
 

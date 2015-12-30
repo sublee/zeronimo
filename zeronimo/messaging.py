@@ -45,7 +45,7 @@ PACK = lambda obj: pickle.dumps(obj, pickle.HIGHEST_PROTOCOL)
 UNPACK = pickle.loads
 
 
-class Call(namedtuple('Call', 'funcname args kwargs call_id reply_to')):
+class Call(namedtuple('Call', 'name args kwargs call_id reply_to')):
 
     def __repr__(self):
         return make_repr(self, keywords=self._fields)

@@ -167,22 +167,22 @@ def test_fixtures(worker, push, pub, collector, addr1, addr2, ctx):
 @pytest.mark.flaky(reruns=3)
 def test_nowait(worker, push):
     customer = zeronimo.Customer(push)
-    assert worker.obj.counter['zeronimo'] == 0
+    assert worker.app.counter['zeronimo'] == 0
     for x in xrange(5):
         assert customer.call('zeronimo') is None
-    assert worker.obj.counter['zeronimo'] == 0
+    assert worker.app.counter['zeronimo'] == 0
     gevent.sleep(0.01)
-    assert worker.obj.counter['zeronimo'] == 5
+    assert worker.app.counter['zeronimo'] == 5
 
 
 @pytest.mark.flaky(reruns=3)
 def test_fanout_nowait(worker, worker2, worker3, worker4, worker5, pub, topic):
     fanout = zeronimo.Fanout(pub)
-    assert worker.obj.counter['zeronimo'] == 0
+    assert worker.app.counter['zeronimo'] == 0
     assert fanout.emit(topic, 'zeronimo') is None
-    assert worker.obj.counter['zeronimo'] == 0
+    assert worker.app.counter['zeronimo'] == 0
     gevent.sleep(0.01)
-    assert worker.obj.counter['zeronimo'] == 5
+    assert worker.app.counter['zeronimo'] == 5
 
 
 def test_return(worker, collector, push):
@@ -309,18 +309,19 @@ def test_reject(worker1, worker2, collector, push, pub, topic):
 
 def test_reject_on_exception(worker1, worker2, collector, push):
     # Workers wrap own object.
-    worker1.obj = Application()
-    worker2.obj = Application()
+    worker1.app = Application()
+    worker2.app = Application()
     # Any worker accepts.
     customer = zeronimo.Customer(push, collector)
     assert customer.call('f_under_reject_on_exception').get() == 'zeronimo'
     # worker1 will reject.
-    worker1.obj.f = worker1.obj.zero_div
+    worker1.app.f = worker1.app.zero_div
     # But worker2 still accepts.
     assert customer.call('f_under_reject_on_exception').get() == 'zeronimo'
     # worker2 will also reject.
-    worker2.obj.f = worker2.obj.zero_div
+    worker2.app.f = worker2.app.zero_div
     # All workers reject.
+    customer.timeout = 0.1
     with pytest.raises(Rejected):
         customer.call('f_under_reject_on_exception')
 
@@ -866,7 +867,7 @@ def test_many_calls(request, mocker):
     worker.start()
     request.addfinalizer(worker.stop)
     gevent.sleep(1)
-    assert worker.obj.counter['zeronimo'] > 0
+    assert worker.app.counter['zeronimo'] > 0
 
 
 def test_deprecation_of_customer_emit(worker, push):

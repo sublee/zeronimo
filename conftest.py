@@ -16,7 +16,6 @@ from gevent import socket
 import zmq.green as zmq
 
 import zeronimo
-from zeronimo import reject_on_exception
 
 
 TICK = 0.001
@@ -407,7 +406,8 @@ class Application(object):
         def count(f):
             @functools.wraps(f)
             def wrapped(*args, **kwargs):
-                counter[f.__name__] += 1
+                name = zeronimo.get_rpc_mark(f).name or f.__name__
+                counter[name] += 1
                 return f(*args, **kwargs)
             return wrapped
         for attr in dir(obj):
@@ -417,7 +417,8 @@ class Application(object):
         obj.counter = counter
         return obj
 
-    def zeronimo(self):
+    @zeronimo.rpc('zeronimo')
+    def _zeronimo(self):
         return 'zeronimo'
 
     def add(self, a, b):
@@ -473,8 +474,8 @@ class Application(object):
                 break
             gevent.sleep(sleep)
 
-    f = zeronimo
+    f = _zeronimo
 
-    @reject_on_exception
+    @zeronimo.rpc(reject_on_exception=True)
     def f_under_reject_on_exception(self, *args, **kwargs):
         return self.f(*args, **kwargs)
