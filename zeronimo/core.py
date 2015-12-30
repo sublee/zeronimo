@@ -11,7 +11,6 @@ from __future__ import absolute_import
 
 from collections import Iterator
 from contextlib import contextmanager
-import inspect
 import sys
 import traceback
 from warnings import warn
@@ -163,16 +162,6 @@ class Worker(Background):
         if greenlet_group is None:
             greenlet_group = Group()
         self.greenlet_group = greenlet_group
-        # to be compatible with <0.2.8.
-        if exception_handler is not None:
-            spec = inspect.getargspec(exception_handler)
-            if len(spec.args) == 1:
-                # exception handler has only exc_info parameter before 0.2.8.
-                exception_handler = \
-                    lambda __, exc_info, f=exception_handler: f(exc_info)
-                warn('Parameters of exception_handler were changed from '
-                     '(exc_info) to (worker, exc_info) since 0.2.8',
-                     FutureWarning)
         self.exception_handler = exception_handler
         self.malformed_message_handler = malformed_message_handler
         self.cache_factory = cache_factory
@@ -401,10 +390,6 @@ class Customer(_Caller):
         results = self._call(name, args, kwargs, limit=1,
                              retry=True, max_retries=self.max_retries)
         return results[0]
-
-    def emit(self, name, *args, **kwargs):
-        warn('Use call() instead for Customer', DeprecationWarning)
-        return self.call(name, *args, **kwargs)
 
 
 class Fanout(_Caller):
