@@ -219,6 +219,7 @@ def resolve_fixtures(f, protocol):
     def fixture_resolved(**kwargs):
         ctx = zmq.Context()
         topic = rand_str()
+        app = Application()
         patience = kwargs.pop('patience', config.option.patience)
         zeronimo.Customer.timeout = customer_timeout * patience
         zeronimo.Fanout.timeout = fanout_timeout * patience
@@ -241,7 +242,6 @@ def resolve_fixtures(f, protocol):
                 sub_socks.add(sub_sock)
                 worker_info = '{0}[{1}]({2})' \
                               ''.format(f.__name__, protocol, param)
-                app = Application()
                 val = zeronimo.Worker(app, [pull_sock, sub_sock], worker_info)
                 greenlets.add(val)
             elif isinstance(val, deferred_collector):

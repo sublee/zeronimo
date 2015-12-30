@@ -308,6 +308,10 @@ def test_reject(worker1, worker2, collector, push, pub, topic):
 
 
 def test_reject_on_exception(worker1, worker2, collector, push):
+    # Workers wrap own object.
+    worker1.obj = Application()
+    worker2.obj = Application()
+    # Any worker accepts.
     customer = zeronimo.Customer(push, collector)
     assert customer.call('f_under_reject_on_exception').get() == 'zeronimo'
     # worker1 will reject.

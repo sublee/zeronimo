@@ -201,7 +201,9 @@ class Worker(Background):
                         continue
                     call = Call(*data)
                     if self.greenlet_group.full():
-                        self.reject(socket, call)
+                        reply_socket = \
+                            self.get_reply_socket(socket, call.reply_to)
+                        reply_socket and self.reject(reply_socket, call)
                         continue
                     self.greenlet_group.spawn(self.work, socket, call)
                     self.greenlet_group.join(0)
@@ -224,18 +226,18 @@ class Worker(Background):
         else:
             channel = (call.call_id, task_id)
         f = getattr(self.obj, call.funcname)
-        reject_on_exception = \
+        reject_on_exception = reply_socket is not None and \
             getattr(f, '_zeronimo_reject_on_exception', False)
         if not reject_on_exception:
-            self.send_reply(reply_socket, ACCEPT, self.info, *channel)
+            reply_socket and self.accept(reply_socket, *channel)
         with self.exception_sending(reply_socket, *channel) as raised:
             try:
                 val = f(*call.args, **call.kwargs)
             except:
-                reject_on_exception and self.reject(socket, call)
+                reject_on_exception and self.reject(reply_socket, call)
                 raise
             else:
-                reject_on_exception and self.accept(socket, call, *channel)
+                reject_on_exception and self.accept(reply_socket, *channel)
         if raised():
             return
         if isinstance(val, Iterator):
@@ -249,18 +251,12 @@ class Worker(Background):
         if reply_socket is not None:
             self.send_reply(reply_socket, RETURN, val, *channel)
 
-    def accept(self, socket, call, *channel):
+    def accept(self, reply_socket, *channel):
         """Sends ACCEPT reply."""
-        reply_socket = self.get_reply_socket(socket, call.reply_to)
-        if reply_socket is None:
-            return
         self.send_reply(reply_socket, ACCEPT, self.info, *channel)
 
-    def reject(self, socket, call):
+    def reject(self, reply_socket, call):
         """Sends REJECT reply."""
-        reply_socket = self.get_reply_socket(socket, call.reply_to)
-        if reply_socket is None:
-            return
         self.send_reply(reply_socket, REJECT, self.info, call.call_id, None)
 
     @contextmanager
