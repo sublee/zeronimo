@@ -8,6 +8,10 @@ env:
   - PYZMQ_VERSION=15.1.0
   matrix:
   -
+  # the latest versions under development
+  - PYZMQ_VERSION=
+  - ZMQ_VERSION=
+  - PYZMQ_VERSION= ZMQ_VERSION=
   # older pyzmq versions
   - PYZMQ_VERSION=15.0.0
   - PYZMQ_VERSION=14.7.0
@@ -40,11 +44,11 @@ env:
   - ZMQ_VERSION=2.1.9
   - ZMQ_VERSION=2.1.7
   - ZMQ_VERSION=2.1.4
-  # the latest version of ZeroMQ under development
-  - ZMQ_VERSION=
 matrix:
   allow_failures:
+  - env: PYZMQ_VERSION=
   - env: ZMQ_VERSION=
+  - env: PYZMQ_VERSION= ZMQ_VERSION=
 before_install:
 - sudo apt-get update -qq
 - | # install ZeroMQ
