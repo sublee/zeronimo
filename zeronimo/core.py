@@ -217,14 +217,25 @@ class Worker(Background):
         all of function actions.  A function could return, yield, raise any
         packable objects.
         """
-        channel = (None, None)
         task_id = uuid4_bytes()
         reply_socket = self.get_reply_socket(socket, call.reply_to)
-        if reply_socket is not None:
+        if reply_socket is None:
+            channel = (None, None)
+        else:
             channel = (call.call_id, task_id)
+        f = getattr(self.obj, call.funcname)
+        reject_on_exception = \
+            getattr(f, '_zeronimo_reject_on_exception', False)
+        if not reject_on_exception:
             self.send_reply(reply_socket, ACCEPT, self.info, *channel)
         with self.exception_sending(reply_socket, *channel) as raised:
-            val = self.call(call)
+            try:
+                val = f(*call.args, **call.kwargs)
+            except:
+                reject_on_exception and self.reject(socket, call)
+                raise
+            else:
+                reject_on_exception and self.accept(socket, call, *channel)
         if raised():
             return
         if isinstance(val, Iterator):
@@ -237,6 +248,13 @@ class Worker(Background):
                     self.send_reply(reply_socket, BREAK, None, *channel)
         if reply_socket is not None:
             self.send_reply(reply_socket, RETURN, val, *channel)
+
+    def accept(self, socket, call, *channel):
+        """Sends ACCEPT reply."""
+        reply_socket = self.get_reply_socket(socket, call.reply_to)
+        if reply_socket is None:
+            return
+        self.send_reply(reply_socket, ACCEPT, self.info, *channel)
 
     def reject(self, socket, call):
         """Sends REJECT reply."""

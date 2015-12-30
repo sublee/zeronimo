@@ -16,6 +16,7 @@ from gevent import socket
 import zmq.green as zmq
 
 import zeronimo
+from zeronimo import reject_on_exception
 
 
 TICK = 0.001
@@ -218,7 +219,6 @@ def resolve_fixtures(f, protocol):
     def fixture_resolved(**kwargs):
         ctx = zmq.Context()
         topic = rand_str()
-        app = Application()
         patience = kwargs.pop('patience', config.option.patience)
         zeronimo.Customer.timeout = customer_timeout * patience
         zeronimo.Fanout.timeout = fanout_timeout * patience
@@ -241,6 +241,7 @@ def resolve_fixtures(f, protocol):
                 sub_socks.add(sub_sock)
                 worker_info = '{0}[{1}]({2})' \
                               ''.format(f.__name__, protocol, param)
+                app = Application()
                 val = zeronimo.Worker(app, [pull_sock, sub_sock], worker_info)
                 greenlets.add(val)
             elif isinstance(val, deferred_collector):
@@ -471,3 +472,9 @@ class Application(object):
                 # at the last
                 break
             gevent.sleep(sleep)
+
+    f = zeronimo
+
+    @reject_on_exception
+    def f_under_reject_on_exception(self, *args, **kwargs):
+        return self.f(*args, **kwargs)

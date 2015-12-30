@@ -99,3 +99,8 @@ def eintr_retry(exc_type, f, *args, **kwargs):
 def eintr_retry_zmq(f, *args, **kwargs):
     """The specialization of :func:`eintr_retry` by :exc:`zmq.ZMQError`."""
     return eintr_retry(zmq.ZMQError, f, *args, **kwargs)
+
+
+def reject_on_exception(f):
+    f._zeronimo_reject_on_exception = True
+    return f

@@ -307,6 +307,20 @@ def test_reject(worker1, worker2, collector, push, pub, topic):
     assert count_workers() == 2
 
 
+def test_reject_on_exception(worker1, worker2, collector, push):
+    customer = zeronimo.Customer(push, collector)
+    assert customer.call('f_under_reject_on_exception').get() == 'zeronimo'
+    # worker1 will reject.
+    worker1.obj.f = worker1.obj.zero_div
+    # But worker2 still accepts.
+    assert customer.call('f_under_reject_on_exception').get() == 'zeronimo'
+    # worker2 will also reject.
+    worker2.obj.f = worker2.obj.zero_div
+    # All workers reject.
+    with pytest.raises(Rejected):
+        customer.call('f_under_reject_on_exception')
+
+
 def test_max_retries(worker, collector, push):
     def start_accepting():
         worker.greenlet_group = Group()
