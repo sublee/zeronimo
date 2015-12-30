@@ -230,17 +230,14 @@ class Worker(Background):
         task_id = uuid4_bytes()
         reply_socket = self.get_reply_socket(socket, call.reply_to)
         channel = (call.call_id, task_id) if reply_socket else (None, None)
-        try:
-            f, rpc_mark = self.rpc_table[call.name]
-        except KeyError:
-            f, rpc_mark = getattr(self.app, call.name), default_rpc_mark
+        f, rpc_mark = self.find_call_target(call)
         ack_deferred = (reply_socket and rpc_mark.defer_ack)
         if not ack_deferred:
             self.accept(reply_socket, channel)
         success = False
         with self.catch_exceptions():
             try:
-                val = f(*call.args, **call.kwargs)
+                val = self.call(call, f, rpc_mark)
             except rpc_mark.reject_on:
                 exc_info = sys.exc_info()
                 ack_deferred and self.reject(reply_socket, call)
@@ -267,6 +264,17 @@ class Worker(Background):
                     self.raise_(reply_socket, channel, exc_info)
                     raise exc_info[0], exc_info[1], exc_info[2]
         self.send_reply(reply_socket, RETURN, val, *channel)
+
+    def find_call_target(self, call):
+        try:
+            return self.rpc_table[call.name]
+        except KeyError:
+            return getattr(self.app, call.name), default_rpc_mark
+
+    def call(self, call, f=None, rpc_mark=None):
+        if f is None and rpc_mark is None:
+            f, rpc_mark = self.find_call_target(call)
+        return f(*call.args, **call.kwargs)
 
     def accept(self, reply_socket, channel):
         """Sends ACCEPT reply."""
