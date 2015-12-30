@@ -663,6 +663,12 @@ def test_direct_xpub_xsub(ctx, addr1, addr2):
         assert get_results(fanout.emit('zeronimo', 'zeronimo')) == ['zeronimo']
 
 
+def test_mixture(worker, collector, push):
+    customer = zeronimo.Customer(push, collector)
+    assert customer.call('is_remote').get()
+    assert not worker.app.is_remote()
+
+
 def test_marshal_message(ctx, addr1, addr2):
     import marshal
     pack = marshal.dumps

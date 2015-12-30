@@ -479,3 +479,9 @@ class Application(object):
     @zeronimo.rpc(defer_ack=True, reject_on=BaseException)
     def f_under_reject_on_exception(self, *args, **kwargs):
         return self.f(*args, **kwargs)
+
+    def is_remote(self):
+        return False
+    @zeronimo.rpc('is_remote')
+    def _rpc_is_remote(self):
+        return True
