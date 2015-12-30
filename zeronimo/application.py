@@ -21,10 +21,10 @@ from .exceptions import Reject
 __all__ = ['default_rpc_spec', 'rpc', 'rpc_table', 'get_rpc_spec']
 
 
-RPC_SPEC_ATTR = '__zeronimo_rpc__'
+RPC_SPEC_ATTR = '__zeronimo__'
 
 
-RPCSpec = namedtuple('RPCSpec', ['name', 'defer_ack', 'reject_on'])
+RPCSpec = namedtuple('RPCSpec', 'name defer_ack reject_on')
 
 
 def _spec_as_rpc(f, name=None, defer_ack=False, reject_on=Reject):
