@@ -9,9 +9,13 @@
    :license: BSD, see LICENSE for more details.
 
 """
+from __future__ import absolute_import
+
 from collections import namedtuple
 import functools
 import inspect
+
+from .exceptions import Reject
 
 
 __all__ = ['default_rpc_mark', 'rpc', 'rpc_table', 'get_rpc_mark']
@@ -23,11 +27,9 @@ RPC_MARK_ATTR = '__zeronimo_rpc__'
 RPCMark = namedtuple('RPCMark', ['name', 'defer_ack', 'reject_on'])
 
 
-def _mark_as_rpc(f, name=None, defer_ack=False, reject_on=None):
+def _mark_as_rpc(f, name=None, defer_ack=False, reject_on=Reject):
     if name is None:
         name = f.__name__
-    if reject_on is not None and not defer_ack:
-        raise ValueError('Set defer_ack=True to use reject_on option')
     rpc_mark = RPCMark(name, defer_ack, reject_on)
     setattr(f, RPC_MARK_ATTR, rpc_mark)
     return f

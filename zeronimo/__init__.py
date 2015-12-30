@@ -15,7 +15,7 @@ from .__about__ import __version__  # noqa
 from .application import get_rpc_mark, rpc
 from .core import Collector, Customer, Fanout, Worker
 from .exceptions import (
-    EmissionError, MalformedMessage, Rejected, TaskClosed, TaskError,
+    EmissionError, MalformedMessage, Reject, Rejected, TaskClosed, TaskError,
     Undelivered, WorkerNotFound, ZeronimoException)
 from .results import RemoteException, RemoteResult
 
@@ -26,8 +26,9 @@ __all__ = [
     # components
     'Worker', 'Customer', 'Fanout', 'Collector',
     # exceptions
-    'ZeronimoException', 'EmissionError', 'TaskError', 'WorkerNotFound',
-    'Rejected', 'Undelivered', 'TaskClosed', 'MalformedMessage',
+    'ZeronimoException', 'Reject', 'EmissionError', 'TaskError',
+    'WorkerNotFound', 'Rejected', 'Undelivered', 'TaskClosed',
+    'MalformedMessage',
     # results
     'RemoteResult', 'RemoteException',
 ]
