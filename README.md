@@ -2,7 +2,7 @@ Zeronimo!
 =========
 
 [![Build Status]
-(https://travis-ci.org/sublee/zeronimo.svg)]
+(https://img.shields.io/travis/sublee/zeronimo.svg)]
 (https://travis-ci.org/sublee/zeronimo)
 [![Coverage Status]
 (https://img.shields.io/coveralls/sublee/zeronimo.svg)]
