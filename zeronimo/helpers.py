@@ -15,7 +15,7 @@ import zmq
 
 
 __all__ = ['class_name', 'make_repr', 'socket_type_name',
-           'eintr_retry', 'eintr_retry_zmq']
+           'eintr_retry', 'eintr_retry_zmq', 'Flag']
 
 
 def class_name(obj):
@@ -99,3 +99,19 @@ def eintr_retry(exc_type, f, *args, **kwargs):
 def eintr_retry_zmq(f, *args, **kwargs):
     """The specialization of :func:`eintr_retry` by :exc:`zmq.ZMQError`."""
     return eintr_retry(zmq.ZMQError, f, *args, **kwargs)
+
+
+class Flag(object):
+
+    __slots__ = ('state',)
+
+    def __init__(self, state=False):
+        self(state)
+
+    def __call__(self, state):
+        self.state = state
+
+    def __bool__(self):
+        return bool(self.state)
+
+    __nonzero__ = __bool__

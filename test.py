@@ -307,23 +307,47 @@ def test_reject(worker1, worker2, collector, push, pub, topic):
     assert count_workers() == 2
 
 
-def test_reject_on_exception(worker1, worker2, collector, push):
+# def test_reject_on_exception(worker1, worker2, collector, push):
+#     # Workers wrap own object.
+#     worker1.app = Application()
+#     worker2.app = Application()
+#     # Any worker accepts.
+#     customer = zeronimo.Customer(push, collector)
+#     assert customer.call('f_under_reject_on_exception').get() == 'zeronimo'
+#     # worker1 will reject.
+#     worker1.app.f = worker1.app.zero_div
+#     # But worker2 still accepts.
+#     assert customer.call('f_under_reject_on_exception').get() == 'zeronimo'
+#     # worker2 will also reject.
+#     worker2.app.f = worker2.app.zero_div
+#     # All workers reject.
+#     customer.timeout = 0.1
+#     with pytest.raises(Rejected):
+#         customer.call('f_under_reject_on_exception')
+
+
+def test_manual_ack(worker1, worker2, collector, push):
     # Workers wrap own object.
     worker1.app = Application()
     worker2.app = Application()
     # Any worker accepts.
     customer = zeronimo.Customer(push, collector)
-    assert customer.call('f_under_reject_on_exception').get() == 'zeronimo'
+    assert customer.call('maybe_reject', 1, 2).get() == 3
     # worker1 will reject.
-    worker1.app.f = worker1.app.zero_div
+    worker1.app.maybe_reject.reject = True
     # But worker2 still accepts.
-    assert customer.call('f_under_reject_on_exception').get() == 'zeronimo'
+    assert customer.call('maybe_reject', 3, 4).get() == 7
     # worker2 will also reject.
-    worker2.app.f = worker2.app.zero_div
+    worker2.app.maybe_reject.reject = True
     # All workers reject.
     customer.timeout = 0.1
     with pytest.raises(Rejected):
-        customer.call('f_under_reject_on_exception')
+        customer.call('maybe_reject', 5, 6)
+    # Generator marked as manual_rpc=True.
+    worker1.app.iter_maybe_reject.reject = True
+    gen = customer.call('iter_maybe_reject', 7, 8).get()
+    assert next(gen) == 7
+    assert next(gen) == 8
 
 
 def test_max_retries(worker, collector, push):
@@ -891,14 +915,23 @@ def test_no_reply_leak():
     assert not find_objects(zeronimo.messaging.Reply)
 
 
+proc = Process(os.getpid())
+collect_conns = lambda: set(
+    conn for conn in proc.connections()
+    if conn.status not in ('CLOSE_WAIT', 'NONE')
+)
+# Mark initial connections.  They are not leacked connections.
+initial_conns = collect_conns()
+
+
 @pytest.mark.trylast
 def test_no_socket_leak():
-    proc = Process(os.getpid())
     for x in xrange(3):
-        conns = [conn for conn in proc.connections()
-                 if conn.status not in ('CLOSE_WAIT', 'NONE')]
+        conns = collect_conns() - initial_conns
         if not conns:
             break
         gevent.sleep(0.1)
     else:
-        pytest.fail('{0} connections leacked'.format(len(conns)))
+        pytest.fail('{0} connections leacked:\n{1}'.format(
+            len(conns), '\n'.join('- %r' % (c,) for c in conns)
+        ))

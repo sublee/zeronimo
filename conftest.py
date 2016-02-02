@@ -474,11 +474,16 @@ class Application(object):
                 break
             gevent.sleep(sleep)
 
-    f = _zeronimo
+    @zeronimo.rpc(manual_ack=True)
+    def maybe_reject(self, ack, x, y):
+        ack(not getattr(self.maybe_reject, 'reject', False))
+        return x + y
 
-    @zeronimo.rpc(defer_ack=True, reject_on=BaseException)
-    def f_under_reject_on_exception(self, *args, **kwargs):
-        return self.f(*args, **kwargs)
+    @zeronimo.rpc(manual_ack=True)
+    def iter_maybe_reject(self, ack, x, y):
+        ack(not getattr(self.iter_maybe_reject, 'reject', False))
+        yield x
+        yield y
 
     def is_remote(self):
         return False

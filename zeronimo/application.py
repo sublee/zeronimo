@@ -15,8 +15,6 @@ from collections import namedtuple
 import functools
 import inspect
 
-from .exceptions import Reject
-
 
 __all__ = ['default_rpc_spec', 'rpc', 'rpc_table', 'get_rpc_spec']
 
@@ -24,13 +22,13 @@ __all__ = ['default_rpc_spec', 'rpc', 'rpc_table', 'get_rpc_spec']
 RPC_SPEC_ATTR = '__zeronimo__'
 
 
-RPCSpec = namedtuple('RPCSpec', 'name defer_ack reject_on')
+RPCSpec = namedtuple('RPCSpec', 'name manual_ack')
 
 
-def _spec_as_rpc(f, name=None, defer_ack=False, reject_on=Reject):
+def _spec_as_rpc(f, name=None, manual_ack=False):
     if name is None:
         name = f.__name__
-    rpc_spec = RPCSpec(name, defer_ack, reject_on)
+    rpc_spec = RPCSpec(name, manual_ack)
     setattr(f, RPC_SPEC_ATTR, rpc_spec)
     return f
 
