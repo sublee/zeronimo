@@ -313,10 +313,11 @@ class Worker(Background):
                 self.exception_handler(self, exc_info)
 
     def get_reply_socket(self, socket, address):
-        if socket.type == zmq.PAIR:
-            return socket
         if address is None:
-            return
+            if socket.type == zmq.PAIR:
+                return socket
+            else:
+                return
         context = socket.context
         try:
             sockets = self._cached_reply_sockets[context]

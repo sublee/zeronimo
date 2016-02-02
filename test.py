@@ -633,6 +633,21 @@ def test_pair(ctx, addr):
             customer.call('zero_div').get()
 
 
+def test_pair_with_collector(ctx, addr1, addr2):
+    # Failed at 0.3.0.
+    left = ctx.socket(zmq.PAIR)
+    right = ctx.socket(zmq.PAIR)
+    left.bind(addr1)
+    right.connect(addr1)
+    worker = zeronimo.Worker(Application(), [left])
+    collector_sock = ctx.socket(zmq.PULL)
+    collector_sock.bind(addr2)
+    collector = zeronimo.Collector(collector_sock, addr2)
+    customer = zeronimo.Customer(right, collector)
+    with running([worker], sockets=[left, right, collector_sock]):
+        assert customer.call('zeronimo').get() == 'zeronimo'
+
+
 @pytest.mark.skipif('zmq.zmq_version_info() < (3,)')
 # XPUB/XSUB is available from libzmq-3
 def test_direct_xpub_xsub(ctx, addr1, addr2):
