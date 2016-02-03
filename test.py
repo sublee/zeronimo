@@ -343,11 +343,18 @@ def test_manual_ack(worker1, worker2, collector, push):
     customer.timeout = 0.1
     with pytest.raises(Rejected):
         customer.call('maybe_reject', 5, 6)
-    # Generator marked as manual_rpc=True.
+    # A generator marked as manual_rpc=True.
     worker1.app.iter_maybe_reject.reject = True
     gen = customer.call('iter_maybe_reject', 7, 8).get()
     assert next(gen) == 7
     assert next(gen) == 8
+    assert worker2.app.iter_maybe_reject.final_state == (True, 7, 8)
+    # All generators marked as manual_rpc=True.
+    worker2.app.iter_maybe_reject.reject = True
+    with pytest.raises(Rejected):
+        customer.call('iter_maybe_reject', 9, 10)
+    assert worker1.app.iter_maybe_reject.final_state is None
+    assert worker2.app.iter_maybe_reject.final_state is None
 
 
 def test_max_retries(worker, collector, push):

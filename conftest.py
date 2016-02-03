@@ -481,9 +481,12 @@ class Application(object):
 
     @zeronimo.rpc(manual_ack=True)
     def iter_maybe_reject(self, ack, x, y):
+        self.iter_maybe_reject.final_state = None
         ack(not getattr(self.iter_maybe_reject, 'reject', False))
+        self.iter_maybe_reject.final_state = (False, x, y)
         yield x
         yield y
+        self.iter_maybe_reject.final_state = (True, x, y)
 
     def is_remote(self):
         return False

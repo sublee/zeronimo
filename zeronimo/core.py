@@ -28,7 +28,7 @@ import zmq.green as zmq
 
 from .application import default_rpc_spec, rpc_table
 from .exceptions import (
-    EmissionError, MalformedMessage, Rejected, TaskClosed, Undelivered,
+    EmissionError, MalformedMessage, Reject, Rejected, TaskClosed, Undelivered,
     WorkerNotFound)
 from .helpers import class_name, eintr_retry_zmq, Flag, socket_type_name
 from .messaging import (
@@ -129,11 +129,13 @@ def _ack(worker, reply_socket, channel, call, acked,
         if silent:
             return
         raise RuntimeError('Already acknowledged')
+    acked(True)
     if accept:
         worker.accept(reply_socket, channel)
     else:
         worker.reject(reply_socket, call)
-    acked(True)
+        if not silent:
+            raise Reject
 
 
 class Worker(Background):
@@ -279,6 +281,8 @@ class Worker(Background):
                         for val in vals:
                             self.send_reply(reply_socket, YIELD, val, *channel)
                     self.send_reply(reply_socket, BREAK, None, *channel)
+                except Reject:
+                    return
                 except:
                     exc_info = sys.exc_info()
                     ack(accept=False, silent=True)
