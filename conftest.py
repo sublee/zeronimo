@@ -225,7 +225,7 @@ def resolve_fixtures(f, protocol):
         pull_addrs = set()
         sub_addrs = set()
         sub_socks = set()
-        greenlets = set()
+        backgrounds = set()
         socket_params = set()
         for param, val in kwargs.iteritems():
             if isinstance(val, deferred_worker):
@@ -242,13 +242,13 @@ def resolve_fixtures(f, protocol):
                 worker_info = '{0}[{1}]({2})' \
                               ''.format(f.__name__, protocol, param)
                 val = zeronimo.Worker(app, [pull_sock, sub_sock], worker_info)
-                greenlets.add(val)
+                backgrounds.add(val)
             elif isinstance(val, deferred_collector):
                 pull_sock = ctx.socket(zmq.PULL)
                 pull_addr = gen_address(protocol)
                 pull_sock.bind(pull_addr)
                 val = zeronimo.Collector(pull_sock, pull_addr)
-                greenlets.add(val)
+                backgrounds.add(val)
             elif isinstance(val, deferred_address):
                 val = gen_address(protocol)
             elif isinstance(val, deferred_fanout_address):
@@ -276,18 +276,18 @@ def resolve_fixtures(f, protocol):
             if sock_type == zmq.PUB:
                 sync_pubsub(sock, sub_socks, topic)
             kwargs[param] = sock
-        for greenlet in greenlets:
-            greenlet.start()
+        for bg in backgrounds:
+            bg.start()
         try:
             return f(**kwargs)
         finally:
-            for greenlet in greenlets:
-                if greenlet.running():
-                    greenlet.stop()
+            for bg in backgrounds:
+                if bg.is_running():
+                    bg.stop()
                 try:
-                    sockets = greenlet.sockets
+                    sockets = bg.sockets
                 except AttributeError:
-                    sockets = [greenlet.socket]
+                    sockets = [bg.socket]
                 for sock in sockets:
                     sock.close()
     return fixture_resolved
@@ -384,14 +384,14 @@ def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
 
 
 @contextmanager
-def running(greenlets, sockets=None):
+def running(backgrounds, sockets=None):
     try:
-        for greenlet in greenlets:
-            greenlet.start()
+        for bg in backgrounds:
+            bg.start()
         yield
     finally:
-        for greenlet in greenlets:
-            greenlet.stop()
+        for bg in backgrounds:
+            bg.stop()
         if sockets is not None:
             for sock in sockets:
                 sock.close()

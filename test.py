@@ -39,11 +39,11 @@ def test_running():
         def __call__(self):
             gevent.sleep(0.1)
     bg = NullBG()
-    assert not bg.running()
+    assert not bg.is_running()
     bg.start()
-    assert bg.running()
+    assert bg.is_running()
     bg.wait()
-    assert not bg.running()
+    assert not bg.is_running()
 
 
 def test_messaging(ctx, addr, topic):
@@ -160,8 +160,8 @@ def test_fixtures(worker, push, pub, collector, addr1, addr2, ctx):
     assert isinstance(collector, zeronimo.Collector)
     assert addr1 != addr2
     assert isinstance(ctx, zmq.Context)
-    assert worker.running()
-    assert collector.running()
+    assert worker.is_running()
+    assert collector.is_running()
 
 
 @pytest.mark.flaky(reruns=3)
@@ -524,16 +524,16 @@ def test_proxied_collector(ctx, worker, push, addr1, addr2):
 
 
 def test_2nd_start(worker, collector):
-    assert worker.running()
+    assert worker.is_running()
     worker.stop()
-    assert not worker.running()
+    assert not worker.is_running()
     worker.start()
-    assert worker.running()
-    assert collector.running()
+    assert worker.is_running()
+    assert collector.is_running()
     collector.stop()
-    assert not collector.running()
+    assert not collector.is_running()
     collector.start()
-    assert collector.running()
+    assert collector.is_running()
 
 
 def test_concurrent_collector(worker, collector, push, pub, topic):
@@ -552,10 +552,10 @@ def test_concurrent_collector(worker, collector, push, pub, topic):
 def test_stopped_collector(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
     collector.stop()
-    assert not collector.running()
+    assert not collector.is_running()
     result = customer.call('zeronimo')
     assert result.get() == 'zeronimo'
-    assert collector.running()
+    assert collector.is_running()
     collector.stop()
 
 
@@ -767,7 +767,7 @@ def test_malformed_message_handler(worker, push, capsys):
     push.send('Zeronimo!')
     worker.wait()
     out, err = capsys.readouterr()
-    assert not worker.running()
+    assert not worker.is_running()
     assert 'UnpicklingError' in err
     assert 'Zeronimo!' in messages
 
