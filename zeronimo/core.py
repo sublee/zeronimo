@@ -258,6 +258,8 @@ class Worker(Background):
         with self.catch_exceptions():
             try:
                 val = self.call(call, ack, f, rpc_spec)
+            except Reject:
+                return
             except:
                 exc_info = sys.exc_info()
                 ack(accept=False, silent=True)

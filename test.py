@@ -330,6 +330,8 @@ def test_manual_ack(worker1, worker2, collector, push):
     # Workers wrap own object.
     worker1.app = Application()
     worker2.app = Application()
+    errors = []
+    worker1.exception_handler = lambda w, e: errors.append(e)
     # Any worker accepts.
     customer = zeronimo.Customer(push, collector)
     assert customer.call('maybe_reject', 1, 2).get() == 3
@@ -337,6 +339,7 @@ def test_manual_ack(worker1, worker2, collector, push):
     worker1.app.maybe_reject.reject = True
     # But worker2 still accepts.
     assert customer.call('maybe_reject', 3, 4).get() == 7
+    assert not errors
     # worker2 will also reject.
     worker2.app.maybe_reject.reject = True
     # All workers reject.
@@ -355,6 +358,7 @@ def test_manual_ack(worker1, worker2, collector, push):
         customer.call('iter_maybe_reject', 9, 10)
     assert worker1.app.iter_maybe_reject.final_state is None
     assert worker2.app.iter_maybe_reject.final_state is None
+    assert not errors
 
 
 def test_max_retries(worker, collector, push):
