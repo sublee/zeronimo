@@ -525,10 +525,8 @@ def test_proxied_collector(ctx, worker, push, addr1, addr2):
 
 def test_2nd_start(worker, collector):
     assert worker.running()
-    print '- 1'
     worker.stop()
     assert not worker.running()
-    print '- 2'
     worker.start()
     assert worker.running()
     assert collector.running()
@@ -895,6 +893,26 @@ def test_many_calls(request, mocker):
     request.addfinalizer(worker.stop)
     gevent.sleep(1)
     assert worker.app.counter['zeronimo'] > 0
+
+
+def test_silent_stop(worker):
+    worker.stop()
+    assert not worker.is_running()
+    with pytest.raises(RuntimeError):
+        worker.stop()
+    worker.stop(silent=True)
+
+
+def test_close(worker, collector, push):
+    customer = zeronimo.Customer(push, collector)
+    worker.close()
+    collector.close()
+    customer.close()
+    assert not worker.is_running()
+    assert not collector.is_running()
+    assert all(s.closed for s in worker.sockets)
+    assert collector.socket.closed
+    assert customer.socket.closed
 
 
 # catch leaks

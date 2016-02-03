@@ -82,25 +82,36 @@ class Background(object):
         finally:
             del self.greenlet
 
-    def start(self):
-        if self.running():
+    def start(self, silent=False):
+        if self.is_running():
+            if silent:
+                return
             raise RuntimeError('{0} already running'.format(class_name(self)))
         self.greenlet = self.greenlet_class.spawn(self.run)
         self.greenlet.join(0)
         return self.greenlet
 
-    def stop(self):
-        if not self.running():
+    def stop(self, silent=False):
+        if not self.is_running():
+            if silent:
+                return
             raise RuntimeError('{0} not running'.format(class_name(self)))
         self.greenlet.kill(block=True)
 
     def wait(self, timeout=None):
-        if not self.running():
+        if not self.is_running():
             raise RuntimeError('{0} not running'.format(class_name(self)))
         self.greenlet.join(timeout)
 
-    def running(self):
+    def is_running(self):
         return self.greenlet is not None
+
+    def running(self):
+        warn(DeprecationWarning('Use is_running() instead'))
+        return self.is_running()
+
+    def close(self):
+        self.stop(silent=True)
 
 
 def default_exception_handler(worker, exc_info):
@@ -374,6 +385,11 @@ class Worker(Background):
         except (zmq.Again, zmq.ZMQError):
             pass  # ignore.
 
+    def close(self):
+        super(Worker, self).close()
+        for socket in self.sockets:
+            socket.close()
+
     def __repr__(self):
         return '<{0} info={1!r}>'.format(class_name(self), self.info)
 
@@ -406,7 +422,7 @@ class _Caller(object):
     def _call(self, name, args, kwargs,
               topic=None, limit=None, retry=False, max_retries=None):
         """Allocates a call id and emit."""
-        if not self.collector.running():
+        if not self.collector.is_running():
             self.collector.start()
         call_id = uuid4_bytes()
         reply_to = self.collector.address
@@ -424,6 +440,9 @@ class _Caller(object):
         return self.collector.establish(call_id, self.timeout, limit,
                                         send_call if retry else None,
                                         max_retries=max_retries)
+
+    def close(self):
+        self.socket.close()
 
 
 class Customer(_Caller):
@@ -580,3 +599,7 @@ class Collector(Background):
         del self.result_queues[call_id]
         if not self.results[call_id]:
             del self.results[call_id]
+
+    def close(self):
+        super(Collector, self).close()
+        self.socket.close()
