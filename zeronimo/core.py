@@ -455,7 +455,8 @@ class Customer(_Caller):
     timeout = CUSTOMER_TIMEOUT
     max_retries = None
 
-    def call(self, name, *args, **kwargs):
+    def call(self, *args, **kwargs):
+        name, args = args[0], args[1:]
         if self.collector is None:
             return self._call_nowait(name, args, kwargs)
         results = self._call(name, args, kwargs, limit=1,
@@ -472,7 +473,8 @@ class Fanout(_Caller):
     available_socket_types = [zmq.PUB, ZMQ_XPUB]
     timeout = FANOUT_TIMEOUT
 
-    def emit(self, topic, name, *args, **kwargs):
+    def emit(self, *args, **kwargs):
+        topic, name, args = args[0], args[1], args[2:]
         if self.collector is None:
             return self._call_nowait(name, args, kwargs, topic=topic)
         try:

@@ -915,6 +915,15 @@ def test_close(worker, collector, push):
     assert customer.socket.closed
 
 
+def test_no_param_conflict(worker, push, pub, collector, topic):
+    customer = zeronimo.Customer(push, collector)
+    fanout = zeronimo.Fanout(pub, collector)
+    r = customer.call('kwargs', name='Zeronimo')
+    assert r.get() == {'name': 'Zeronimo'}
+    for r in fanout.emit(topic, 'kwargs', name='Zeronimo', topic='sublee'):
+        assert r.get() == {'name': 'Zeronimo', 'topic': 'sublee'}
+
+
 # catch leaks
 
 

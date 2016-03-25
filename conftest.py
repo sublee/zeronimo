@@ -474,6 +474,9 @@ class Application(object):
                 break
             gevent.sleep(sleep)
 
+    def kwargs(self, **kwargs):
+        return kwargs
+
     @zeronimo.rpc(manual_ack=True)
     def maybe_reject(self, ack, x, y):
         ack(not getattr(self.maybe_reject, 'reject', False))
