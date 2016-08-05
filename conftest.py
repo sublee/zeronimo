@@ -186,7 +186,8 @@ def get_testing_protocols(metafunc):
         except socket.error as e:
             if e.errno == 1:  # Operation not permitted
                 raise OSError('Enable the CAP_NET_RAW capability to use PGM:\n'
-                              '$ sudo setcap CAP_NET_RAW=ep `which python`')
+                              '$ sudo setcap CAP_NET_RAW=ep '
+                              '$(readlink -f $(which python))')
     return testing_protocols
 
 
