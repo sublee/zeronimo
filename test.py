@@ -648,9 +648,9 @@ def test_close_task(worker, collector, push):
         next(g)
 
 
-def test_pair(ctx, addr):
-    left = ctx.socket(zmq.PAIR)
-    right = ctx.socket(zmq.PAIR)
+def _test_duplex(ctx, addr, left_type, right_type):
+    left = ctx.socket(left_type)
+    right = ctx.socket(right_type)
     left.bind(addr)
     right.connect(addr)
     worker = zeronimo.Worker(Application(), [left])
@@ -664,6 +664,14 @@ def test_pair(ctx, addr):
                'run, you clever boy; and remember.'
         with pytest.raises(ZeroDivisionError):
             customer.call('zero_div').get()
+
+
+def test_pair(ctx, addr):
+    _test_duplex(ctx, addr, zmq.PAIR, zmq.PAIR)
+
+
+def test_router_dealer(ctx, addr):
+    _test_duplex(ctx, addr, zmq.ROUTER, zmq.DEALER)
 
 
 def test_pair_with_collector(ctx, addr1, addr2):

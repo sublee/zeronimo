@@ -184,8 +184,10 @@ class Worker(Background):
         super(Worker, self).__init__()
         self.app = app
         socket_types = set(s.type for s in sockets)
-        if socket_types.difference([zmq.PAIR, zmq.SUB, zmq.PULL, ZMQ_XSUB]):
-            raise ValueError('Worker wraps one of PAIR, SUB, PULL, and XSUB')
+        if socket_types.difference([zmq.PAIR, zmq.ROUTER,
+                                    zmq.PULL, zmq.SUB, ZMQ_XSUB]):
+            raise ValueError('Worker wraps one of PAIR, ROUTER, '
+                             'PULL, SUB, and XSUB')
         self.sockets = sockets
         self.info = info
         if greenlet_group is None:
@@ -451,7 +453,7 @@ class Customer(_Caller):
     worker's results.
     """
 
-    available_socket_types = [zmq.PAIR, zmq.PUSH]
+    available_socket_types = [zmq.PAIR, zmq.DEALER, zmq.PUSH]
     timeout = CUSTOMER_TIMEOUT
     max_retries = None
 
@@ -492,11 +494,11 @@ class Collector(Background):
 
     def __init__(self, socket, address=None, unpack=UNPACK):
         super(Collector, self).__init__()
-        if socket.type not in [zmq.PAIR, zmq.PULL]:
-            raise ValueError('Collector wraps PAIR or PULL')
-        if address is None and socket.type != zmq.PAIR:
+        if socket.type not in [zmq.PAIR, zmq.DEALER, zmq.PULL]:
+            raise ValueError('Collector wraps PAIR, DEALER, or PULL')
+        if address is None and socket.type == zmq.PULL:
             raise ValueError('Address required')
-        if address is not None and socket.type == zmq.PAIR:
+        elif address is not None and socket.type != zmq.PULL:
             raise ValueError('Address not required when using PAIR socket')
         self.socket = socket
         self.address = address
