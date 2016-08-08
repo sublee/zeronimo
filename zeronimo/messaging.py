@@ -96,4 +96,4 @@ def recv(socket, flags=0, unpack=UNPACK):
         except AttributeError:
             pass
         raise exc_info[0], exc_info[1], exc_info[2]
-    return prefix, unpack(msg)
+    return prefix, obj
