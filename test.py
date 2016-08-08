@@ -51,18 +51,18 @@ def test_messaging(ctx, addr, topic):
     pull = ctx.socket(zmq.PULL)
     link_sockets(addr, push, [pull])
     for t in [None, topic]:
-        zeronimo.messaging.send(push, 1, topic=t)
-        assert zeronimo.messaging.recv(pull) == 1
-        zeronimo.messaging.send(push, 'doctor', topic=t)
-        assert zeronimo.messaging.recv(pull) == 'doctor'
-        zeronimo.messaging.send(push, {'doctor': 'who'}, topic=t)
-        assert zeronimo.messaging.recv(pull) == {'doctor': 'who'}
-        zeronimo.messaging.send(push, ['doctor', 'who'], topic=t)
-        assert zeronimo.messaging.recv(pull) == ['doctor', 'who']
-        zeronimo.messaging.send(push, Exception, topic=t)
-        assert zeronimo.messaging.recv(pull) == Exception
-        zeronimo.messaging.send(push, Exception('Allons-y'), topic=t)
-        assert isinstance(zeronimo.messaging.recv(pull), Exception)
+        zeronimo.messaging.send(push, 1, prefix=t)
+        assert zeronimo.messaging.recv(pull) == (t, 1)
+        zeronimo.messaging.send(push, 'doctor', prefix=t)
+        assert zeronimo.messaging.recv(pull) == (t, 'doctor')
+        zeronimo.messaging.send(push, {'doctor': 'who'}, prefix=t)
+        assert zeronimo.messaging.recv(pull) == (t, {'doctor': 'who'})
+        zeronimo.messaging.send(push, ['doctor', 'who'], prefix=t)
+        assert zeronimo.messaging.recv(pull) == (t, ['doctor', 'who'])
+        zeronimo.messaging.send(push, Exception, prefix=t)
+        assert zeronimo.messaging.recv(pull) == (t, Exception)
+        zeronimo.messaging.send(push, Exception('Allons-y'), prefix=t)
+        assert isinstance(zeronimo.messaging.recv(pull)[1], Exception)
     push.close()
     pull.close()
 
@@ -95,8 +95,6 @@ def test_socket_type_error(ctx):
     with pytest.raises(ValueError):
         zeronimo.Customer(ctx.socket(zmq.REP))
     with pytest.raises(ValueError):
-        zeronimo.Customer(ctx.socket(zmq.DEALER))
-    with pytest.raises(ValueError):
         zeronimo.Customer(ctx.socket(zmq.ROUTER))
     with pytest.raises(ValueError):
         zeronimo.Customer(ctx.socket(zmq.PULL))
@@ -109,8 +107,6 @@ def test_socket_type_error(ctx):
         zeronimo.Worker(None, [ctx.socket(zmq.REP)])
     with pytest.raises(ValueError):
         zeronimo.Worker(None, [ctx.socket(zmq.DEALER)])
-    with pytest.raises(ValueError):
-        zeronimo.Worker(None, [ctx.socket(zmq.ROUTER)])
     with pytest.raises(ValueError):
         zeronimo.Worker(None, [ctx.socket(zmq.PUSH)])
     # collector
