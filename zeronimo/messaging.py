@@ -14,6 +14,7 @@ try:
     import cPickle as pickle
 except ImportError:
     import pickle
+import sys
 
 import zmq
 
@@ -68,21 +69,31 @@ class Reply(namedtuple('Reply', 'method data call_id task_id')):
         return make_repr(self, keywords=self._fields, data={'method': M()})
 
 
-def send(socket, obj, flags=0, topic=None, pack=PACK):
+def send(socket, obj, flags=0, prefix=None, pack=PACK):
     """Sends a Python object via a ZeroMQ socket. It also can append PUB/SUB
-    topic.
+    prefix.
     """
     msg = pack(obj)
-    if topic:
-        eintr_retry_zmq(socket.send, topic, flags | zmq.SNDMORE)
+    if prefix:
+        eintr_retry_zmq(socket.send, prefix, flags | zmq.SNDMORE)
     return eintr_retry_zmq(socket.send, msg, flags)
 
 
 def recv(socket, flags=0, unpack=UNPACK):
     """Receives a Python object via a ZeroMQ socket."""
-    msg = eintr_retry_zmq(socket.recv_multipart, flags)[-1]
+    msgs = eintr_retry_zmq(socket.recv_multipart, flags)
+    if len(msgs) == 1:
+        prefix, msg = None, msgs[0]
+    else:
+        prefix, msg = msgs
     try:
-        return unpack(msg)
+        obj = unpack(msg)
     except BaseException as exc:
-        exc._zeronimo_message = msg  # temporarily.
-        raise
+        exc_info = sys.exc_info()
+        try:
+            exc._zeronimo_prefix = prefix
+            exc._zeronimo_message = msg
+        except AttributeError:
+            pass
+        raise exc_info[0], exc_info[1], exc_info[2]
+    return prefix, unpack(msg)

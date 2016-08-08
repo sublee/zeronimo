@@ -229,7 +229,7 @@ class Worker(Background):
                 for socket, event in eintr_retry_zmq(poller.poll):
                     assert event & zmq.POLLIN
                     try:
-                        data = recv(socket, unpack=self.unpack)
+                        prefix, args = recv(socket, unpack=self.unpack)
                     except:
                         # the worker received a malformed message.
                         if self.malformed_message_handler is not None:
@@ -238,13 +238,14 @@ class Worker(Background):
                             del exc_info[1]._zeronimo_message
                             self.malformed_message_handler(self, exc_info, msg)
                         continue
-                    call = Call(*data)
+                    call = Call(*args)
+                    peer_id = prefix if socket.type == zmq.ROUTER else None
                     if self.greenlet_group.full():
                         reply_socket = \
                             self.get_reply_socket(socket, call.reply_to)
-                        self.reject(reply_socket, call)
+                        self.reject(reply_socket, call, peer_id)
                         continue
-                    self.greenlet_group.spawn(self.work, socket, call)
+                    self.greenlet_group.spawn(self.work, socket, call, peer_id)
                     self.greenlet_group.join(0)
         finally:
             self.greenlet_group.kill()
@@ -253,14 +254,17 @@ class Worker(Background):
                     socket.close()
             self._cached_reply_sockets.clear()
 
-    def work(self, socket, call):
+    def work(self, socket, call, peer_id=None):
         """Calls a function and send results to the collector.  It supports
         all of function actions.  A function could return, yield, raise any
         packable objects.
         """
         task_id = uuid4_bytes()
         reply_socket = self.get_reply_socket(socket, call.reply_to)
-        channel = (call.call_id, task_id) if reply_socket else (None, None)
+        if reply_socket:
+            channel = (call.call_id, task_id, peer_id)
+        else:
+            channel = (None, None, None)
         f, rpc_spec = self.find_call_target(call)
         acked = Flag()
         ack = partial(_ack, self, reply_socket, channel, call, acked)
@@ -325,9 +329,10 @@ class Worker(Background):
         """Sends ACCEPT reply."""
         self.send_reply(reply_socket, ACCEPT, self.info, *channel)
 
-    def reject(self, reply_socket, call):
+    def reject(self, reply_socket, call, peer_id=None):
         """Sends REJECT reply."""
-        self.send_reply(reply_socket, REJECT, self.info, call.call_id, None)
+        self.send_reply(reply_socket, REJECT, self.info,
+                        call.call_id, None, peer_id)
 
     def raise_(self, reply_socket, channel, exc_info=None):
         """Sends RAISE reply."""
@@ -359,7 +364,7 @@ class Worker(Background):
 
     def get_reply_socket(self, socket, address):
         if address is None:
-            if socket.type == zmq.PAIR:
+            if socket.type in [zmq.PAIR, zmq.ROUTER]:
                 return socket
             else:
                 return
@@ -377,13 +382,14 @@ class Worker(Background):
             sockets[address] = socket
             return socket
 
-    def send_reply(self, socket, method, data, call_id, task_id):
+    def send_reply(self, socket, method, data, call_id, task_id, peer_id=None):
         if not socket:
             return
         # normal tuple is faster than namedtuple.
         reply = (method, data, call_id, task_id)
         try:
-            eintr_retry_zmq(send, socket, reply, zmq.NOBLOCK, pack=self.pack)
+            eintr_retry_zmq(send, socket, reply, zmq.NOBLOCK,
+                            prefix=peer_id, pack=self.pack)
         except (zmq.Again, zmq.ZMQError):
             pass  # ignore.
 
@@ -550,7 +556,7 @@ class Collector(Background):
     def __call__(self):
         while True:
             try:
-                reply = Reply(*recv(self.socket, unpack=self.unpack))
+                __, args = recv(self.socket, unpack=self.unpack)
             except GreenletExit:
                 break
             except zmq.ZMQError:
@@ -562,6 +568,7 @@ class Collector(Background):
             except:
                 # TODO: warn MalformedMessage
                 continue
+            reply = Reply(*args)
             try:
                 self.dispatch_reply(reply)
             except KeyError:
