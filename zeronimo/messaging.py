@@ -14,10 +14,10 @@ try:
     import cPickle as pickle
 except ImportError:
     import pickle
-import sys
 
 import zmq
 
+from .exceptions import MalformedMessage
 from .helpers import eintr_retry_zmq, make_repr
 
 
@@ -81,19 +81,14 @@ def send(socket, obj, flags=0, prefix=None, pack=PACK):
 
 def recv(socket, flags=0, unpack=UNPACK):
     """Receives a Python object via a ZeroMQ socket."""
-    msgs = eintr_retry_zmq(socket.recv_multipart, flags)
-    if len(msgs) == 1:
-        prefix, msg = None, msgs[0]
-    else:
-        prefix, msg = msgs
-    try:
+    msg_parts = eintr_retry_zmq(socket.recv_multipart, flags)
+    num_msg_parts = len(msg_parts)
+    with MalformedMessage.wrap(msg_parts):
+        if num_msg_parts == 1:
+            prefix, msg = None, msg_parts[0]
+        elif num_msg_parts == 2:
+            prefix, msg = msg_parts
+        else:
+            raise ValueError('too many message parts')
         obj = unpack(msg)
-    except BaseException as exc:
-        exc_info = sys.exc_info()
-        try:
-            exc._zeronimo_prefix = prefix
-            exc._zeronimo_message = msg
-        except AttributeError:
-            pass
-        raise exc_info[0], exc_info[1], exc_info[2]
     return prefix, obj

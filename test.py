@@ -592,17 +592,21 @@ def test_malformed_message(worker, push):
     push.send('')  # EOFError
     push.send('Zeronimo!')  # UnpicklingError
     push.send('c__main__\nNOTEXIST\np0\n.')  # AttributeError
+    push.send_multipart(['a', 'b', 'c', 'd'])  # Too many message parts
     with warnings.catch_warnings(record=True) as w:
         gevent.sleep(0.1)
-    assert len(w) == 3
+    assert len(w) == 4
     assert all(w_.category is zeronimo.MalformedMessage for w_ in w)
-    w1, w2, w3 = w[0].message, w[1].message, w[2].message
+    w1, w2, w3, w4 = w[0].message, w[1].message, w[2].message, w[3].message
     assert 'EOFError' in str(w1)
     assert 'UnpicklingError' in str(w2)
     assert 'AttributeError' in str(w3)
-    assert str(w1).endswith(repr(''))
-    assert str(w2).endswith(repr('Zeronimo!'))
-    assert str(w3).endswith(repr('c__main__\nNOTEXIST\np0\n.'))
+    assert 'ValueError' in str(w4)
+    assert str(w1).endswith(repr(['']))
+    assert str(w2).endswith(repr(['Zeronimo!']))
+    assert str(w3).endswith(repr(['c__main__\nNOTEXIST\np0\n.']))
+    assert str(w4).startswith('<ValueError: too many message parts>')
+    assert str(w4).endswith(repr(['a', 'b', 'c', 'd']))
 
 
 @pytest.mark.flaky(reruns=3)
@@ -764,8 +768,8 @@ def test_exception_handler(worker, collector, push, capsys):
 
 def test_malformed_message_handler(worker, push, capsys):
     messages = []
-    def malformed_message_handler(worker, exc_info, message):
-        messages.append(message)
+    def malformed_message_handler(worker, exc_info, message_parts):
+        messages.append(message_parts)
         raise exc_info[0], exc_info[1], exc_info[2]
     worker.malformed_message_handler = malformed_message_handler
     push.send('Zeronimo!')
@@ -773,7 +777,7 @@ def test_malformed_message_handler(worker, push, capsys):
     out, err = capsys.readouterr()
     assert not worker.is_running()
     assert 'UnpicklingError' in err
-    assert 'Zeronimo!' in messages
+    assert ['Zeronimo!'] in messages
 
 
 class ExampleException(BaseException):

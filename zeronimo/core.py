@@ -121,15 +121,16 @@ def default_exception_handler(worker, exc_info):
     raise exc_info[0], exc_info[1], exc_info[2]
 
 
-def default_malformed_message_handler(worker, exc_info, message):
+def default_malformed_message_handler(worker, exc_info, message_parts):
     """The default malformed message handler for :class:`Worker`.  It warns
     as a :exc:`MalformedMessage`.
     """
-    exc_strs = traceback.format_exception_only(exc_info[0], exc_info[1])
+    exc_type, exc, tb = exc_info
+    exc_strs = traceback.format_exception_only(exc_type, exc)
     exc_str = exc_strs[0].strip()
     if len(exc_strs) > 1:
         exc_str += '...'
-    warn('<{0}> occurred by: {1!r}'.format(exc_str, message), MalformedMessage)
+    warn('<%s> occurred by %r' % (exc_str, message_parts), MalformedMessage)
 
 
 def _ack(worker, reply_socket, channel, call, acked,
@@ -230,13 +231,15 @@ class Worker(Background):
                     assert event & zmq.POLLIN
                     try:
                         prefix, args = recv(socket, unpack=self.unpack)
-                    except:
-                        # the worker received a malformed message.
+                    except MalformedMessage as exc:
+                        # The worker received a malformed message.
                         if self.malformed_message_handler is not None:
-                            exc_info = sys.exc_info()
-                            msg = exc_info[1]._zeronimo_message
-                            del exc_info[1]._zeronimo_message
-                            self.malformed_message_handler(self, exc_info, msg)
+                            __, __, tb = sys.exc_info()
+                            inner_exc = exc.exception
+                            msg_parts = exc.message_parts
+                            exc_info = (inner_exc.__class__, inner_exc, tb)
+                            handle = self.malformed_message_handler
+                            handle(self, exc_info, msg_parts)
                         continue
                     call = Call(*args)
                     peer_id = prefix if socket.type == zmq.ROUTER else None
