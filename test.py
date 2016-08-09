@@ -876,7 +876,7 @@ def test_eintr_retry_zmq(itimer, signo, ctx, addr):
     pull.close()
 
 
-def test_many_calls(request, mocker):
+def test_many_calls(request, monkeypatch):
     worker = zeronimo.Worker(Application(), [])
     call = ('zeronimo', (), {}, uuid4_bytes(), None)
     msg = zeronimo.messaging.PACK(call)
@@ -890,7 +890,7 @@ def test_many_calls(request, mocker):
         def __next__(self):
             return fake_socket(), zmq.POLLIN
         next = __next__
-    mocker.patch('zmq.green.Poller.poll', return_value=infinite_events())
+    monkeypatch.setattr(zmq.Poller, 'poll', lambda *a, **k: infinite_events())
     # Emit many calls.
     signal.alarm(10)
     worker.start()
