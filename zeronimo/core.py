@@ -107,7 +107,7 @@ class Background(object):
         return self.greenlet is not None
 
     def running(self):
-        warn(DeprecationWarning('Use is_running() instead'))
+        warn(DeprecationWarning('use is_running() instead'))
         return self.is_running()
 
     def close(self):
@@ -140,7 +140,7 @@ def _ack(worker, reply_socket, channel, call, acked,
     elif acked:
         if silent:
             return
-        raise RuntimeError('Already acknowledged')
+        raise RuntimeError('already acknowledged')
     acked(True)
     if accept:
         worker.accept(reply_socket, channel)
@@ -187,8 +187,8 @@ class Worker(Background):
         socket_types = set(s.type for s in sockets)
         if socket_types.difference([zmq.PAIR, zmq.ROUTER,
                                     zmq.PULL, zmq.SUB, ZMQ_XSUB]):
-            raise ValueError('Worker wraps one of PAIR, ROUTER, '
-                             'PULL, SUB, and XSUB')
+            raise ValueError('Worker wraps only PAIR, '
+                             'ROUTER, PULL, SUB, or XSUB')
         self.sockets = sockets
         self.info = info
         if greenlet_group is None:
@@ -217,7 +217,7 @@ class Worker(Background):
 
     @property
     def obj(self):
-        warn('Use app instead', DeprecationWarning)
+        warn('use app instead', DeprecationWarning)
         return self.app
 
     def __call__(self):
@@ -445,7 +445,7 @@ class _Caller(object):
                 eintr_retry_zmq(send, self.socket, call,
                                 zmq.NOBLOCK, topic, self.pack)
             except zmq.Again:
-                raise Undelivered('Emission was not delivered')
+                raise Undelivered('emission was not delivered')
         self.collector.prepare(call_id)
         send_call()
         return self.collector.establish(call_id, self.timeout, limit,
@@ -504,11 +504,9 @@ class Collector(Background):
     def __init__(self, socket, address=None, unpack=UNPACK):
         super(Collector, self).__init__()
         if socket.type not in [zmq.PAIR, zmq.DEALER, zmq.PULL]:
-            raise ValueError('Collector wraps PAIR, DEALER, or PULL')
-        if address is None and socket.type == zmq.PULL:
-            raise ValueError('Address required')
-        elif address is not None and socket.type != zmq.PULL:
-            raise ValueError('Address not required when using PAIR socket')
+            raise ValueError('Collector wraps only PAIR, DEALER, or PULL')
+        if (address is not None) != (socket.type == zmq.PULL):
+            raise ValueError('address required only for PULL')
         self.socket = socket
         self.address = address
         self.unpack = unpack
@@ -517,7 +515,7 @@ class Collector(Background):
 
     def prepare(self, call_id):
         if call_id in self.results:
-            raise KeyError('Call {0} already prepared'.format(call_id))
+            raise KeyError('call-{0} already prepared'.format(call_id))
         self.results[call_id] = {}
         self.result_queues[call_id] = Queue()
 
@@ -553,7 +551,7 @@ class Collector(Background):
                 raise Rejected('{0} workers rejected'.format(rejected)
                                if rejected != 1 else 'A worker rejected')
             else:
-                raise WorkerNotFound('Failed to find worker')
+                raise WorkerNotFound('failed to find worker')
         return results
 
     def __call__(self):
@@ -589,7 +587,7 @@ class Collector(Background):
             try:
                 result_queue = self.result_queues[call_id]
             except KeyError:
-                raise KeyError('Already established or unprepared call')
+                raise KeyError('already established or unprepared call')
             if method == ACCEPT:
                 worker_info = reply.data
                 result = RemoteResult(self, call_id, task_id, worker_info)
