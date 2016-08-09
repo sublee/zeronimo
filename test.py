@@ -932,6 +932,22 @@ def test_no_param_conflict(worker, push, pub, collector, topic):
         assert r.get() == {'name': 'Zeronimo', 'topic': 'sublee'}
 
 
+def test_only_workers_bind(ctx, addr1, addr2, topic):
+    pub1, pub2 = ctx.socket(zmq.PUB), ctx.socket(zmq.PUB)
+    sub1, sub2 = ctx.socket(zmq.SUB), ctx.socket(zmq.SUB)
+    pub1.bind(addr1)
+    sub1.bind(addr2)
+    pub2.connect(addr1)
+    sub2.connect(addr2)
+    sub1.set(zmq.SUBSCRIBE, topic)
+    worker = zeronimo.Worker(Application(), [sub1], pub1)
+    collector = zeronimo.Collector(sub2)
+    fanout = zeronimo.Fanout(pub2, collector)
+    with running([worker], sockets=[pub1, pub2, sub1, sub2]):
+        for r in fanout.emit(topic, 'zeronimo'):
+            assert r.get() == 'zeronimo'
+
+
 # catch leaks
 
 
