@@ -150,6 +150,13 @@ def _ack(worker, reply_socket, channel, call, acked,
             raise Reject
 
 
+def verify_socket_types(name, available_socket_types, *sockets):
+    if not set(s.type for s in sockets).difference(available_socket_types):
+        return
+    only = ', '.join(socket_type_name(t) for t in available_socket_types)
+    raise ValueError('%s accepts only %s' % (name, only))
+
+
 class Worker(Background):
     """Worker runs an RPC service of an object through ZeroMQ sockets.  The
     ZeroMQ sockets should be PULL or SUB socket type.  The PULL sockets receive
@@ -169,7 +176,8 @@ class Worker(Background):
                  let the customer's know what worker accepted.
     """
 
-    sockets = None
+    worker_sockets = None
+    reply_socket = None
     info = None
     greenlet_group = None
     exception_handler = None
@@ -178,18 +186,18 @@ class Worker(Background):
     pack = None
     unpack = None
 
-    def __init__(self, app, sockets, info=None, greenlet_group=None,
+    def __init__(self, app, worker_sockets, reply_socket=None,
+                 info=None, greenlet_group=None,
                  exception_handler=default_exception_handler,
                  malformed_message_handler=default_malformed_message_handler,
                  cache_factory=dict, pack=PACK, unpack=UNPACK):
         super(Worker, self).__init__()
         self.app = app
-        socket_types = set(s.type for s in sockets)
-        if socket_types.difference([zmq.PAIR, zmq.ROUTER,
-                                    zmq.PULL, zmq.SUB, ZMQ_XSUB]):
-            raise ValueError('Worker wraps only PAIR, '
-                             'ROUTER, PULL, SUB, or XSUB')
-        self.sockets = sockets
+        verify_socket_types(self.__class__.__name__, [
+            zmq.PAIR, zmq.ROUTER, zmq.PULL, zmq.SUB, ZMQ_XSUB
+        ], *worker_sockets)
+        self.worker_sockets = worker_sockets
+        self.reply_socket = reply_socket
         self.info = info
         if greenlet_group is None:
             greenlet_group = Group()
@@ -223,7 +231,7 @@ class Worker(Background):
     def __call__(self):
         """Runs the worker.  While running, an RPC service is online."""
         poller = zmq.Poller()
-        for socket in self.sockets:
+        for socket in self.worker_sockets:
             poller.register(socket, zmq.POLLIN)
         try:
             while True:
@@ -366,6 +374,7 @@ class Worker(Background):
                 self.exception_handler(self, exc_info)
 
     def get_reply_socket(self, socket, address):
+        return self.reply_socket
         if address is None:
             if socket.type in [zmq.PAIR, zmq.ROUTER]:
                 return socket
@@ -392,13 +401,14 @@ class Worker(Background):
         reply = (method, data, call_id, task_id)
         try:
             eintr_retry_zmq(send, socket, reply, zmq.NOBLOCK,
-                            prefix=peer_id, pack=self.pack)
+                            prefix=call_id, pack=self.pack)
         except (zmq.Again, zmq.ZMQError):
             pass  # ignore.
 
     def close(self):
         super(Worker, self).close()
-        for socket in self.sockets:
+        self.reply_socket.close()
+        for socket in self.worker_sockets:
             socket.close()
 
     def __repr__(self):
@@ -415,9 +425,8 @@ class _Caller(object):
     pack = None
 
     def __init__(self, socket, collector=None, pack=PACK):
-        if socket.type not in self.available_socket_types:
-            raise ValueError('{0} is not available socket type'
-                             ''.format(socket_type_name(socket.type)))
+        verify_socket_types(self.__class__.__name__,
+                            self.available_socket_types, socket)
         self.socket = socket
         self.collector = collector
         self.pack = pack
@@ -437,8 +446,9 @@ class _Caller(object):
             self.collector.start()
         call_id = uuid4_bytes()
         reply_to = self.collector.address
+        reply_socket_type = self.collector.socket.type
         # normal tuple is faster than namedtuple.
-        call = (name, args, kwargs, call_id, reply_to)
+        call = (name, args, kwargs, call_id, reply_to, reply_socket_type)
         # use short names.
         def send_call():
             try:
@@ -503,10 +513,11 @@ class Collector(Background):
 
     def __init__(self, socket, address=None, unpack=UNPACK):
         super(Collector, self).__init__()
-        if socket.type not in [zmq.PAIR, zmq.DEALER, zmq.PULL]:
-            raise ValueError('Collector wraps only PAIR, DEALER, or PULL')
-        if (address is not None) != (socket.type == zmq.PULL):
-            raise ValueError('address required only for PULL')
+        verify_socket_types(self.__class__.__name__, [
+            zmq.PAIR, zmq.DEALER, zmq.PULL, zmq.SUB, zmq.XSUB
+        ], socket)
+        # if (address is not None) != (socket.type == zmq.PULL):
+        #     raise ValueError('address required only for PULL')
         self.socket = socket
         self.address = address
         self.unpack = unpack
@@ -516,6 +527,7 @@ class Collector(Background):
     def prepare(self, call_id):
         if call_id in self.results:
             raise KeyError('call-{0} already prepared'.format(call_id))
+        self.socket.set(zmq.SUBSCRIBE, call_id)
         self.results[call_id] = {}
         self.result_queues[call_id] = Queue()
 
@@ -608,6 +620,7 @@ class Collector(Background):
             del self.results[call_id]
 
     def remove_result_queue(self, call_id):
+        self.socket.set(zmq.UNSUBSCRIBE, call_id)
         del self.result_queues[call_id]
         if not self.results[call_id]:
             del self.results[call_id]
