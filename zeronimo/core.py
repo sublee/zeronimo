@@ -58,6 +58,12 @@ CUSTOMER_TIMEOUT = 5
 FANOUT_TIMEOUT = 0.1
 
 
+# Reply types.
+DEDICATED_REPLY = 1
+DUPLEX_REPLY = 2
+REVERSE_REPLY = 3
+
+
 class Background(object):
     """A background object spawns one greenlet at a time.  The greenlet will
     call :meth:`__call__`.
@@ -250,7 +256,10 @@ class Worker(Background):
                             handle(self, exc_info, msg_parts)
                         continue
                     call = Call(*args)
-                    peer_id = prefix if socket.type == zmq.ROUTER else None
+                    if call.reply_to and call.reply_to[0] == DUPLEX_REPLY:
+                        peer_id = prefix
+                    else:
+                        peer_id = None
                     if self.greenlet_group.full():
                         reply_socket = \
                             self.get_reply_socket(socket, call.reply_to)
@@ -373,13 +382,17 @@ class Worker(Background):
                 exc_info = sys.exc_info()
                 self.exception_handler(self, exc_info)
 
-    def get_reply_socket(self, socket, address):
-        return self.reply_socket
-        if address is None:
-            if socket.type in [zmq.PAIR, zmq.ROUTER]:
-                return socket
-            else:
-                return
+    def get_reply_socket(self, socket, reply_to):
+        if reply_to is None:
+            return
+        reply_type, address = reply_to
+        if reply_type == DUPLEX_REPLY:
+            return socket
+        elif reply_type == DEDICATED_REPLY:
+            return self.reply_socket
+        elif reply_type != REVERSE_REPLY:
+            raise ValueError('invalid reply type')
+        # REVERSE_REPLY only.
         context = socket.context
         try:
             sockets = self._cached_reply_sockets[context]
@@ -401,13 +414,14 @@ class Worker(Background):
         reply = (method, data, call_id, task_id)
         try:
             eintr_retry_zmq(send, socket, reply, zmq.NOBLOCK,
-                            prefix=call_id, pack=self.pack)
+                            prefix=peer_id or call_id, pack=self.pack)
         except (zmq.Again, zmq.ZMQError):
             pass  # ignore.
 
     def close(self):
         super(Worker, self).close()
-        self.reply_socket.close()
+        if self.reply_socket is not None:
+            self.reply_socket.close()
         for socket in self.worker_sockets:
             socket.close()
 
@@ -445,10 +459,14 @@ class _Caller(object):
         if not self.collector.is_running():
             self.collector.start()
         call_id = uuid4_bytes()
-        reply_to = self.collector.address
-        reply_socket_type = self.collector.socket.type
+        if self.socket is self.collector.socket:
+            reply_to = (DUPLEX_REPLY, None)
+        elif self.collector.address:
+            reply_to = (REVERSE_REPLY, self.collector.address)
+        else:
+            reply_to = (DEDICATED_REPLY, None)
         # normal tuple is faster than namedtuple.
-        call = (name, args, kwargs, call_id, reply_to, reply_socket_type)
+        call = (name, args, kwargs, call_id, reply_to)
         # use short names.
         def send_call():
             try:
@@ -527,7 +545,11 @@ class Collector(Background):
     def prepare(self, call_id):
         if call_id in self.results:
             raise KeyError('call-{0} already prepared'.format(call_id))
-        self.socket.set(zmq.SUBSCRIBE, call_id)
+        if self.address is None:
+            try:
+                self.socket.set(zmq.SUBSCRIBE, call_id)
+            except:
+                pass
         self.results[call_id] = {}
         self.result_queues[call_id] = Queue()
 
@@ -620,7 +642,11 @@ class Collector(Background):
             del self.results[call_id]
 
     def remove_result_queue(self, call_id):
-        self.socket.set(zmq.UNSUBSCRIBE, call_id)
+        if self.address is None:
+            try:
+                self.socket.set(zmq.UNSUBSCRIBE, call_id)
+            except:
+                pass
         del self.result_queues[call_id]
         if not self.results[call_id]:
             del self.results[call_id]

@@ -242,7 +242,8 @@ def resolve_fixtures(f, protocol):
                 sub_socks.add(sub_sock)
                 worker_info = '{0}[{1}]({2})' \
                               ''.format(f.__name__, protocol, param)
-                val = zeronimo.Worker(app, [pull_sock, sub_sock], worker_info)
+                val = zeronimo.Worker(app, [pull_sock, sub_sock],
+                                      info=worker_info)
                 backgrounds.add(val)
             elif isinstance(val, deferred_collector):
                 pull_sock = ctx.socket(zmq.PULL)
@@ -285,12 +286,13 @@ def resolve_fixtures(f, protocol):
             for bg in backgrounds:
                 if bg.is_running():
                     bg.stop()
-                try:
-                    sockets = bg.sockets
-                except AttributeError:
+                if isinstance(bg, zeronimo.Worker):
+                    sockets = bg.worker_sockets + [bg.reply_socket]
+                else:
                     sockets = [bg.socket]
                 for sock in sockets:
-                    sock.close()
+                    if sock:
+                        sock.close()
     return fixture_resolved
 
 
