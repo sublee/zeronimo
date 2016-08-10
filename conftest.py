@@ -387,17 +387,16 @@ def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
 
 
 @contextmanager
-def running(backgrounds, sockets=None):
+def running(backgrounds, sockets=()):
     try:
         for bg in backgrounds:
-            bg.start()
+            bg.start(silent=True)
         yield
     finally:
         for bg in backgrounds:
             bg.stop()
-        if sockets is not None:
-            for sock in sockets:
-                sock.close()
+        for sock in sockets:
+            sock.close()
 
 
 class Application(object):

@@ -46,6 +46,15 @@ def test_running():
     assert not bg.is_running()
 
 
+@pytest.mark.parametrize('socket_type', [zmq.PAIR, zmq.PULL, zmq.SUB, zmq.XPUB,
+                                         zmq.XSUB, zmq.ROUTER, zmq.DEALER])
+def test_recv_detects_closing(ctx, socket_type):
+    sock = ctx.socket(socket_type)
+    gevent.spawn_later(0.5, sock.close)
+    with pytest.raises(zmq.ZMQError):
+        sock.recv()
+
+
 def test_messaging(ctx, addr, topic):
     push = ctx.socket(zmq.PUSH)
     pull = ctx.socket(zmq.PULL)
@@ -80,7 +89,7 @@ def test_from_socket(ctx, addr1, addr2):
     worker = zeronimo.Worker(app, [worker_sock])
     collector = zeronimo.Collector(collector_sock, addr2)
     customer = zeronimo.Customer(push, collector)
-    with running([worker], sockets=[worker_sock, collector_sock, push]):
+    with running([worker, collector], [worker_sock, collector_sock, push]):
         # test
         result = customer.call('zeronimo')
         assert result.get() == 'zeronimo'
@@ -489,7 +498,7 @@ def test_x_forwarder(ctx, collector, topic, addr1, addr2):
         worker1 = zeronimo.Worker(app, [worker_sub1])
         worker2 = zeronimo.Worker(app, [worker_sub2])
         fanout = zeronimo.Fanout(pub, collector)
-        with running([worker1, worker2], sockets=[pub]):
+        with running([worker1, worker2, collector], [pub]):
             # zeronimo!
             results = fanout.emit(topic, 'zeronimo')
             assert get_results(results) == ['zeronimo', 'zeronimo']
@@ -656,7 +665,7 @@ def _test_duplex(ctx, addr, left_type, right_type):
     worker = zeronimo.Worker(Application(), [left])
     collector = zeronimo.Collector(right)
     customer = zeronimo.Customer(right, collector)
-    with running([worker], sockets=[left, right]):
+    with running([worker, collector], [left, right]):
         assert customer.call('zeronimo').get() == 'zeronimo'
         assert ' '.join(customer.call('rycbar123').get()) == \
                'run, you clever boy; and remember.'
@@ -683,7 +692,7 @@ def test_pair_with_collector(ctx, addr1, addr2):
     collector_sock.bind(addr2)
     collector = zeronimo.Collector(collector_sock, addr2)
     customer = zeronimo.Customer(right, collector)
-    with running([worker], sockets=[left, right, collector_sock]):
+    with running([worker, collector], [left, right, collector_sock]):
         assert customer.call('zeronimo').get() == 'zeronimo'
 
 
@@ -701,7 +710,7 @@ def test_direct_xpub_xsub(ctx, addr1, addr2):
     worker = zeronimo.Worker(app, [worker_sock])
     collector = zeronimo.Collector(collector_sock, addr2)
     fanout = zeronimo.Fanout(xpub, collector)
-    with running([worker], sockets=[worker_sock, collector_sock, xpub]):
+    with running([worker, collector], [worker_sock, collector_sock, xpub]):
         assert fanout.emit('', 'zeronimo') == []
         # subscribe ''
         worker_sock.send('\x01')
@@ -740,7 +749,7 @@ def test_marshal_message(ctx, addr1, addr2):
     worker = zeronimo.Worker(app, [worker_sock], pack=pack, unpack=unpack)
     collector = zeronimo.Collector(collector_sock, addr2, unpack=unpack)
     customer = zeronimo.Customer(customer_sock, collector, pack=pack)
-    with running([worker], sockets=sockets):
+    with running([worker, collector], sockets):
         assert customer.call('zeronimo').get() == 'zeronimo'
 
 
@@ -813,7 +822,7 @@ def test_exception_state(ctx, addr1, addr2):
     worker = zeronimo.Worker(app, [worker_sock])
     collector = zeronimo.Collector(collector_sock, addr2)
     customer = zeronimo.Customer(push, collector)
-    with running([worker], sockets=[worker_sock, collector_sock, push]):
+    with running([worker, collector], [worker_sock, collector_sock, push]):
         result = customer.call('throw', 2007)
         try:
             result.get()
@@ -940,11 +949,11 @@ def test_only_workers_bind(ctx, addr1, addr2):
     topic1, topic2 = rand_str(), rand_str()
     sub1.set(zmq.SUBSCRIBE, topic1)
     sub2.set(zmq.SUBSCRIBE, topic2)
+    gevent.sleep(0.1)
     worker = zeronimo.Worker(Application(), [sub1], pub1)
     collector = zeronimo.Collector(sub2, topic=topic2)
     fanout = zeronimo.Fanout(pub2, collector)
-    gevent.sleep(0.1)
-    with running([worker], sockets=[pub1, pub2, sub1, sub2]):
+    with running([worker, collector], [pub1, pub2, sub1, sub2]):
         took = False
         for r in fanout.emit(topic1, 'zeronimo'):
             assert r.get() == 'zeronimo'
