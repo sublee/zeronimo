@@ -256,10 +256,14 @@ class Worker(Background):
                             handle(self, exc_info, msg_parts)
                         continue
                     call = Call(*args)
-                    if call.reply_to and call.reply_to[0] == DUPLEX_REPLY:
-                        peer_id = prefix
-                    else:
-                        peer_id = None
+                    # Choose peer Id.
+                    peer_id = None
+                    if call.reply_to is not None:
+                        reply_type, topic = call.reply_to
+                        if reply_type == DUPLEX_REPLY:
+                            peer_id = prefix
+                        elif reply_type == DEDICATED_REPLY:
+                            peer_id = topic
                     if self.greenlet_group.full():
                         reply_socket = \
                             self.get_reply_socket(socket, call.reply_to)
@@ -414,7 +418,7 @@ class Worker(Background):
         reply = (method, data, call_id, task_id)
         try:
             eintr_retry_zmq(send, socket, reply, zmq.NOBLOCK,
-                            prefix=peer_id or call_id, pack=self.pack)
+                            prefix=peer_id, pack=self.pack)
         except (zmq.Again, zmq.ZMQError):
             pass  # ignore.
 
@@ -463,8 +467,10 @@ class _Caller(object):
             reply_to = (DUPLEX_REPLY, None)
         elif self.collector.address:
             reply_to = (REVERSE_REPLY, self.collector.address)
+        elif self.collector.topic:
+            reply_to = (DEDICATED_REPLY, self.collector.topic)
         else:
-            reply_to = (DEDICATED_REPLY, None)
+            raise ValueError('collector cannot receive replies')
         # normal tuple is faster than namedtuple.
         call = (name, args, kwargs, call_id, reply_to)
         # use short names.
@@ -527,17 +533,21 @@ class Collector(Background):
 
     socket = None
     address = None
+    topic = None
     unpack = None
 
-    def __init__(self, socket, address=None, unpack=UNPACK):
+    def __init__(self, socket, address=None, topic=None, unpack=UNPACK):
         super(Collector, self).__init__()
         verify_socket_types(self.__class__.__name__, [
             zmq.PAIR, zmq.DEALER, zmq.PULL, zmq.SUB, zmq.XSUB
         ], socket)
+        if address is not None and topic is not None:
+            raise ValueError('both address and topic specified')
         # if (address is not None) != (socket.type == zmq.PULL):
         #     raise ValueError('address required only for PULL')
         self.socket = socket
         self.address = address
+        self.topic = topic
         self.unpack = unpack
         self.results = {}
         self.result_queues = {}
@@ -545,11 +555,6 @@ class Collector(Background):
     def prepare(self, call_id):
         if call_id in self.results:
             raise KeyError('call-{0} already prepared'.format(call_id))
-        if self.address is None:
-            try:
-                self.socket.set(zmq.SUBSCRIBE, call_id)
-            except:
-                pass
         self.results[call_id] = {}
         self.result_queues[call_id] = Queue()
 
@@ -642,11 +647,6 @@ class Collector(Background):
             del self.results[call_id]
 
     def remove_result_queue(self, call_id):
-        if self.address is None:
-            try:
-                self.socket.set(zmq.UNSUBSCRIBE, call_id)
-            except:
-                pass
         del self.result_queues[call_id]
         if not self.results[call_id]:
             del self.results[call_id]

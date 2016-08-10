@@ -14,7 +14,7 @@ import pytest
 import zmq.green as zmq
 
 from conftest import (
-    Application, link_sockets, run_device, running, sync_pubsub)
+    Application, link_sockets, rand_str, run_device, running, sync_pubsub)
 import zeronimo
 from zeronimo.core import Background, uuid4_bytes
 from zeronimo.exceptions import Rejected
@@ -930,21 +930,23 @@ def test_no_param_conflict(worker, push, pub, collector, topic):
         assert r.get() == {'name': 'Zeronimo', 'topic': 'sublee'}
 
 
-def test_only_workers_bind(ctx, addr1, addr2, topic):
+def test_only_workers_bind(ctx, addr1, addr2):
     pub1, pub2 = ctx.socket(zmq.PUB), ctx.socket(zmq.PUB)
     sub1, sub2 = ctx.socket(zmq.SUB), ctx.socket(zmq.SUB)
     pub1.bind(addr1)
     sub1.bind(addr2)
     pub2.connect(addr2)
     sub2.connect(addr1)
-    sub1.set(zmq.SUBSCRIBE, topic)
+    topic1, topic2 = rand_str(), rand_str()
+    sub1.set(zmq.SUBSCRIBE, topic1)
+    sub2.set(zmq.SUBSCRIBE, topic2)
     worker = zeronimo.Worker(Application(), [sub1], pub1)
-    collector = zeronimo.Collector(sub2)
+    collector = zeronimo.Collector(sub2, topic=topic2)
     fanout = zeronimo.Fanout(pub2, collector)
     gevent.sleep(0.1)
     with running([worker], sockets=[pub1, pub2, sub1, sub2]):
         took = False
-        for r in fanout.emit(topic, 'zeronimo'):
+        for r in fanout.emit(topic1, 'zeronimo'):
             assert r.get() == 'zeronimo'
             took = True
         assert took
