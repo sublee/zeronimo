@@ -61,7 +61,6 @@ FANOUT_TIMEOUT = 0.1
 # Reply types.
 DEDICATED_REPLY = 1
 DUPLEX_REPLY = 2
-REVERSE_REPLY = 3
 
 
 class Background(object):
@@ -256,20 +255,13 @@ class Worker(Background):
                             handle(self, exc_info, msg_parts)
                         continue
                     call = Call(*args)
-                    # Choose peer Id.
-                    peer_id = None
-                    if call.reply_to is not None:
-                        reply_type, topic = call.reply_to
-                        if reply_type == DUPLEX_REPLY:
-                            peer_id = prefix
-                        elif reply_type == DEDICATED_REPLY:
-                            peer_id = topic
                     if self.greenlet_group.full():
-                        reply_socket = \
-                            self.get_reply_socket(socket, call.reply_to)
-                        self.reject(reply_socket, call, peer_id)
+                        # Reject immediately.
+                        reply_socket, prefix = self.get_replier(socket, prefix,
+                                                                call.reply_to)
+                        self.reject(reply_socket, call, prefix)
                         continue
-                    self.greenlet_group.spawn(self.work, socket, call, peer_id)
+                    self.greenlet_group.spawn(self.work, socket, call, prefix)
                     self.greenlet_group.join(0)
         finally:
             self.greenlet_group.kill()
@@ -278,15 +270,15 @@ class Worker(Background):
                     socket.close()
             self._cached_reply_sockets.clear()
 
-    def work(self, socket, call, peer_id=None):
+    def work(self, socket, call, prefix=None):
         """Calls a function and send results to the collector.  It supports
         all of function actions.  A function could return, yield, raise any
         packable objects.
         """
         task_id = uuid4_bytes()
-        reply_socket = self.get_reply_socket(socket, call.reply_to)
+        reply_socket, prefix = self.get_replier(socket, prefix, call.reply_to)
         if reply_socket:
-            channel = (call.call_id, task_id, peer_id)
+            channel = (call.call_id, task_id, prefix)
         else:
             channel = (None, None, None)
         f, rpc_spec = self.find_call_target(call)
@@ -353,10 +345,10 @@ class Worker(Background):
         """Sends ACCEPT reply."""
         self.send_reply(reply_socket, ACCEPT, self.info, *channel)
 
-    def reject(self, reply_socket, call, peer_id=None):
+    def reject(self, reply_socket, call, prefix=None):
         """Sends REJECT reply."""
         self.send_reply(reply_socket, REJECT, self.info,
-                        call.call_id, None, peer_id)
+                        call.call_id, None, prefix)
 
     def raise_(self, reply_socket, channel, exc_info=None):
         """Sends RAISE reply."""
@@ -386,39 +378,24 @@ class Worker(Background):
                 exc_info = sys.exc_info()
                 self.exception_handler(self, exc_info)
 
-    def get_reply_socket(self, socket, reply_to):
+    def get_replier(self, socket, prefix, reply_to):
         if reply_to is None:
-            return
-        reply_type, address = reply_to
+            return None, None
+        reply_type, reply_prefix = reply_to
         if reply_type == DUPLEX_REPLY:
-            return socket
+            return socket, prefix
         elif reply_type == DEDICATED_REPLY:
-            return self.reply_socket
-        elif reply_type != REVERSE_REPLY:
-            raise ValueError('invalid reply type')
-        # REVERSE_REPLY only.
-        context = socket.context
-        try:
-            sockets = self._cached_reply_sockets[context]
-        except KeyError:
-            sockets = self.cache_factory()
-            self._cached_reply_sockets[context] = sockets
-        try:
-            return sockets[address]
-        except KeyError:
-            socket = context.socket(zmq.PUSH)
-            eintr_retry_zmq(socket.connect, address)
-            sockets[address] = socket
-            return socket
+            return self.reply_socket, reply_prefix
+        raise ValueError('invalid reply type')
 
-    def send_reply(self, socket, method, data, call_id, task_id, peer_id=None):
+    def send_reply(self, socket, method, data, call_id, task_id, prefix=None):
         if not socket:
             return
         # normal tuple is faster than namedtuple.
         reply = (method, data, call_id, task_id)
         try:
             eintr_retry_zmq(send, socket, reply, zmq.NOBLOCK,
-                            prefix=peer_id, pack=self.pack)
+                            prefix=prefix, pack=self.pack)
         except (zmq.Again, zmq.ZMQError):
             pass  # ignore.
 
@@ -465,12 +442,8 @@ class _Caller(object):
         call_id = uuid4_bytes()
         if self.socket is self.collector.socket:
             reply_to = (DUPLEX_REPLY, None)
-        elif self.collector.address:
-            reply_to = (REVERSE_REPLY, self.collector.address)
-        elif self.collector.topic:
-            reply_to = (DEDICATED_REPLY, self.collector.topic)
         else:
-            raise ValueError('collector cannot receive replies')
+            reply_to = (DEDICATED_REPLY, self.collector.topic)
         # normal tuple is faster than namedtuple.
         call = (name, args, kwargs, call_id, reply_to)
         # use short names.
@@ -532,21 +505,15 @@ class Collector(Background):
     """Collector receives results from the worker."""
 
     socket = None
-    address = None
     topic = None
     unpack = None
 
-    def __init__(self, socket, address=None, topic=None, unpack=UNPACK):
+    def __init__(self, socket, topic=None, unpack=UNPACK):
         super(Collector, self).__init__()
         verify_socket_types(self.__class__.__name__, [
             zmq.PAIR, zmq.DEALER, zmq.PULL, zmq.SUB, zmq.XSUB
         ], socket)
-        if address is not None and topic is not None:
-            raise ValueError('both address and topic specified')
-        # if (address is not None) != (socket.type == zmq.PULL):
-        #     raise ValueError('address required only for PULL')
         self.socket = socket
-        self.address = address
         self.topic = topic
         self.unpack = unpack
         self.results = {}
