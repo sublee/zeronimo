@@ -417,12 +417,14 @@ class _Caller(object):
     collector = None
     pack = None
 
-    def __init__(self, socket, collector=None, pack=PACK):
+    def __init__(self, socket, collector=None, timeout=None, pack=PACK):
         verify_socket_types(self.__class__.__name__,
                             self.available_socket_types, socket)
         self.socket = socket
         self.collector = collector
         self.pack = pack
+        if timeout is not None:
+            self.timeout = timeout
 
     def _call_nowait(self, name, args, kwargs, topic=None):
         call = (name, args, kwargs, None, None)

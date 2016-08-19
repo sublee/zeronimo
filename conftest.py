@@ -223,26 +223,36 @@ def resolve_fixtures(f, protocol):
         patience = kwargs.pop('patience', config.option.patience)
         zeronimo.Customer.timeout = customer_timeout * patience
         zeronimo.Fanout.timeout = fanout_timeout * patience
-        pull_addrs = set()
-        sub_addrs = set()
-        sub_socks = set()
+        worker_pull_addrs = set()
+        worker_sub_addrs = set()
+        worker_pub_addrs = set()
+        worker_sub_socks = set()
+        worker_pub_socks = set()
         backgrounds = set()
         socket_params = set()
         for param, val in kwargs.iteritems():
             if isinstance(val, worker_fixture):
+                # PULL worker socket.
                 pull_sock = ctx.socket(zmq.PULL)
                 pull_addr = gen_address(protocol)
                 pull_sock.bind(pull_addr)
-                pull_addrs.add(pull_addr)
+                worker_pull_addrs.add(pull_addr)
+                # SUB worker socket.
                 sub_sock = ctx.socket(zmq.SUB)
                 sub_sock.set(zmq.SUBSCRIBE, topic)
                 sub_addr = gen_address(protocol, fanout=True)
                 sub_sock.bind(sub_addr)
-                sub_addrs.add(sub_addr)
-                sub_socks.add(sub_sock)
-                worker_info = '{0}[{1}]({2})' \
-                              ''.format(f.__name__, protocol, param)
-                val = zeronimo.Worker(app, [pull_sock, sub_sock],
+                worker_sub_addrs.add(sub_addr)
+                worker_sub_socks.add(sub_sock)
+                # PUB reply socket.
+                pub_sock = ctx.socket(zmq.PUB)
+                pub_addr = gen_address(protocol, fanout=True)
+                pub_sock.bind(pub_addr)
+                worker_pub_addrs.add(pub_addr)
+                worker_pub_socks.add(pub_sock)
+                # Make a worker.
+                worker_info = '%s[%s](%s)' % (f.__name__, protocol, param)
+                val = zeronimo.Worker(app, [pull_sock, sub_sock], pub_sock,
                                       info=worker_info)
                 backgrounds.add(val)
             elif isinstance(val, collector_fixture):
