@@ -26,27 +26,27 @@ WINDOWS = platform.system() == 'Windows'
 config = NotImplemented
 
 
-# deferred fixtures
+# fixtures
 
 
-make_deferred_fixture = lambda name: namedtuple(name, ['protocol'])
-deferred_worker = make_deferred_fixture('deferred_worker')
-deferred_collector = make_deferred_fixture('deferred_collector')
-deferred_push_socket = make_deferred_fixture('deferred_push_socket')
-deferred_pub_socket = make_deferred_fixture('deferred_pub_socket')
-deferred_address = make_deferred_fixture('deferred_address')
-deferred_fanout_address = make_deferred_fixture('deferred_fanout_address')
-deferred_topic = make_deferred_fixture('deferred_topic')
-deferred_context = make_deferred_fixture('deferred_context')
-deferred_fixtures = {
-    'worker*': deferred_worker,
-    'collector*': deferred_collector,
-    'push*': deferred_push_socket,
-    'pub*': deferred_pub_socket,
-    'addr*': deferred_address,
-    'fanout_addr*': deferred_fanout_address,
-    'topic': deferred_topic,
-    'ctx': deferred_context,
+def_fixture = lambda name: namedtuple(name, ['protocol'])
+worker_fixture = def_fixture('worker_fixture')
+collector_fixture = def_fixture('collector_fixture')
+push_socket_fixture = def_fixture('push_socket_fixture')
+pub_socket_fixture = def_fixture('pub_socket_fixture')
+address_fixture = def_fixture('address_fixture')
+fanout_address_fixture = def_fixture('fanout_address_fixture')
+topic_fixture = def_fixture('topic_fixture')
+context_fixture = def_fixture('context_fixture')
+fixtures = {
+    'worker*': worker_fixture,
+    'collector*': collector_fixture,
+    'push*': push_socket_fixture,
+    'pub*': pub_socket_fixture,
+    'addr*': address_fixture,
+    'fanout_addr*': fanout_address_fixture,
+    'topic': topic_fixture,
+    'ctx': context_fixture,
 }
 
 
@@ -141,9 +141,9 @@ def pytest_generate_tests(metafunc):
     for protocol in get_testing_protocols(metafunc):
         curargvalues = []
         for param in metafunc.fixturenames:
-            for pattern, deferred_fixture in deferred_fixtures.iteritems():
+            for pattern, fixture_fixture in fixtures.iteritems():
                 if fnmatch(param, pattern):
-                    curargvalues.append(deferred_fixture(protocol))
+                    curargvalues.append(fixture_fixture(protocol))
                     break
             else:
                 continue
@@ -229,7 +229,7 @@ def resolve_fixtures(f, protocol):
         backgrounds = set()
         socket_params = set()
         for param, val in kwargs.iteritems():
-            if isinstance(val, deferred_worker):
+            if isinstance(val, worker_fixture):
                 pull_sock = ctx.socket(zmq.PULL)
                 pull_addr = gen_address(protocol)
                 pull_sock.bind(pull_addr)
@@ -245,29 +245,29 @@ def resolve_fixtures(f, protocol):
                 val = zeronimo.Worker(app, [pull_sock, sub_sock],
                                       info=worker_info)
                 backgrounds.add(val)
-            elif isinstance(val, deferred_collector):
+            elif isinstance(val, collector_fixture):
                 pull_sock = ctx.socket(zmq.PULL)
                 pull_addr = gen_address(protocol)
                 pull_sock.bind(pull_addr)
                 val = zeronimo.Collector(pull_sock, pull_addr)
                 backgrounds.add(val)
-            elif isinstance(val, deferred_address):
+            elif isinstance(val, address_fixture):
                 val = gen_address(protocol)
-            elif isinstance(val, deferred_fanout_address):
+            elif isinstance(val, fanout_address_fixture):
                 val = gen_address(protocol, fanout=True)
-            elif isinstance(val, deferred_topic):
+            elif isinstance(val, topic_fixture):
                 val = topic
-            elif isinstance(val, deferred_context):
+            elif isinstance(val, context_fixture):
                 val = ctx
-            elif isinstance(val, (deferred_push_socket, deferred_pub_socket)):
+            elif isinstance(val, (push_socket_fixture, pub_socket_fixture)):
                 socket_params.add(param)
             kwargs[param] = val
         for param in socket_params:
             val = kwargs[param]
-            if isinstance(val, deferred_push_socket):
+            if isinstance(val, push_socket_fixture):
                 sock_type = zmq.PUSH
                 addrs = pull_addrs
-            elif isinstance(val, deferred_pub_socket):
+            elif isinstance(val, pub_socket_fixture):
                 sock_type = zmq.PUB
                 addrs = sub_addrs
             else:
