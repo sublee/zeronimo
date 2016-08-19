@@ -58,9 +58,9 @@ CUSTOMER_TIMEOUT = 5
 FANOUT_TIMEOUT = 0.1
 
 
-# Reply types.
-DEDICATED_REPLY = 1
-DUPLEX_REPLY = 2
+# Used for a value for `reply_to`.  When a worker receives this, the worker
+# should reply through the socket received the call.
+Duplex = object()
 
 
 class Background(object):
@@ -257,8 +257,8 @@ class Worker(Background):
                     call = Call(*args)
                     if self.greenlet_group.full():
                         # Reject immediately.
-                        reply_socket, prefix = self.get_replier(socket, prefix,
-                                                                call.reply_to)
+                        reply_socket, prefix = \
+                            self.get_replier(socket, prefix, call.reply_to)
                         self.reject(reply_socket, call, prefix)
                         continue
                     self.greenlet_group.spawn(self.work, socket, call, prefix)
@@ -381,12 +381,10 @@ class Worker(Background):
     def get_replier(self, socket, prefix, reply_to):
         if reply_to is None:
             return None, None
-        reply_type, reply_prefix = reply_to
-        if reply_type == DUPLEX_REPLY:
+        elif reply_to is Duplex:
             return socket, prefix
-        elif reply_type == DEDICATED_REPLY:
-            return self.reply_socket, reply_prefix
-        raise ValueError('invalid reply type')
+        else:
+            return self.reply_socket, reply_to
 
     def send_reply(self, socket, method, data, call_id, task_id, prefix=None):
         if not socket:
@@ -437,27 +435,25 @@ class _Caller(object):
     def _call(self, name, args, kwargs,
               topic=None, limit=None, retry=False, max_retries=None):
         """Allocates a call id and emit."""
-        if not self.collector.is_running():
-            self.collector.start()
+        col = self.collector
+        if not col.is_running():
+            col.start()
         call_id = uuid4_bytes()
-        if self.socket is self.collector.socket:
-            reply_to = (DUPLEX_REPLY, None)
-        else:
-            reply_to = (DEDICATED_REPLY, self.collector.topic)
-        # normal tuple is faster than namedtuple.
+        reply_to = (Duplex if self.socket is col.socket else col.topic)
+        # Normal tuple is faster than namedtuple.
         call = (name, args, kwargs, call_id, reply_to)
-        # use short names.
+        # Use short names.
         def send_call():
             try:
                 eintr_retry_zmq(send, self.socket, call,
                                 zmq.NOBLOCK, topic, self.pack)
             except zmq.Again:
                 raise Undelivered('emission was not delivered')
-        self.collector.prepare(call_id)
+        col.prepare(call_id)
         send_call()
-        return self.collector.establish(call_id, self.timeout, limit,
-                                        send_call if retry else None,
-                                        max_retries=max_retries)
+        return col.establish(call_id, self.timeout, limit,
+                             send_call if retry else None,
+                             max_retries=max_retries)
 
     def close(self):
         self.socket.close()
