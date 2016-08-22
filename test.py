@@ -25,7 +25,7 @@ import zeronimo.messaging
 warnings.simplefilter('always')
 
 
-def require_zmq(version_info):
+def require_libzmq(version_info):
     return pytest.mark.skipif('zmq.zmq_version_info() < %r' % (version_info,))
 
 
@@ -136,7 +136,7 @@ def test_socket_type_error(ctx):
         zeronimo.Collector(ctx.socket(zmq.PUSH), 'x')
 
 
-@require_zmq((3,))
+@require_libzmq((3,))
 def test_xpub_xsub_type_error(ctx):
     with pytest.raises(ValueError):
         zeronimo.Customer(ctx.socket(zmq.XSUB))
@@ -144,7 +144,7 @@ def test_xpub_xsub_type_error(ctx):
         zeronimo.Worker(None, [ctx.socket(zmq.XPUB)])
 
 
-@require_zmq((4, 0, 1))
+@require_libzmq((4, 0, 1))
 def test_stream_type_error(ctx):
     # zmq.STREAM is available from libzmq-4.0.1
     with pytest.raises(ValueError):
@@ -469,7 +469,7 @@ def test_device(ctx, collector, worker_pub, topic, addr1, addr2, addr3, addr4):
             pass
 
 
-@require_zmq((3,))
+@require_libzmq((3,))
 def test_proxied_fanout(ctx, collector, topic, worker_pub, addr1, addr2):
     # customer  |----| forwarder with XPUB/XSUB |---> | worker
     # collector | <-----------------------------------|
@@ -503,7 +503,7 @@ def test_proxied_fanout(ctx, collector, topic, worker_pub, addr1, addr2):
         forwarder.kill()
 
 
-@require_zmq((3,))
+@require_libzmq((3,))
 def test_proxied_collector(ctx, worker, push, addr1, addr2):
     # customer  |-------------------> | worker
     # collector | <---| forwarder |---|
@@ -698,7 +698,7 @@ def test_pair_with_collector(ctx, addr, reply_sockets):
         assert customer.call('zeronimo').get() == 'zeronimo'
 
 
-@require_zmq((3,))
+@require_libzmq((3,))
 def test_direct_xpub_xsub(ctx, addr, reply_sockets):
     worker_sock = ctx.socket(zmq.XSUB)
     worker_sock.bind(addr)
@@ -933,7 +933,7 @@ def test_only_workers_bind(ctx, addr1, addr2):
         assert took
 
 
-@require_zmq((3,))
+@require_libzmq((3,))
 def test_xpub_sub(ctx, addr, reply_sockets, topic):
     worker_sub = ctx.socket(zmq.SUB)
     worker_sub.set(zmq.SUBSCRIBE, topic)
