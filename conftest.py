@@ -236,6 +236,7 @@ def resolve_fixtures(f, protocol):
         worker_sub_socks = set()
         worker_pub_socks = set()
         collector_sub_socks = {}
+        reply_socks = set()
         backgrounds = set()
         socket_params = set()
         # Resolve fixtures.
@@ -286,10 +287,12 @@ def resolve_fixtures(f, protocol):
         @resolve_fixture.register(reply_sockets_fixture)
         def resolve_reply_sockets_fixture(val, param):
             def reply_sockets(count=1):
+                # The sockets this function makes don't connect with other
+                # worker or collector fixtures.
                 addr = gen_address(protocol, fanout=True)
                 worker_reply_sock = ctx.socket(zmq.PUB)
                 worker_reply_sock.bind(addr)
-                worker_pub_socks.add(worker_reply_sock)
+                reply_socks.add(worker_reply_sock)
                 collector_sock_and_topics = []
                 for x in range(count):
                     reply_topic = rand_str()
@@ -300,7 +303,7 @@ def resolve_fixtures(f, protocol):
                         worker_reply_sock, [collector_sock], reply_topic)
                     collector_sock_and_topics.append(
                         (collector_sock, reply_topic))
-                    collector_sub_socks[reply_topic] = collector_sock
+                    reply_socks.add(collector_sock)
                 return (worker_reply_sock,) + tuple(collector_sock_and_topics)
             return reply_sockets
         @resolve_fixture.register(topic_fixture)
@@ -365,6 +368,7 @@ def resolve_fixtures(f, protocol):
             sockets.extend(worker_sub_socks)
             sockets.extend(worker_pub_socks)
             sockets.extend(collector_sub_socks.values())
+            sockets.extend(reply_socks)
             for bg in backgrounds:
                 if bg.is_running():
                     bg.stop()
