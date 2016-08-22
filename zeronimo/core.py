@@ -60,7 +60,8 @@ FANOUT_TIMEOUT = 0.1
 
 # Used for a value for `reply_to`.  When a worker receives this, the worker
 # should reply through the socket received the call.
-Duplex = object()
+class Duplex:
+    pass
 
 
 class Background(object):
@@ -274,7 +275,9 @@ class Worker(Background):
         packable objects.
         """
         task_id = uuid4_bytes()
+        print '~', prefix
         reply_socket, prefix = self.get_replier(socket, prefix, call.reply_to)
+        print '[', reply_socket, prefix, socket, call.reply_to, ']'
         if reply_socket:
             channel = (call.call_id, task_id, prefix)
         else:
@@ -378,10 +381,13 @@ class Worker(Background):
 
     def get_replier(self, socket, prefix, reply_to):
         if reply_to is None:
+            print 'None, None'
             return None, None
         elif reply_to is Duplex:
+            print 'socket, prefix'
             return socket, prefix
         else:
+            print 'reply_socket, reply_to'
             return self.reply_socket, reply_to
 
     def send_reply(self, socket, method, data, call_id, task_id, prefix=None):

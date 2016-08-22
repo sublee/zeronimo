@@ -13,6 +13,7 @@ import warnings
 
 import gevent
 from gevent import socket
+from singledispatch import singledispatch
 import zmq.green as zmq
 
 import zeronimo
@@ -31,18 +32,22 @@ config = NotImplemented
 
 def_fixture = lambda name: namedtuple(name, ['protocol'])
 worker_fixture = def_fixture('worker_fixture')
+worker_pub_fixture = def_fixture('worker_pub_fixture')
 collector_fixture = def_fixture('collector_fixture')
-push_socket_fixture = def_fixture('push_socket_fixture')
-pub_socket_fixture = def_fixture('pub_socket_fixture')
+collector_sub_fixture = def_fixture('collector_sub_fixture')
+customer_push_fixture = def_fixture('customer_push_fixture')
+customer_pub_fixture = def_fixture('customer_pub_fixture')
 address_fixture = def_fixture('address_fixture')
 fanout_address_fixture = def_fixture('fanout_address_fixture')
 topic_fixture = def_fixture('topic_fixture')
 context_fixture = def_fixture('context_fixture')
 fixtures = {
     'worker*': worker_fixture,
+    'worker_pub*': worker_pub_fixture,
     'collector*': collector_fixture,
-    'push*': push_socket_fixture,
-    'pub*': pub_socket_fixture,
+    'collector_sub*': collector_sub_fixture,
+    'push*': customer_push_fixture,
+    'pub*': customer_pub_fixture,
     'addr*': address_fixture,
     'fanout_addr*': fanout_address_fixture,
     'topic': topic_fixture,
@@ -228,66 +233,103 @@ def resolve_fixtures(f, protocol):
         worker_pub_addrs = set()
         worker_sub_socks = set()
         worker_pub_socks = set()
+        collector_sub_socks = {}
         backgrounds = set()
         socket_params = set()
+        # Resolve fixtures.
+        @singledispatch
+        def resolve_fixture(val, param):
+            return val
+        @resolve_fixture.register(worker_fixture)
+        def resolve_worker_fixture(val, param):
+            # PULL worker socket.
+            pull_sock = ctx.socket(zmq.PULL)
+            pull_addr = gen_address(protocol)
+            pull_sock.bind(pull_addr)
+            worker_pull_addrs.add(pull_addr)
+            # SUB worker socket.
+            sub_sock = ctx.socket(zmq.SUB)
+            sub_sock.set(zmq.SUBSCRIBE, topic)
+            sub_addr = gen_address(protocol, fanout=True)
+            sub_sock.bind(sub_addr)
+            worker_sub_addrs.add(sub_addr)
+            worker_sub_socks.add(sub_sock)
+            # PUB reply socket.
+            pub_sock = ctx.socket(zmq.PUB)
+            pub_addr = gen_address(protocol, fanout=True)
+            pub_sock.bind(pub_addr)
+            worker_pub_addrs.add(pub_addr)
+            worker_pub_socks.add(pub_sock)
+            # Make a worker.
+            worker_info = '%s[%s](%s)' % (f.__name__, protocol, param)
+            worker = zeronimo.Worker(app, [pull_sock, sub_sock], pub_sock,
+                                     info=worker_info)
+            backgrounds.add(worker)
+            return worker
+        @resolve_fixture.register(collector_fixture)
+        def resolve_collector_fixture(val, param):
+            reply_topic = rand_str()
+            sub_sock = ctx.socket(zmq.SUB)
+            sub_sock.set(zmq.SUBSCRIBE, reply_topic)
+            collector_sub_socks[reply_topic] = sub_sock
+            collector = zeronimo.Collector(sub_sock, reply_topic)
+            backgrounds.add(collector)
+            return collector
+        @resolve_fixture.register(address_fixture)
+        def resolve_address_fixture(val, param):
+            return gen_address(protocol)
+        @resolve_fixture.register(fanout_address_fixture)
+        def resolve_fanout_address_fixture(val, param):
+            return gen_address(protocol, fanout=True)
+        @resolve_fixture.register(topic_fixture)
+        def resolve_topic_fixture(val, param):
+            return topic
+        @resolve_fixture.register(context_fixture)
+        def resolve_context_fixture(val, param):
+            return ctx
+        @resolve_fixture.register(worker_pub_fixture)
+        @resolve_fixture.register(collector_sub_fixture)
+        @resolve_fixture.register(customer_push_fixture)
+        @resolve_fixture.register(customer_pub_fixture)
+        def resolve_socket_fixture(val, param):
+            socket_params.add(param)
+            return val
         for param, val in kwargs.iteritems():
-            if isinstance(val, worker_fixture):
-                # PULL worker socket.
-                pull_sock = ctx.socket(zmq.PULL)
-                pull_addr = gen_address(protocol)
-                pull_sock.bind(pull_addr)
-                worker_pull_addrs.add(pull_addr)
-                # SUB worker socket.
-                sub_sock = ctx.socket(zmq.SUB)
-                sub_sock.set(zmq.SUBSCRIBE, topic)
-                sub_addr = gen_address(protocol, fanout=True)
-                sub_sock.bind(sub_addr)
-                worker_sub_addrs.add(sub_addr)
-                worker_sub_socks.add(sub_sock)
-                # PUB reply socket.
-                pub_sock = ctx.socket(zmq.PUB)
-                pub_addr = gen_address(protocol, fanout=True)
-                pub_sock.bind(pub_addr)
-                worker_pub_addrs.add(pub_addr)
-                worker_pub_socks.add(pub_sock)
-                # Make a worker.
-                worker_info = '%s[%s](%s)' % (f.__name__, protocol, param)
-                val = zeronimo.Worker(app, [pull_sock, sub_sock], pub_sock,
-                                      info=worker_info)
-                backgrounds.add(val)
-            elif isinstance(val, collector_fixture):
-                pull_sock = ctx.socket(zmq.PULL)
-                pull_addr = gen_address(protocol)
-                pull_sock.bind(pull_addr)
-                val = zeronimo.Collector(pull_sock, pull_addr)
-                backgrounds.add(val)
-            elif isinstance(val, address_fixture):
-                val = gen_address(protocol)
-            elif isinstance(val, fanout_address_fixture):
-                val = gen_address(protocol, fanout=True)
-            elif isinstance(val, topic_fixture):
-                val = topic
-            elif isinstance(val, context_fixture):
-                val = ctx
-            elif isinstance(val, (push_socket_fixture, pub_socket_fixture)):
-                socket_params.add(param)
-            kwargs[param] = val
+            kwargs[param] = resolve_fixture(val, param)
+        # Resolve worker PUB fixtures.
         for param in socket_params:
             val = kwargs[param]
-            if isinstance(val, push_socket_fixture):
-                sock_type = zmq.PUSH
-                addrs = pull_addrs
-            elif isinstance(val, pub_socket_fixture):
-                sock_type = zmq.PUB
-                addrs = sub_addrs
-            else:
-                assert 0
-            sock = ctx.socket(sock_type)
-            for addr in addrs:
-                sock.connect(addr)
-            if sock_type == zmq.PUB:
-                sync_pubsub(sock, sub_socks, topic)
+            if not isinstance(val, worker_pub_fixture):
+                continue
+            sock = ctx.socket(zmq.PUB)
+            addr = gen_address(protocol, fanout=True)
+            sock.bind(addr)
+            worker_pub_addrs.add(addr)
+            worker_pub_socks.add(sock)
             kwargs[param] = sock
+        # Collectors connect to workers.
+        for topic, sock in collector_sub_socks.items():
+            for addr in worker_pub_addrs:
+                sock.connect(addr)
+            for pub_sock in worker_pub_socks:
+                sync_pubsub(pub_sock, [sock], topic)
+        # Resolve other socket fixtures.
+        for param in socket_params:
+            val = kwargs[param]
+            if isinstance(val, collector_sub_fixture):
+                sock = ctx.socket(zmq.SUB)
+                connect_to_addrs(sock, worker_pub_addrs)
+            elif isinstance(val, customer_push_fixture):
+                sock = ctx.socket(zmq.PUSH)
+                connect_to_addrs(sock, worker_pull_addrs)
+            elif isinstance(val, customer_pub_fixture):
+                sock = ctx.socket(zmq.PUB)
+                connect_to_addrs(sock, worker_sub_addrs)
+                sync_pubsub(sock, worker_sub_socks, topic)
+            else:
+                continue
+            kwargs[param] = sock
+        # Run the function.
         for bg in backgrounds:
             bg.start()
         try:
@@ -360,7 +402,7 @@ def sync_pubsub(pub_sock, sub_socks, topic=''):
         poller.register(sub_sock, zmq.POLLIN)
     to_sync = list(sub_socks)
     # sync all SUB sockets
-    with gevent.Timeout(1, RuntimeError('Are SUB sockets subscribing?')):
+    with gevent.Timeout(1, RuntimeError('are SUB sockets subscribing?')):
         while to_sync:
             pub_sock.send_multipart([topic, msg])
             events = dict(poller.poll(timeout=1))
@@ -382,6 +424,11 @@ def sync_pubsub(pub_sock, sub_socks, topic=''):
             topic_recv, msg_recv = sub_sock.recv_multipart()
             assert topic_recv == topic
             assert msg_recv == msg
+
+
+def connect_to_addrs(sock, addrs):
+    for addr in addrs:
+        sock.connect(addr)
 
 
 def run_device(in_sock, out_sock, in_addr=None, out_addr=None):

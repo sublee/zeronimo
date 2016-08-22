@@ -412,9 +412,9 @@ def test_subscription(worker1, worker2, collector, pub, topic):
     assert len(fanout.emit(topic, 'zeronimo')) == 2
 
 
-def test_device(ctx, collector, topic, addr1, addr2, addr3, addr4):
+def test_device(ctx, collector, worker_pub, topic, addr1, addr2, addr3, addr4):
     # customer  |-----| forwarder |---> | worker
-    # collector | <---| streamer |------|
+    #           | <----| streamer |-----|
     try:
         # run streamer
         streamer_in_addr, streamer_out_addr = addr1, addr2
@@ -448,8 +448,8 @@ def test_device(ctx, collector, topic, addr1, addr2, addr3, addr4):
         sync_pubsub(pub, [worker_sub1, worker_sub2], topic)
         # make and start workers
         app = Application()
-        worker1 = zeronimo.Worker(app, [worker_pull1, worker_sub1])
-        worker2 = zeronimo.Worker(app, [worker_pull2, worker_sub2])
+        worker1 = zeronimo.Worker(app, [worker_pull1, worker_sub1], worker_pub)
+        worker2 = zeronimo.Worker(app, [worker_pull2, worker_sub2], worker_pub)
         worker1.start()
         worker2.start()
         # zeronimo!
@@ -687,10 +687,15 @@ def test_pair_with_collector(ctx, addr1, addr2):
     right = ctx.socket(zmq.PAIR)
     left.bind(addr1)
     right.connect(addr1)
-    worker = zeronimo.Worker(Application(), [left])
-    collector_sock = ctx.socket(zmq.PULL)
-    collector_sock.bind(addr2)
-    collector = zeronimo.Collector(collector_sock, addr2)
+    reply_sock = ctx.socket(zmq.PUB)
+    reply_sock.bind(addr2)
+    worker = zeronimo.Worker(Application(), [left], reply_sock)
+    reply_topic = rand_str()
+    collector_sock = ctx.socket(zmq.SUB)
+    collector_sock.set(zmq.SUBSCRIBE, reply_topic)
+    collector_sock.connect(addr2)
+    sync_pubsub(reply_sock, [collector_sock], reply_topic)
+    collector = zeronimo.Collector(collector_sock, reply_topic)
     customer = zeronimo.Customer(right, collector)
     with running([worker, collector], [left, right, collector_sock]):
         assert customer.call('zeronimo').get() == 'zeronimo'
@@ -833,33 +838,6 @@ def test_exception_state(ctx, addr1, addr2):
             assert not exc.initialized
         else:
             assert False
-
-
-def test_cache_factory(ctx, worker, push, collector1, collector2, collector3):
-    from pylru import lrucache
-    gc.collect()
-    num_sockets_before = \
-        len([x for x in gc.get_objects() if isinstance(x, zmq.Socket)])
-    lru_2 = lambda: lrucache(2, lambda k, v: v.close())
-    worker.cache_factory = lru_2
-    customer1 = zeronimo.Customer(push, collector1)
-    customer2 = zeronimo.Customer(push, collector2)
-    customer3 = zeronimo.Customer(push, collector3)
-    assert not worker._cached_reply_sockets
-    customer1.call('add', 1, 1).wait()
-    assert len(worker._cached_reply_sockets[ctx]) == 1
-    customer1.call('add', 1, 1).wait()
-    assert len(worker._cached_reply_sockets[ctx]) == 1
-    customer2.call('add', 1, 1).wait()
-    assert len(worker._cached_reply_sockets[ctx]) == 2
-    customer3.call('add', 1, 1).wait()
-    assert len(worker._cached_reply_sockets[ctx]) == 2
-    customer1.call('add', 1, 1).wait()
-    assert len(worker._cached_reply_sockets[ctx]) == 2
-    gc.collect()
-    num_sockets = \
-        len([x for x in gc.get_objects() if isinstance(x, zmq.Socket)])
-    assert num_sockets - num_sockets_before == 2
 
 
 @pytest.mark.parametrize('itimer, signo', [
