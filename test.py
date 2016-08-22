@@ -505,26 +505,26 @@ def test_x_forwarder(ctx, collector, topic, worker_pub, addr1, addr2):
         forwarder.kill()
 
 
-def test_proxied_collector(ctx, worker, worker_pub, push, addr1, addr2):
+def test_proxied_collector(ctx, worker, push, addr1, addr2):
     # customer  |-------------------> | worker
     # collector | <---| forwarder |---|
     try:
-        streamer = spawn(
+        forwarder = spawn(
             run_device, ctx.socket(zmq.XSUB), ctx.socket(zmq.XPUB),
             addr1, addr2)
-        streamer.join(0)
+        forwarder.join(0)
         reply_topic = rand_str()
         collector_sock = ctx.socket(zmq.SUB)
         collector_sock.set(zmq.SUBSCRIBE, reply_topic)
         collector_sock.connect(addr2)
-        worker_pub.connect(addr1)
-        sync_pubsub(worker_pub, [collector_sock], reply_topic)
+        worker.reply_socket.connect(addr1)
+        sync_pubsub(worker.reply_socket, [collector_sock], reply_topic)
         collector = zeronimo.Collector(collector_sock, reply_topic)
         customer = zeronimo.Customer(push, collector)
         assert customer.call('zeronimo').get() == 'zeronimo'
     finally:
         try:
-            streamer.kill()
+            forwarder.kill()
             collector.stop()
             collector_sock.close()
         except UnboundLocalError:
