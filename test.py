@@ -963,6 +963,15 @@ def test_collector_without_topic(ctx, addr, worker, push,
         assert customer.call('zeronimo').get() == 'zeronimo'
 
 
+def test_drop_if(worker, collector, pub, topic):
+    fanout = zeronimo.Fanout(pub, collector, drop_if=lambda x: x != topic)
+    results = list(fanout.emit(topic, 'zero_div'))
+    assert results
+    with pytest.raises(ZeroDivisionError):
+        results[0].get()
+    assert not list(fanout.emit(topic[::-1], 'zero_div'))
+
+
 # catch leaks
 
 

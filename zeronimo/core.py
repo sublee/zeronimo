@@ -478,7 +478,8 @@ class Customer(_Caller):
     def call(self, *args, **kwargs):
         name, args = args[0], args[1:]
         if self.collector is None:
-            return self._call_nowait(name, args, kwargs)
+            self._call_nowait(name, args, kwargs)
+            return
         results = self._call(name, args, kwargs, limit=1,
                              retry=True, max_retries=self.max_retries)
         return results[0]
@@ -492,11 +493,21 @@ class Fanout(_Caller):
 
     available_socket_types = [zmq.PUB, ZMQ_XPUB]
     timeout = FANOUT_TIMEOUT
+    drop_if = None
+
+    def __init__(self, *args, **kwargs):
+        self.drop_if = kwargs.pop('drop_if', None)
+        super(Fanout, self).__init__(*args, **kwargs)
 
     def emit(self, *args, **kwargs):
-        topic, name, args = args[0], args[1], args[2:]
+        topic = args[0]
+        if self.drop_if is not None and self.drop_if(topic):
+            # Drop the call without emission.
+            return None if self.collector is None else []
+        name, args = args[1], args[2:]
         if self.collector is None:
-            return self._call_nowait(name, args, kwargs, topic=topic)
+            self._call_nowait(name, args, kwargs, topic=topic)
+            return
         try:
             return self._call(name, args, kwargs, topic=topic)
         except EmissionError:
