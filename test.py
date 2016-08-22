@@ -94,7 +94,7 @@ def test_from_socket(ctx, addr, reply_sockets):
         assert result.get() == 'zeronimo'
 
 
-def _test_socket_type_error(ctx):
+def test_socket_type_error(ctx):
     # customer
     with pytest.raises(ValueError):
         zeronimo.Customer(ctx.socket(zmq.SUB))
@@ -121,13 +121,9 @@ def _test_socket_type_error(ctx):
     with pytest.raises(ValueError):
         zeronimo.Collector(ctx.socket(zmq.PUB), 'x')
     with pytest.raises(ValueError):
-        zeronimo.Collector(ctx.socket(zmq.SUB), 'x')
-    with pytest.raises(ValueError):
         zeronimo.Collector(ctx.socket(zmq.REQ), 'x')
     with pytest.raises(ValueError):
         zeronimo.Collector(ctx.socket(zmq.REP), 'x')
-    with pytest.raises(ValueError):
-        zeronimo.Collector(ctx.socket(zmq.DEALER), 'x')
     with pytest.raises(ValueError):
         zeronimo.Collector(ctx.socket(zmq.ROUTER), 'x')
     with pytest.raises(ValueError):
@@ -135,18 +131,16 @@ def _test_socket_type_error(ctx):
 
 
 @pytest.mark.skipif('zmq.zmq_version_info() < (3,)')
-def _test_xpubsub_type_error(ctx):
+def test_xpubsub_type_error(ctx):
     # XPUB/XSUB is available from libzmq-3
     with pytest.raises(ValueError):
         zeronimo.Customer(ctx.socket(zmq.XSUB))
     with pytest.raises(ValueError):
         zeronimo.Worker(None, [ctx.socket(zmq.XPUB)])
-    with pytest.raises(ValueError):
-        zeronimo.Collector(ctx.socket(zmq.XSUB), 'x')
 
 
 @pytest.mark.skipif('zmq.zmq_version_info() < (4, 0, 1)')
-def _test_stream_type_error(ctx):
+def test_stream_type_error(ctx):
     # zmq.STREAM is available from libzmq-4.0.1
     with pytest.raises(ValueError):
         zeronimo.Customer(ctx.socket(zmq.STREAM))
