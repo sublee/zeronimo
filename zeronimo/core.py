@@ -200,8 +200,12 @@ class Worker(Background):
         super(Worker, self).__init__()
         self.app = app
         verify_socket_types(self.__class__.__name__, [
-            zmq.PAIR, zmq.ROUTER, zmq.PULL, zmq.SUB, ZMQ_XSUB
+            zmq.PAIR, zmq.PULL, zmq.SUB, ZMQ_XSUB, zmq.ROUTER,
         ], *worker_sockets)
+        if reply_socket is not None:
+            verify_socket_types('%s.reply_socket' % self.__class__.__name__, [
+                zmq.PAIR, zmq.PUSH, zmq.PUB, ZMQ_XPUB, zmq.DEALER,
+            ], reply_socket)
         self.worker_sockets = worker_sockets
         self.reply_socket = reply_socket
         self.info = info
@@ -379,7 +383,7 @@ class Worker(Background):
                 self.exception_handler(self, exc_info)
 
     def get_replier(self, socket, prefix, reply_to):
-        if reply_to is None:
+        if reply_to is False:
             return None, None
         elif reply_to is Duplex:
             return socket, prefix
@@ -427,7 +431,7 @@ class _Caller(object):
             self.timeout = timeout
 
     def _call_nowait(self, name, args, kwargs, topic=None):
-        call = (name, args, kwargs, None, None)
+        call = (name, args, kwargs, None, False)
         try:
             eintr_retry_zmq(send, self.socket, call,
                             zmq.NOBLOCK, topic, self.pack)
@@ -509,7 +513,8 @@ class Collector(Background):
     def __init__(self, socket, topic=None, unpack=UNPACK):
         super(Collector, self).__init__()
         verify_socket_types(self.__class__.__name__, [
-            zmq.PAIR, zmq.DEALER, zmq.PULL, zmq.SUB, zmq.XSUB
+            zmq.PAIR, zmq.PULL, zmq.SUB, ZMQ_XSUB,
+            zmq.XPUB, zmq.ROUTER, zmq.DEALER,
         ], socket)
         self.socket = socket
         self.topic = topic

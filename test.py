@@ -125,8 +125,6 @@ def test_socket_type_error(ctx):
     with pytest.raises(ValueError):
         zeronimo.Collector(ctx.socket(zmq.REP), 'x')
     with pytest.raises(ValueError):
-        zeronimo.Collector(ctx.socket(zmq.ROUTER), 'x')
-    with pytest.raises(ValueError):
         zeronimo.Collector(ctx.socket(zmq.PUSH), 'x')
 
 
@@ -946,6 +944,23 @@ def test_xpubsub(ctx, fanout_addr, reply_sockets, topic):
             assert r.get() == 'zeronimo'
             took = True
         assert took
+
+
+@pytest.mark.parametrize('left_type, right_type', [(zmq.PAIR, zmq.PAIR),
+                                                   (zmq.PULL, zmq.PUSH),
+                                                   (zmq.ROUTER, zmq.DEALER),
+                                                   (zmq.XPUB, zmq.XSUB)])
+def test_collector_without_topic(ctx, addr, worker, push,
+                                 left_type, right_type):
+    left = ctx.socket(left_type)
+    right = ctx.socket(right_type)
+    right.bind(addr)
+    left.connect(addr)
+    worker.reply_socket = right
+    collector = zeronimo.Collector(left)  # topic is not required.
+    customer = zeronimo.Customer(push, collector)
+    with running([collector], [left, right]):
+        assert customer.call('zeronimo').get() == 'zeronimo'
 
 
 # catch leaks
