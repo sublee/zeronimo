@@ -150,10 +150,11 @@ def _ack(worker, reply_socket, channel, call, acked,
     acked(True)
     if accept:
         worker.accept(reply_socket, channel)
-    else:
-        worker.reject(reply_socket, call)
-        if not silent:
-            raise Reject
+        return
+    __, __, prefix = channel
+    worker.reject(reply_socket, call, prefix)
+    if not silent:
+        raise Reject
 
 
 def verify_socket_types(name, available_socket_types, *sockets):
