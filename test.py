@@ -82,10 +82,10 @@ def test_from_socket(ctx, addr, reply_sockets):
     worker_sock.bind(addr)
     push = ctx.socket(zmq.PUSH)
     push.connect(addr)
-    worker_reply_sock, (collector_sock, reply_topic) = reply_sockets()
+    reply_sock, (collector_sock, reply_topic) = reply_sockets()
     # logic
     app = Application()
-    worker = zeronimo.Worker(app, [worker_sock], worker_reply_sock)
+    worker = zeronimo.Worker(app, [worker_sock], reply_sock)
     collector = zeronimo.Collector(collector_sock, reply_topic)
     customer = zeronimo.Customer(push, collector)
     with running([worker, collector], [worker_sock, collector_sock, push]):
@@ -698,12 +698,12 @@ def test_pair_with_collector(ctx, addr, reply_sockets):
 def test_direct_xpub_xsub(ctx, addr, reply_sockets):
     worker_sock = ctx.socket(zmq.XSUB)
     worker_sock.bind(addr)
-    worker_reply_sock, (collector_sock, reply_topic) = reply_sockets()
+    reply_sock, (collector_sock, reply_topic) = reply_sockets()
     xpub = ctx.socket(zmq.XPUB)
     xpub.connect(addr)
     # logic
     app = Application()
-    worker = zeronimo.Worker(app, [worker_sock], worker_reply_sock)
+    worker = zeronimo.Worker(app, [worker_sock], reply_sock)
     collector = zeronimo.Collector(collector_sock, reply_topic)
     fanout = zeronimo.Fanout(xpub, collector)
     with running([worker, collector], [worker_sock, collector_sock, xpub]):
@@ -735,13 +735,13 @@ def test_marshal_message(ctx, addr, reply_sockets):
     # sockets
     worker_sock = ctx.socket(zmq.PULL)
     worker_sock.bind(addr)
-    worker_reply_sock, (collector_sock, reply_topic) = reply_sockets()
+    reply_sock, (collector_sock, reply_topic) = reply_sockets()
     customer_sock = ctx.socket(zmq.PUSH)
     customer_sock.connect(addr)
     sockets = [worker_sock, collector_sock, customer_sock]
     # logic
     app = Application()
-    worker = zeronimo.Worker(app, [worker_sock], worker_reply_sock,
+    worker = zeronimo.Worker(app, [worker_sock], reply_sock,
                              pack=pack, unpack=unpack)
     collector = zeronimo.Collector(collector_sock, reply_topic, unpack=unpack)
     customer = zeronimo.Customer(customer_sock, collector, pack=pack)
@@ -811,10 +811,10 @@ def test_exception_state(ctx, addr, reply_sockets):
     worker_sock.bind(addr)
     push = ctx.socket(zmq.PUSH)
     push.connect(addr)
-    worker_reply_sock, (collector_sock, reply_topic) = reply_sockets()
+    reply_sock, (collector_sock, reply_topic) = reply_sockets()
     # logic
     app = ExampleExceptionRaiser()
-    worker = zeronimo.Worker(app, [worker_sock], worker_reply_sock)
+    worker = zeronimo.Worker(app, [worker_sock], reply_sock)
     collector = zeronimo.Collector(collector_sock, reply_topic)
     customer = zeronimo.Customer(push, collector)
     with running([worker, collector], [worker_sock, collector_sock, push]):
@@ -924,6 +924,25 @@ def test_only_workers_bind(ctx, addr1, addr2):
     with running([worker, collector], [pub1, pub2, sub1, sub2]):
         took = False
         for r in fanout.emit(topic1, 'zeronimo'):
+            assert r.get() == 'zeronimo'
+            took = True
+        assert took
+
+
+def test_xpubsub(ctx, fanout_addr, reply_sockets, topic):
+    worker_sub = ctx.socket(zmq.SUB)
+    worker_sub.set(zmq.SUBSCRIBE, topic)
+    worker_sub.bind(fanout_addr)
+    customer_xpub = ctx.socket(zmq.XPUB)
+    customer_xpub.connect(fanout_addr)
+    assert customer_xpub.recv() == '\x01%s' % topic
+    reply_sock, (collector_sock, reply_topic) = reply_sockets()
+    worker = zeronimo.Worker(Application(), [worker_sub], reply_sock)
+    collector = zeronimo.Collector(collector_sock, reply_topic)
+    fanout = zeronimo.Fanout(customer_xpub, collector)
+    with running([worker, collector], [worker_sub, customer_xpub]):
+        took = False
+        for r in fanout.emit(topic, 'zeronimo'):
             assert r.get() == 'zeronimo'
             took = True
         assert took

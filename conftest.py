@@ -46,7 +46,6 @@ fixtures = {
     'worker*': worker_fixture,
     'worker_pub*': worker_pub_fixture,
     'collector*': collector_fixture,
-    'collector_sub*': collector_sub_fixture,
     'push*': customer_push_fixture,
     'pub*': customer_pub_fixture,
     'addr*': address_fixture,
@@ -148,7 +147,9 @@ def pytest_generate_tests(metafunc):
     for protocol in get_testing_protocols(metafunc):
         curargvalues = []
         for param in metafunc.fixturenames:
-            for pattern, fixture_fixture in fixtures.iteritems():
+            for pattern, fixture_fixture in sorted(fixtures.items(),
+                                                   key=lambda (k, v): len(k),
+                                                   reverse=True):
                 if fnmatch(param, pattern):
                     curargvalues.append(fixture_fixture(protocol))
                     break
@@ -290,21 +291,20 @@ def resolve_fixtures(f, protocol):
                 # The sockets this function makes don't connect with other
                 # worker or collector fixtures.
                 addr = gen_address(protocol, fanout=True)
-                worker_reply_sock = ctx.socket(zmq.PUB)
-                worker_reply_sock.bind(addr)
-                reply_socks.add(worker_reply_sock)
+                reply_sock = ctx.socket(zmq.PUB)
+                reply_sock.bind(addr)
+                reply_socks.add(reply_sock)
                 collector_sock_and_topics = []
                 for x in range(count):
                     reply_topic = rand_str()
                     collector_sock = ctx.socket(zmq.SUB)
                     collector_sock.set(zmq.SUBSCRIBE, reply_topic)
                     collector_sock.connect(addr)
-                    sync_pubsub(
-                        worker_reply_sock, [collector_sock], reply_topic)
-                    collector_sock_and_topics.append(
-                        (collector_sock, reply_topic))
+                    sync_pubsub(reply_sock, [collector_sock], reply_topic)
+                    collector_sock_and_topics.append((collector_sock,
+                                                      reply_topic))
                     reply_socks.add(collector_sock)
-                return (worker_reply_sock,) + tuple(collector_sock_and_topics)
+                return (reply_sock,) + tuple(collector_sock_and_topics)
             return reply_sockets
         @resolve_fixture.register(topic_fixture)
         def resolve_topic_fixture(val, param):
