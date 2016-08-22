@@ -39,6 +39,7 @@ customer_push_fixture = def_fixture('customer_push_fixture')
 customer_pub_fixture = def_fixture('customer_pub_fixture')
 address_fixture = def_fixture('address_fixture')
 fanout_address_fixture = def_fixture('fanout_address_fixture')
+reply_sockets_fixture = def_fixture('reply_sockets_fixture')
 topic_fixture = def_fixture('topic_fixture')
 context_fixture = def_fixture('context_fixture')
 fixtures = {
@@ -50,6 +51,7 @@ fixtures = {
     'pub*': customer_pub_fixture,
     'addr*': address_fixture,
     'fanout_addr*': fanout_address_fixture,
+    'reply_sockets': reply_sockets_fixture,
     'topic': topic_fixture,
     'ctx': context_fixture,
 }
@@ -281,6 +283,24 @@ def resolve_fixtures(f, protocol):
         @resolve_fixture.register(fanout_address_fixture)
         def resolve_fanout_address_fixture(val, param):
             return gen_address(protocol, fanout=True)
+        @resolve_fixture.register(reply_sockets_fixture)
+        def resolve_reply_sockets_fixture(val, param):
+            def reply_sockets(count=1):
+                addr = gen_address(protocol, fanout=True)
+                worker_reply_sock = ctx.socket(zmq.PUB)
+                worker_reply_sock.bind(addr)
+                collector_sock_and_topics = []
+                for x in range(count):
+                    reply_topic = rand_str()
+                    collector_sock = ctx.socket(zmq.SUB)
+                    collector_sock.set(zmq.SUBSCRIBE, reply_topic)
+                    collector_sock.connect(addr)
+                    sync_pubsub(
+                        worker_reply_sock, [collector_sock], reply_topic)
+                    collector_sock_and_topics.append(
+                        (collector_sock, reply_topic))
+                return (worker_reply_sock,) + tuple(collector_sock_and_topics)
+            return reply_sockets
         @resolve_fixture.register(topic_fixture)
         def resolve_topic_fixture(val, param):
             return topic
@@ -295,7 +315,8 @@ def resolve_fixtures(f, protocol):
             socket_params.add(param)
             return val
         for param, val in kwargs.iteritems():
-            kwargs[param] = resolve_fixture(val, param)
+            if issubclass(val.__class__, object):
+                kwargs[param] = resolve_fixture(val, param)
         # Resolve worker PUB fixtures.
         for param in socket_params:
             val = kwargs[param]
@@ -308,11 +329,11 @@ def resolve_fixtures(f, protocol):
             worker_pub_socks.add(sock)
             kwargs[param] = sock
         # Collectors connect to workers.
-        for topic, sock in collector_sub_socks.items():
+        for reply_topic, sock in collector_sub_socks.items():
             for addr in worker_pub_addrs:
                 sock.connect(addr)
             for pub_sock in worker_pub_socks:
-                sync_pubsub(pub_sock, [sock], topic)
+                sync_pubsub(pub_sock, [sock], reply_topic)
         # Resolve other socket fixtures.
         for param in socket_params:
             val = kwargs[param]
@@ -334,6 +355,9 @@ def resolve_fixtures(f, protocol):
             bg.start()
         try:
             return f(**kwargs)
+        except:
+            exc_info = sys.exc_info()
+            raise exc_info[0], exc_info[1], exc_info[2].tb_next
         finally:
             for bg in backgrounds:
                 if bg.is_running():
