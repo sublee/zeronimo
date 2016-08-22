@@ -25,6 +25,10 @@ import zeronimo.messaging
 warnings.simplefilter('always')
 
 
+def require_zmq(version_info):
+    return pytest.mark.skipif('zmq.zmq_version_info() < %r' % (version_info,))
+
+
 def get_results(results):
     return [result.get() for result in results]
 
@@ -46,8 +50,12 @@ def test_running():
     assert not bg.is_running()
 
 
-@pytest.mark.parametrize('socket_type', [zmq.PAIR, zmq.PULL, zmq.SUB, zmq.XPUB,
-                                         zmq.XSUB, zmq.ROUTER, zmq.DEALER])
+socket_types = [zmq.PAIR, zmq.PULL, zmq.SUB, zmq.ROUTER, zmq.DEALER]
+if zmq.zmq_version_info() >= (3,):
+    socket_types.extend([zmq.XPUB, zmq.XSUB])
+
+
+@pytest.mark.parametrize('socket_type', socket_types)
 def test_recv_detects_closing(ctx, socket_type):
     sock = ctx.socket(socket_type)
     gevent.spawn_later(0.5, sock.close)
@@ -128,16 +136,15 @@ def test_socket_type_error(ctx):
         zeronimo.Collector(ctx.socket(zmq.PUSH), 'x')
 
 
-@pytest.mark.skipif('zmq.zmq_version_info() < (3,)')
-def test_xpubsub_type_error(ctx):
-    # XPUB/XSUB is available from libzmq-3
+@require_zmq((3,))
+def test_xpub_xsub_type_error(ctx):
     with pytest.raises(ValueError):
         zeronimo.Customer(ctx.socket(zmq.XSUB))
     with pytest.raises(ValueError):
         zeronimo.Worker(None, [ctx.socket(zmq.XPUB)])
 
 
-@pytest.mark.skipif('zmq.zmq_version_info() < (4, 0, 1)')
+@require_zmq((4, 0, 1))
 def test_stream_type_error(ctx):
     # zmq.STREAM is available from libzmq-4.0.1
     with pytest.raises(ValueError):
@@ -462,9 +469,8 @@ def test_device(ctx, collector, worker_pub, topic, addr1, addr2, addr3, addr4):
             pass
 
 
-@pytest.mark.skipif('zmq.zmq_version_info() < (3,)')
-def test_x_forwarder(ctx, collector, topic, worker_pub, addr1, addr2):
-    # XPUB/XSUB is available from libzmq-3
+@require_zmq((3,))
+def test_proxied_fanout(ctx, collector, topic, worker_pub, addr1, addr2):
     # customer  |----| forwarder with XPUB/XSUB |---> | worker
     # collector | <-----------------------------------|
     # run forwarder
@@ -497,6 +503,7 @@ def test_x_forwarder(ctx, collector, topic, worker_pub, addr1, addr2):
         forwarder.kill()
 
 
+@require_zmq((3,))
 def test_proxied_collector(ctx, worker, push, addr1, addr2):
     # customer  |-------------------> | worker
     # collector | <---| forwarder |---|
@@ -691,8 +698,7 @@ def test_pair_with_collector(ctx, addr, reply_sockets):
         assert customer.call('zeronimo').get() == 'zeronimo'
 
 
-@pytest.mark.skipif('zmq.zmq_version_info() < (3,)')
-# XPUB/XSUB is available from libzmq-3
+@require_zmq((3,))
 def test_direct_xpub_xsub(ctx, addr, reply_sockets):
     worker_sock = ctx.socket(zmq.XSUB)
     worker_sock.bind(addr)
@@ -927,7 +933,8 @@ def test_only_workers_bind(ctx, addr1, addr2):
         assert took
 
 
-def test_xpubsub(ctx, addr, reply_sockets, topic):
+@require_zmq((3,))
+def test_xpub_sub(ctx, addr, reply_sockets, topic):
     worker_sub = ctx.socket(zmq.SUB)
     worker_sub.set(zmq.SUBSCRIBE, topic)
     worker_sub.bind(addr)
@@ -946,10 +953,14 @@ def test_xpubsub(ctx, addr, reply_sockets, topic):
         assert took
 
 
-@pytest.mark.parametrize('left_type, right_type', [(zmq.PAIR, zmq.PAIR),
-                                                   (zmq.PULL, zmq.PUSH),
-                                                   (zmq.ROUTER, zmq.DEALER),
-                                                   (zmq.XPUB, zmq.XSUB)])
+left_right_types = [(zmq.PAIR, zmq.PAIR),
+                    (zmq.PULL, zmq.PUSH),
+                    (zmq.ROUTER, zmq.DEALER)]
+if zmq.zmq_version_info() >= (3,):
+    left_right_types.append((zmq.XPUB, zmq.XSUB))
+
+
+@pytest.mark.parametrize('left_type, right_type', left_right_types)
 def test_collector_without_topic(ctx, addr, worker, push,
                                  left_type, right_type):
     left = ctx.socket(left_type)
