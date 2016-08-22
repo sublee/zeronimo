@@ -289,6 +289,7 @@ def resolve_fixtures(f, protocol):
                 addr = gen_address(protocol, fanout=True)
                 worker_reply_sock = ctx.socket(zmq.PUB)
                 worker_reply_sock.bind(addr)
+                worker_pub_socks.add(worker_reply_sock)
                 collector_sock_and_topics = []
                 for x in range(count):
                     reply_topic = rand_str()
@@ -299,6 +300,7 @@ def resolve_fixtures(f, protocol):
                         worker_reply_sock, [collector_sock], reply_topic)
                     collector_sock_and_topics.append(
                         (collector_sock, reply_topic))
+                    collector_sub_socks[reply_topic] = collector_sock
                 return (worker_reply_sock,) + tuple(collector_sock_and_topics)
             return reply_sockets
         @resolve_fixture.register(topic_fixture)
@@ -359,16 +361,20 @@ def resolve_fixtures(f, protocol):
             exc_info = sys.exc_info()
             raise exc_info[0], exc_info[1], exc_info[2].tb_next
         finally:
+            sockets = []
+            sockets.extend(worker_sub_socks)
+            sockets.extend(worker_pub_socks)
+            sockets.extend(collector_sub_socks.values())
             for bg in backgrounds:
                 if bg.is_running():
                     bg.stop()
                 if isinstance(bg, zeronimo.Worker):
-                    sockets = bg.worker_sockets + [bg.reply_socket]
+                    sockets.extend(bg.worker_sockets + [bg.reply_socket])
                 else:
-                    sockets = [bg.socket]
-                for sock in sockets:
-                    if sock:
-                        sock.close()
+                    sockets.extend([bg.socket])
+            for sock in sockets:
+                if sock:
+                    sock.close()
     return fixture_resolved
 
 
