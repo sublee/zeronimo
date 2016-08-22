@@ -927,12 +927,12 @@ def test_only_workers_bind(ctx, addr1, addr2):
         assert took
 
 
-def test_xpubsub(ctx, fanout_addr, reply_sockets, topic):
+def test_xpubsub(ctx, addr, reply_sockets, topic):
     worker_sub = ctx.socket(zmq.SUB)
     worker_sub.set(zmq.SUBSCRIBE, topic)
-    worker_sub.bind(fanout_addr)
+    worker_sub.bind(addr)
     customer_xpub = ctx.socket(zmq.XPUB)
-    customer_xpub.connect(fanout_addr)
+    customer_xpub.connect(addr)
     assert customer_xpub.recv() == '\x01%s' % topic
     reply_sock, (collector_sock, reply_topic) = reply_sockets()
     worker = zeronimo.Worker(Application(), [worker_sub], reply_sock)
