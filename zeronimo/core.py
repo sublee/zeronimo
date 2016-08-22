@@ -187,7 +187,6 @@ class Worker(Background):
     greenlet_group = None
     exception_handler = None
     malformed_message_handler = None
-    cache_factory = None
     pack = None
     unpack = None
 
@@ -195,7 +194,7 @@ class Worker(Background):
                  info=None, greenlet_group=None,
                  exception_handler=default_exception_handler,
                  malformed_message_handler=default_malformed_message_handler,
-                 cache_factory=dict, pack=PACK, unpack=UNPACK):
+                 pack=PACK, unpack=UNPACK):
         super(Worker, self).__init__()
         self.app = app
         verify_socket_types(self.__class__.__name__, [
@@ -209,7 +208,6 @@ class Worker(Background):
         self.greenlet_group = greenlet_group
         self.exception_handler = exception_handler
         self.malformed_message_handler = malformed_message_handler
-        self.cache_factory = cache_factory
         self.pack = pack
         self.unpack = unpack
         self._cached_reply_sockets = {}
