@@ -233,7 +233,7 @@ customer_timeout = zeronimo.Customer.timeout
 fanout_timeout = zeronimo.Fanout.timeout
 
 
-def resolve_fixtures(f, protocol):
+def resolve_fixtures(f, request, protocol):
     @functools.wraps(f)
     @incremental_patience
     def fixture_resolved(**kwargs):
@@ -252,6 +252,13 @@ def resolve_fixtures(f, protocol):
         reply_socks = set()
         backgrounds = set()
         socket_params = set()
+        def make_socket(*args, **kwargs):
+            sock = ctx.socket(*args, **kwargs)
+            request.addfinalizer(sock.close)
+            return sock
+        def register_bg(bg):
+            backgrounds.add(bg)
+            request.addfinalizer(lambda: bg.stop(silent=True))
         # Resolve fixtures.
         @singledispatch
         def resolve_fixture(val, param):
@@ -259,19 +266,19 @@ def resolve_fixtures(f, protocol):
         @resolve_fixture.register(worker_fixture)
         def resolve_worker_fixture(val, param):
             # PULL worker socket.
-            pull_sock = ctx.socket(zmq.PULL)
+            pull_sock = make_socket(zmq.PULL)
             pull_addr = gen_address(protocol)
             pull_sock.bind(pull_addr)
             worker_pull_addrs.add(pull_addr)
             # SUB worker socket.
-            sub_sock = ctx.socket(zmq.SUB)
+            sub_sock = make_socket(zmq.SUB)
             sub_sock.set(zmq.SUBSCRIBE, topic)
             sub_addr = gen_address(protocol, fanout=True)
             sub_sock.bind(sub_addr)
             worker_sub_addrs.add(sub_addr)
             worker_sub_socks.add(sub_sock)
             # PUB reply socket.
-            pub_sock = ctx.socket(zmq.PUB)
+            pub_sock = make_socket(zmq.PUB)
             pub_addr = gen_address(protocol, fanout=True)
             pub_sock.bind(pub_addr)
             worker_pub_addrs.add(pub_addr)
@@ -280,16 +287,16 @@ def resolve_fixtures(f, protocol):
             worker_info = '%s[%s](%s)' % (f.__name__, protocol, param)
             worker = zeronimo.Worker(app, [pull_sock, sub_sock], pub_sock,
                                      info=worker_info)
-            backgrounds.add(worker)
+            register_bg(worker)
             return worker
         @resolve_fixture.register(collector_fixture)
         def resolve_collector_fixture(val, param):
             reply_topic = rand_str()
-            sub_sock = ctx.socket(zmq.SUB)
+            sub_sock = make_socket(zmq.SUB)
             sub_sock.set(zmq.SUBSCRIBE, reply_topic)
             collector_sub_socks[reply_topic] = sub_sock
             collector = zeronimo.Collector(sub_sock, reply_topic)
-            backgrounds.add(collector)
+            register_bg(collector)
             return collector
         @resolve_fixture.register(address_fixture)
         def resolve_address_fixture(val, param):
@@ -303,13 +310,13 @@ def resolve_fixtures(f, protocol):
                 # The sockets this function makes don't connect with other
                 # worker or collector fixtures.
                 addr = gen_address(protocol, fanout=True)
-                reply_sock = ctx.socket(zmq.PUB)
+                reply_sock = make_socket(zmq.PUB)
                 reply_sock.bind(addr)
                 reply_socks.add(reply_sock)
                 collector_sock_and_topics = []
                 for x in range(count):
                     reply_topic = rand_str()
-                    collector_sock = ctx.socket(zmq.SUB)
+                    collector_sock = make_socket(zmq.SUB)
                     collector_sock.set(zmq.SUBSCRIBE, reply_topic)
                     collector_sock.connect(addr)
                     sync_pubsub(reply_sock, [collector_sock], reply_topic)
@@ -339,7 +346,7 @@ def resolve_fixtures(f, protocol):
             val = kwargs[param]
             if not isinstance(val, worker_pub_fixture):
                 continue
-            sock = ctx.socket(zmq.PUB)
+            sock = make_socket(zmq.PUB)
             addr = gen_address(protocol, fanout=True)
             sock.bind(addr)
             worker_pub_addrs.add(addr)
@@ -355,13 +362,13 @@ def resolve_fixtures(f, protocol):
         for param in socket_params:
             val = kwargs[param]
             if isinstance(val, collector_sub_fixture):
-                sock = ctx.socket(zmq.SUB)
+                sock = make_socket(zmq.SUB)
                 connect_to_addrs(sock, worker_pub_addrs)
             elif isinstance(val, customer_push_fixture):
-                sock = ctx.socket(zmq.PUSH)
+                sock = make_socket(zmq.PUSH)
                 connect_to_addrs(sock, worker_pull_addrs)
             elif isinstance(val, customer_pub_fixture):
-                sock = ctx.socket(zmq.PUB)
+                sock = make_socket(zmq.PUB)
                 connect_to_addrs(sock, worker_sub_addrs)
                 sync_pubsub(sock, worker_sub_socks, topic)
             else:
@@ -375,22 +382,6 @@ def resolve_fixtures(f, protocol):
         except:
             exc_info = sys.exc_info()
             raise exc_info[0], exc_info[1], exc_info[2].tb_next
-        finally:
-            sockets = []
-            sockets.extend(worker_sub_socks)
-            sockets.extend(worker_pub_socks)
-            sockets.extend(collector_sub_socks.values())
-            sockets.extend(reply_socks)
-            for bg in backgrounds:
-                if bg.is_running():
-                    bg.stop()
-                if isinstance(bg, zeronimo.Worker):
-                    sockets.extend(bg.worker_sockets + [bg.reply_socket])
-                else:
-                    sockets.extend([bg.socket])
-            for sock in sockets:
-                if sock:
-                    sock.close()
     return fixture_resolved
 
 
@@ -409,7 +400,9 @@ def patched_genfunctions(*args, **kwargs):
         else:
             if callspec._idlist:
                 protocol = callspec._idlist[0]
-                function.obj = resolve_fixtures(function.obj, protocol)
+                request = function._request
+                function.obj = resolve_fixtures(function.obj,
+                                                request, protocol)
         yield function
 _pytest.python.PyCollector._genfunctions = patched_genfunctions
 
