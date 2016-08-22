@@ -54,6 +54,10 @@ fixtures = {
     'topic': topic_fixture,
     'ctx': context_fixture,
 }
+fanout_fixtures = set([
+    worker_fixture, worker_pub_fixture, collector_fixture,
+    customer_pub_fixture, fanout_address_fixture, reply_sockets_fixture,
+])
 
 
 # addressing
@@ -146,17 +150,22 @@ def pytest_generate_tests(metafunc):
     ids = []
     for protocol in get_testing_protocols(metafunc):
         curargvalues = []
+        has_fanout_fixtures = False
         for param in metafunc.fixturenames:
-            for pattern, fixture_fixture in sorted(fixtures.items(),
-                                                   key=lambda (k, v): len(k),
-                                                   reverse=True):
+            for pattern, fixture in sorted(fixtures.items(),
+                                           key=lambda (k, v): len(k),
+                                           reverse=True):
                 if fnmatch(param, pattern):
-                    curargvalues.append(fixture_fixture(protocol))
+                    if fixture in fanout_fixtures:
+                        has_fanout_fixtures = True
+                    curargvalues.append(fixture(protocol))
                     break
             else:
                 continue
             if not ids:
                 argnames.append(param)
+        if protocol.endswith('pgm') and not has_fanout_fixtures:
+            continue
         argvalues.append(curargvalues)
         ids.append(protocol)
     if argnames:
