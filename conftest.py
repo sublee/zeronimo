@@ -39,9 +39,9 @@ customer_push_fixture = def_fixture('customer_push_fixture')
 customer_pub_fixture = def_fixture('customer_pub_fixture')
 address_fixture = def_fixture('address_fixture')
 fanout_address_fixture = def_fixture('fanout_address_fixture')
-reply_sockets_fixture = def_fixture('reply_sockets_fixture')
 topic_fixture = def_fixture('topic_fixture')
-context_fixture = def_fixture('context_fixture')
+socket_fixture = def_fixture('socket_fixture')
+reply_sockets_fixture = def_fixture('reply_sockets_fixture')
 fixtures = {
     'worker*': worker_fixture,
     'worker_pub*': worker_pub_fixture,
@@ -50,9 +50,9 @@ fixtures = {
     'pub*': customer_pub_fixture,
     'addr*': address_fixture,
     'fanout_addr*': fanout_address_fixture,
-    'reply_sockets': reply_sockets_fixture,
     'topic': topic_fixture,
-    'ctx': context_fixture,
+    'socket': socket_fixture,
+    'reply_sockets': reply_sockets_fixture,
 }
 fanout_fixtures = set([
     worker_fixture, worker_pub_fixture, collector_fixture,
@@ -304,6 +304,12 @@ def resolve_fixtures(f, request, protocol):
         @resolve_fixture.register(fanout_address_fixture)
         def resolve_fanout_address_fixture(val, param):
             return gen_address(protocol, fanout=True)
+        @resolve_fixture.register(topic_fixture)
+        def resolve_topic_fixture(val, param):
+            return topic
+        @resolve_fixture.register(socket_fixture)
+        def resolve_socket_fixture(val, param):
+            return make_socket
         @resolve_fixture.register(reply_sockets_fixture)
         def resolve_reply_sockets_fixture(val, param):
             def reply_sockets(count=1):
@@ -325,17 +331,11 @@ def resolve_fixtures(f, request, protocol):
                     reply_socks.add(collector_sock)
                 return (reply_sock,) + tuple(collector_sock_and_topics)
             return reply_sockets
-        @resolve_fixture.register(topic_fixture)
-        def resolve_topic_fixture(val, param):
-            return topic
-        @resolve_fixture.register(context_fixture)
-        def resolve_context_fixture(val, param):
-            return ctx
         @resolve_fixture.register(worker_pub_fixture)
         @resolve_fixture.register(collector_sub_fixture)
         @resolve_fixture.register(customer_push_fixture)
         @resolve_fixture.register(customer_pub_fixture)
-        def resolve_socket_fixture(val, param):
+        def resolve_socket_fixtures(val, param):
             socket_params.add(param)
             return val
         for param, val in kwargs.iteritems():
