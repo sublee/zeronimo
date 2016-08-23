@@ -403,6 +403,9 @@ class Worker(Background):
         for socket in self.worker_sockets:
             socket.close()
 
+    def join(self, timeout=None, raise_error=False):
+        return self.greenlet_group.join(timeout, raise_error)
+
     def __repr__(self):
         return '<{0} info={1!r}>'.format(class_name(self), self.info)
 
