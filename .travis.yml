@@ -7,7 +7,7 @@ env:
   - ZMQ_VERSION=4.1.5
   - PYZMQ_VERSION=15.4.0
   matrix:
-  # - ZMQ_VERSION=4.0.8
+  - ZMQ_VERSION=4.0.8
   - ZMQ_VERSION=2.1.4
   # matrix:
   # -
@@ -87,6 +87,6 @@ script:
 - |
   cd $TRAVIS_BUILD_DIR
   flake8 zeronimo test.py conftest.py setup.py --show-source
-  py.test -sv --inproc --ipc --tcp --epgm --incremental-patience --cov=zeronimo -k test_slow
+  py.test -sv --inproc --ipc --tcp --epgm --incremental-patience --cov=zeronimo -k 'test_slow or test_pair_with_collector'
 after_success:
 - coveralls
