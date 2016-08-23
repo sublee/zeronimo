@@ -238,6 +238,7 @@ def resolve_fixtures(f, request, protocol):
     @incremental_patience
     def fixture_resolved(**kwargs):
         ctx = zmq.Context()
+        request.addfinalizer(ctx.term)
         topic = rand_str()
         app = Application()
         patience = kwargs.pop('patience', config.option.patience)
