@@ -62,7 +62,8 @@ then
     pushd libzmq
   fi
 else
-  ZMQ_BUILT="${BUILD_DIR}/zeromq-${ZMQ_VERSION}-built"
+  ZMQ_RELEASE=$(sed 's/-.\+//' <<< $ZMQ_VERSION)
+  ZMQ_BUILT="${BUILD_DIR}/zeromq-${ZMQ_RELEASE}-built"
   if [[ ! -d $ZMQ_DIR ]]
   then
     if [[ "$ZMQ_VERSION" == 4.1.* ]]
@@ -80,11 +81,11 @@ else
     fi
     ZMQ_REPO_URL="https://github.com/zeromq/$ZMQ_REPO"
     ZMQ_URL="$ZMQ_REPO_URL/releases/download"
-    ZMQ_URL="$ZMQ_URL/v$(sed 's/-.\+//' <<< $ZMQ_VERSION)"
+    ZMQ_URL="$ZMQ_URL/v$ZMQ_RELEASE"
     ZMQ_URL="$ZMQ_URL/zeromq-$ZMQ_VERSION.tar.gz"
     if curl -L $ZMQ_URL | tar xz
     then
-      ZMQ_DIR="${BUILD_DIR}/zeromq-${ZMQ_VERSION}"
+      ZMQ_DIR="${BUILD_DIR}/zeromq-${ZMQ_RELEASE}"
     else
       # There's no release.  Build from a commit archive.
       ZMQ_URL="$ZMQ_REPO_URL/archive/v$ZMQ_VERSION.tar.gz"
@@ -152,7 +153,7 @@ python setup.py clean
 python setup.py configure --zmq="$BUILD_DIR/local"
 python setup.py build_ext --inplace
 # Uninstall the previous pyzmq clearly.
-while pip uninstall pyzmq 2>/dev/null; do sleep 0; done
+while pip uninstall -y pyzmq 2>/dev/null; do sleep 0; done
 python setup.py install
 popd
 
