@@ -87,14 +87,20 @@ else
   fi
   pushd $ZMQ_DIR
 fi
-# Build libzmq.
-if [[ -z "$ZMQ_BUILT" ]] || [[ ! -f "$ZMQ_BUILT" ]]
+# zeromq-4.1.x requires libpgm.
+# It should be resolved even though libzmq already built.
+if [[ "$ZMQ_VERSION" == 4.1.* ]] || [[ -z "$ZMQ_VERSION" ]]
 then
+  sudo apt-get install libpgm-dev
+fi
+# Build libzmq.
+if [[ -n "$ZMQ_BUILT" ]] && [[ -f "$ZMQ_BUILT" ]]
+then
+  echo "Skipped to build ${ZMQ_STRING} again."
+else
   [[ -f autogen.sh ]] && ./autogen.sh
   if [[ "$ZMQ_VERSION" == 4.1.* ]] || [[ -z "$ZMQ_VERSION" ]]
   then
-    # zeromq-4.1.x requires libpgm and libsodium.
-    sudo apt-get install libpgm-dev
     # ZeroMQ installation fails with libsodium-1.0.6:
     # https://github.com/zeromq/libzmq/issues/1632
     git clone -b 1.0.5 https://github.com/jedisct1/libsodium.git
