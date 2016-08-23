@@ -87,6 +87,6 @@ script:
 - |
   cd $TRAVIS_BUILD_DIR
   flake8 zeronimo test.py conftest.py setup.py --show-source
-  py.test -sv --ipc --tcp --epgm --incremental-patience --cov=zeronimo -k test_slow
+  py.test -sv --tcp --epgm --incremental-patience --cov=zeronimo -k test_slow
 after_success:
 - coveralls
