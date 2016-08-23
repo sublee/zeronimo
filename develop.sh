@@ -46,7 +46,7 @@ pushd $BUILD_DIR
 if [[ -z "$ZMQ_VERSION" ]]
 then
   # Use the latest version of ZeroMQ if not specified.
-  ZMQ_DIR="libzmq"
+  ZMQ_DIR="${BUILD_DIR}/libzmq"
   if [[ -d "$ZMQ_DIR" ]]
   then
     pushd libzmq
@@ -57,7 +57,8 @@ then
     pushd libzmq
   fi
 else
-  ZMQ_DIR="zeromq-$ZMQ_VERSION"
+  ZMQ_DIR="${BUILD_DIR}/zeromq-${ZMQ_VERSION}"
+  ZMQ_BUILT="${BUILD_DIR}/zeromq-${ZMQ_VERSION}-built"
   if [[ ! -d $ZMQ_DIR ]]
   then
     if [[ "$ZMQ_VERSION" == 4.1.* ]]
@@ -87,13 +88,9 @@ else
   pushd $ZMQ_DIR
 fi
 # Build libzmq.
-ZMQ_BUILT="${BUILD_DIR}/zeromq-${ZMQ_VERSION}-built"
-if [[ ! -f "$ZMQ_BUILT" ]]
+if [[ -z "$ZMQ_BUILT" ]] || [[ ! -f "$ZMQ_BUILT" ]]
 then
-  if [[ -f autogen.sh ]]
-  then
-    ./autogen.sh
-  fi
+  [[ -f autogen.sh ]] && ./autogen.sh
   if [[ "$ZMQ_VERSION" == 4.1.* ]] || [[ -z "$ZMQ_VERSION" ]]
   then
     # zeromq-4.1.x requires libpgm and libsodium.
@@ -117,27 +114,28 @@ then
   ./configure --with-pgm --prefix=$BUILD_DIR/local
   make
   # Mark as built.
-  touch "$ZMQ_BUILT"
+  [[ -n "$ZMQ_BUILT" ]] && touch "$ZMQ_BUILT"
 fi
 make install
 popd
 
 ### PyZMQ #####################################################################
 
+PYZMQ_DIR="${BUILD_DIR}/pyzmq"
 # There was a compiling error with Cython-0.24.
 # (http://askubuntu.com/questions/739340/pyzmq-compiling-error)
 pip install cython==0.23.5
-if [[ -d pyzmq ]]
+if [[ -d "$PYZMQ_DIR" ]]
 then
-  pushd pyzmq
+  pushd "$PYZMQ_DIR"
   git fetch origin
   git checkout v$PYZMQ_VERSION
 else
-  git clone -b v$PYZMQ_VERSION https://github.com/zeromq/pyzmq.git pyzmq
-  pushd pyzmq
+  git clone -b v$PYZMQ_VERSION https://github.com/zeromq/pyzmq.git "$PYZMQ_DIR"
+  pushd "$PYZMQ_DIR"
 fi
 python setup.py clean
-python setup.py configure --zmq=$BUILD_DIR/local
+python setup.py configure --zmq="$BUILD_DIR/local"
 python setup.py build_ext --inplace
 pip install -e .
 popd
