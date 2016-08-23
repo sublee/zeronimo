@@ -57,7 +57,6 @@ then
     pushd libzmq
   fi
 else
-  ZMQ_DIR="${BUILD_DIR}/zeromq-${ZMQ_VERSION}"
   ZMQ_BUILT="${BUILD_DIR}/zeromq-${ZMQ_VERSION}-built"
   if [[ ! -d $ZMQ_DIR ]]
   then
@@ -78,11 +77,14 @@ else
     ZMQ_URL="$ZMQ_REPO_URL/releases/download"
     ZMQ_URL="$ZMQ_URL/v$(sed 's/-.\+//' <<< $ZMQ_VERSION)"
     ZMQ_URL="$ZMQ_URL/zeromq-$ZMQ_VERSION.tar.gz"
-    if ! curl -L $ZMQ_URL | tar xz
+    if curl -L $ZMQ_URL | tar xz
     then
+      ZMQ_DIR="${BUILD_DIR}/zeromq-${ZMQ_VERSION}"
+    else
       # There's no release.  Build from a commit archive.
       ZMQ_URL="$ZMQ_REPO_URL/archive/v$ZMQ_VERSION.tar.gz"
       curl -L $ZMQ_URL | tar xz
+      ZMQ_DIR="${BUILD_DIR}/${ZMQ_REPO}-${ZMQ_VERSION}"
     fi
   fi
   pushd $ZMQ_DIR
@@ -91,7 +93,7 @@ fi
 # It should be resolved even though libzmq already built.
 if [[ "$ZMQ_VERSION" == 4.1.* ]] || [[ -z "$ZMQ_VERSION" ]]
 then
-  sudo apt-get install libpgm-dev
+  sudo apt-get install -y libpgm-dev
 fi
 # Build libzmq.
 if [[ -n "$ZMQ_BUILT" ]] && [[ -f "$ZMQ_BUILT" ]]
@@ -114,9 +116,9 @@ else
   elif [[ "$ZMQ_VERSION" == 2.* ]]
   then
     # Dependencies of zeromq-2.x.
-    sudo apt-get install uuid-dev
+    sudo apt-get install -y uuid-dev
   fi
-  sudo apt-get install autoconf libtool
+  sudo apt-get install -y autoconf libtool
   ./configure --with-pgm --prefix=$BUILD_DIR/local
   make
   # Mark as built.
