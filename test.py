@@ -280,12 +280,10 @@ def test_slow(worker, collector, push):
     print 1
     customer = zeronimo.Customer(push, collector)
     print 2
-    with pytest.raises(gevent.Timeout):
-        print 3
-        with gevent.Timeout(0.1):
-            print 4
-            customer.call('sleep', 0.3).get()
-            print 5
+    with pytest.raises(gevent.Timeout), gevent.Timeout(0.1):
+        print 4
+        customer.call('sleep', 0.3).get()
+        print 5
     print 6
     t = time.time()
     print 7
