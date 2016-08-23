@@ -10,6 +10,7 @@ function info {
   tput bold && echo $@ && tput sgr0
 }
 
+[[ -z "$1" ]] && help
 BUILD_DIR=$(readlink -f $1)
 shift
 
