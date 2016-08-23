@@ -134,8 +134,9 @@ def pytest_addoption(parser):
                      help='destroy context at each tests done.')
 
 
-def pytest_configure(config):
-    globals()['config'] = config
+def pytest_report_header(config, startdir):
+    versions = (zmq.zmq_version(), zmq.__version__)
+    print 'env: zmq-%s, pyzmq-%s' % versions
 
 
 def pytest_unconfigure(config):
@@ -211,22 +212,24 @@ def get_testing_protocols(metafunc):
     return testing_protocols
 
 
-def incremental_patience(f):
+def incremental_patience(config):
     if not config.option.incremental_patience:
-        return f
-    @functools.wraps(f)
-    def patience_increased(**kwargs):
-        patience = config.option.patience
-        for x in xrange(5):
-            kwargs['patience'] = patience
-            try:
-                return f(**kwargs)
-            except:
-                exctype, exc, traceback = sys.exc_info()
-                patience *= 2
-                warnings.warn('Patience increased to {0}'.format(patience))
-        raise exctype, exc, traceback
-    return patience_increased
+        return lambda f: f
+    def decorator(f):
+        @functools.wraps(f)
+        def patience_increased(**kwargs):
+            patience = config.option.patience
+            for x in xrange(5):
+                kwargs['patience'] = patience
+                try:
+                    return f(**kwargs)
+                except:
+                    exctype, exc, traceback = sys.exc_info()
+                    patience *= 2
+                    warnings.warn('Patience increased to {0}'.format(patience))
+            raise exctype, exc, traceback
+        return patience_increased
+    return decorator
 
 
 customer_timeout = zeronimo.Customer.timeout
@@ -234,8 +237,9 @@ fanout_timeout = zeronimo.Fanout.timeout
 
 
 def resolve_fixtures(f, request, protocol):
+    config = request.config
     @functools.wraps(f)
-    @incremental_patience
+    @incremental_patience(config)
     def fixture_resolved(**kwargs):
         ctx = zmq.Context()
         request.addfinalizer(ctx.term)
