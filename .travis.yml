@@ -70,10 +70,12 @@ matrix:
   - env: PYZMQ_VERSION=
   - env: ZMQ_VERSION=
   - env: PYZMQ_VERSION= ZMQ_VERSION=
+cache:
+  directories: [.develop]
 before_install:
 - set -e
 - sudo apt-get update -qq
-- ./develop.sh .dev --zmq="$ZMQ_VERSION" --pyzmq="$PYZMQ_VERSION"
+- ./develop.sh .develop --zmq="$ZMQ_VERSION" --pyzmq="$PYZMQ_VERSION"
 install:
 - pip install -e $TRAVIS_BUILD_DIR
 - pip install pytest pytest-rerunfailures psutil singledispatch
