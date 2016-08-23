@@ -93,11 +93,14 @@ else
   fi
   pushd $ZMQ_DIR
 fi
-# zeromq-4.1.x requires libpgm.
-# It should be resolved even though libzmq already built.
+# Resolve dependencies via APT.  It should be resolved
+# even though libzmq already built.
 if [[ "$ZMQ_VERSION" == 4.1.* ]] || [[ -z "$ZMQ_VERSION" ]]
 then
   sudo apt-get install -y libpgm-dev
+elif [[ "$ZMQ_VERSION" == 2.* ]]
+then
+  sudo apt-get install -y uuid-dev
 fi
 # Build libzmq.
 if [[ -n "$ZMQ_BUILT" ]] && [[ -f "$ZMQ_BUILT" ]]
@@ -118,10 +121,6 @@ else
     sudo make install
     sudo ldconfig
     popd
-  elif [[ "$ZMQ_VERSION" == 2.* ]]
-  then
-    # Dependencies of zeromq-2.x.
-    sudo apt-get install -y uuid-dev
   fi
   sudo apt-get install -y autoconf libtool
   ./configure --with-pgm --prefix=$BUILD_DIR/local
