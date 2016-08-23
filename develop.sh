@@ -151,7 +151,9 @@ fi
 python setup.py clean
 python setup.py configure --zmq="$BUILD_DIR/local"
 python setup.py build_ext --inplace
-pip install -e .
+# Uninstall the previous pyzmq clearly.
+while pip uninstall pyzmq 2>/dev/null; do sleep 0; done
+python setup.py install
 popd
 
 info "Successfully ${ZMQ_STRING} and ${PYZMQ_STRING} installed."
