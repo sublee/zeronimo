@@ -277,13 +277,22 @@ def test_1to2(worker1, worker2, collector, push):
 
 
 def test_slow(worker, collector, push):
+    print 1
     customer = zeronimo.Customer(push, collector)
+    print 2
     with pytest.raises(gevent.Timeout):
+        print 3
         with gevent.Timeout(0.1):
+            print 4
             customer.call('sleep', 0.3).get()
+            print 5
         t = time.time()
+        print 6
         assert customer.call('sleep', 0.1).get() == 0.1
+        print 7
         assert time.time() - t >= 0.1
+        print 8
+    print 9
 
 
 def test_reject(worker1, worker2, collector, push, pub, topic):
