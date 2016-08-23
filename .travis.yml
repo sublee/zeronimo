@@ -77,7 +77,6 @@ cache:
   pip: true
   directories: [.develop]
 before_install:
-- set -e
 - sudo apt-get update -qq
 - ./develop.sh .develop --zmq="$ZMQ_VERSION" --pyzmq="$PYZMQ_VERSION"
 install:

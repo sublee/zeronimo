@@ -6,6 +6,10 @@ function help {
   exit 1
 }
 
+function info {
+  tput bold && echo $@ && tput sgr0
+}
+
 BUILD_DIR=$(readlink -f $1)
 shift
 
@@ -35,7 +39,7 @@ then
 else
   PYZMQ_STRING="pyzmq-${PYZMQ_VERSION}"
 fi
-echo "Installing ${ZMQ_STRING} and ${PYZMQ_STRING} under ${BUILD_DIR}..."
+info "Installing ${ZMQ_STRING} and ${PYZMQ_STRING} under ${BUILD_DIR}..."
 
 mkdir -p $BUILD_DIR
 pushd $BUILD_DIR
@@ -98,8 +102,9 @@ fi
 # Build libzmq.
 if [[ -n "$ZMQ_BUILT" ]] && [[ -f "$ZMQ_BUILT" ]]
 then
-  echo "Skipped to build ${ZMQ_STRING} again."
+  info "Skipped to build ${ZMQ_STRING} again."
 else
+  info "Building ${ZMQ_STRING}..."
   [[ -f autogen.sh ]] && ./autogen.sh
   if [[ "$ZMQ_VERSION" == 4.1.* ]] || [[ -z "$ZMQ_VERSION" ]]
   then
@@ -129,6 +134,7 @@ popd
 
 ### PyZMQ #####################################################################
 
+info "Building ${PYZMQ_STRING}..."
 PYZMQ_DIR="${BUILD_DIR}/pyzmq"
 # There was a compiling error with Cython-0.24.
 # (http://askubuntu.com/questions/739340/pyzmq-compiling-error)
@@ -148,4 +154,4 @@ python setup.py build_ext --inplace
 pip install -e .
 popd
 
-echo "Successfully ${ZMQ_STRING} and ${PYZMQ_STRING} installed."
+info "Successfully ${ZMQ_STRING} and ${PYZMQ_STRING} installed."
