@@ -75,6 +75,7 @@ matrix:
   - env: ZMQ_VERSION=
   - env: PYZMQ_VERSION= ZMQ_VERSION=
 cache:
+  pip: true
   directories: [.develop]
 before_install:
 - set -e
