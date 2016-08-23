@@ -6,8 +6,10 @@ function help {
   exit 1
 }
 
+ZMQ_ALREADY_BUILT=false
 BUILD_DIR=$(readlink -f $1)
 shift
+
 for arg in "$@"
 do
   case $arg in
@@ -16,6 +18,9 @@ do
       shift;;
     --pyzmq=*)
       PYZMQ_VERSION="${arg#*=}"
+      shift;;
+    --zmq-already-built)
+      ZMQ_ALREADY_BUILT=true
       shift;;
     *)
       help;;
@@ -41,65 +46,78 @@ pushd $BUILD_DIR
 
 ### ZeroMQ ####################################################################
 
-if [[ "$ZMQ_VERSION" == 4.1.* ]] || [[ -z "$ZMQ_VERSION" ]]
-then
-  # zeromq-4.1.x requires libpgm and libsodium.
-  sudo apt-get install libpgm-dev
-  # ZeroMQ installation fails with libsodium-1.0.6:
-  # https://github.com/zeromq/libzmq/issues/1632
-  git clone -b 1.0.5 https://github.com/jedisct1/libsodium.git
-  pushd libsodium
-  ./autogen.sh
-  ./configure
-  make check
-  sudo make install
-  sudo ldconfig
-  popd
-fi
 if [[ -z "$ZMQ_VERSION" ]]
 then
   # Use the latest version of ZeroMQ if not specified.
-  git clone https://github.com/zeromq/libzmq.git
-  pushd libzmq
-  ./autogen.sh
+  ZMQ_DIR="libzmq"
+  if [[ -d "$ZMQ_DIR" ]]
+  then
+    pushd libzmq
+    git fetch origin
+    git checkout origin/master
+  else
+    git clone https://github.com/zeromq/libzmq.git "$ZMQ_DIR"
+    pushd libzmq
+  fi
 else
-  if [[ "$ZMQ_VERSION" == 4.1.* ]]
+  ZMQ_DIR="zeromq-$ZMQ_VERSION"
+  if [[ ! -d $ZMQ_DIR ]]
   then
-    ZMQ_REPO="zeromq4-1"
-  elif [[ "$ZMQ_VERSION" == 4.* ]]
+    if [[ "$ZMQ_VERSION" == 4.1.* ]]
+    then
+      ZMQ_REPO="zeromq4-1"
+    elif [[ "$ZMQ_VERSION" == 4.* ]]
+    then
+      ZMQ_REPO="zeromq4-x"
+    elif [[ "$ZMQ_VERSION" == 3.* ]]
+    then
+      ZMQ_REPO="zeromq3-x"
+    elif [[ "$ZMQ_VERSION" == 2.* ]]
+    then
+      ZMQ_REPO="zeromq2-x"
+    fi
+    ZMQ_REPO_URL="https://github.com/zeromq/$ZMQ_REPO"
+    ZMQ_URL="$ZMQ_REPO_URL/releases/download"
+    ZMQ_URL="$ZMQ_URL/v$(sed 's/-.\+//' <<< $ZMQ_VERSION)"
+    ZMQ_URL="$ZMQ_URL/zeromq-$ZMQ_VERSION.tar.gz"
+    if ! curl -L $ZMQ_URL | tar xz
+    then
+      # There's no release.  Build from a commit archive.
+      ZMQ_URL="$ZMQ_REPO_URL/archive/v$ZMQ_VERSION.tar.gz"
+      curl -L $ZMQ_URL | tar xz
+    fi
+  fi
+  pushd $ZMQ_DIR
+fi
+if [[ "$ZMQ_ALREADY_BUILT" != true ]]
+then
+  if [[ -f autogen.sh ]]
   then
-    ZMQ_REPO="zeromq4-x"
-  elif [[ "$ZMQ_VERSION" == 3.* ]]
+    ./autogen.sh
+  fi
+  if [[ "$ZMQ_VERSION" == 4.1.* ]] || [[ -z "$ZMQ_VERSION" ]]
   then
-    ZMQ_REPO="zeromq3-x"
+    # zeromq-4.1.x requires libpgm and libsodium.
+    sudo apt-get install libpgm-dev
+    # ZeroMQ installation fails with libsodium-1.0.6:
+    # https://github.com/zeromq/libzmq/issues/1632
+    git clone -b 1.0.5 https://github.com/jedisct1/libsodium.git
+    pushd libsodium
+    ./autogen.sh
+    ./configure
+    make check
+    sudo make install
+    sudo ldconfig
+    popd
   elif [[ "$ZMQ_VERSION" == 2.* ]]
   then
-    ZMQ_REPO="zeromq2-x"
+    # Dependencies of zeromq-2.x.
+    sudo apt-get install uuid-dev
   fi
-  ZMQ_REPO_URL="https://github.com/zeromq/$ZMQ_REPO"
-  ZMQ_URL="$ZMQ_REPO_URL/releases/download"
-  ZMQ_URL="$ZMQ_URL/v$(sed 's/-.\+//' <<< $ZMQ_VERSION)"
-  ZMQ_URL="$ZMQ_URL/zeromq-$ZMQ_VERSION.tar.gz"
-  if ! curl -L $ZMQ_URL | tar xz
-  then
-    # There's no release.  Build from a commit archive.
-    ZMQ_URL="$ZMQ_REPO_URL/archive/v$ZMQ_VERSION.tar.gz"
-    curl -L $ZMQ_URL | tar xz
-    pushd zeromq*
-    ./autogen.sh
-  else
-    # Released officially.
-    pushd zeromq-*
-  fi
+  sudo apt-get install autoconf libtool
+  ./configure --with-pgm --prefix=$BUILD_DIR/local
+  make
 fi
-if [[ "$ZMQ_VERSION" == 2.* ]]
-then
-  # Dependencies of zeromq-2.x.
-  sudo apt-get install uuid-dev
-fi
-sudo apt-get install autoconf libtool
-./configure --with-pgm --prefix=$BUILD_DIR/local
-make
 make install
 popd
 
@@ -108,8 +126,15 @@ popd
 # There was a compiling error with Cython-0.24.
 # (http://askubuntu.com/questions/739340/pyzmq-compiling-error)
 pip install cython==0.23.5
-git clone -b v$PYZMQ_VERSION https://github.com/zeromq/pyzmq.git pyzmq
-pushd pyzmq
+if [[ -d pyzmq ]]
+then
+  pushd pyzmq
+  git fetch origin
+  git checkout v$PYZMQ_VERSION
+else
+  git clone -b v$PYZMQ_VERSION https://github.com/zeromq/pyzmq.git pyzmq
+  pushd pyzmq
+fi
 python setup.py clean
 python setup.py configure --zmq=$BUILD_DIR/local
 python setup.py build_ext --inplace
