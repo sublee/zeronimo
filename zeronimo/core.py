@@ -216,7 +216,6 @@ class Worker(Background):
         self.malformed_message_handler = malformed_message_handler
         self.pack = pack
         self.unpack = unpack
-        self._cached_reply_sockets = {}
 
     @property
     def app(self):
@@ -269,10 +268,6 @@ class Worker(Background):
                     self.greenlet_group.join(0)
         finally:
             self.greenlet_group.kill()
-            for sockets in self._cached_reply_sockets.viewvalues():
-                for socket in sockets.values():
-                    socket.close()
-            self._cached_reply_sockets.clear()
 
     def work(self, socket, call, prefix=None):
         """Calls a function and send results to the collector.  It supports
