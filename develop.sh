@@ -6,7 +6,6 @@ function help {
   exit 1
 }
 
-ZMQ_ALREADY_BUILT=false
 BUILD_DIR=$(readlink -f $1)
 shift
 
@@ -18,9 +17,6 @@ do
       shift;;
     --pyzmq=*)
       PYZMQ_VERSION="${arg#*=}"
-      shift;;
-    --zmq-already-built)
-      ZMQ_ALREADY_BUILT=true
       shift;;
     *)
       help;;
@@ -46,6 +42,7 @@ pushd $BUILD_DIR
 
 ### ZeroMQ ####################################################################
 
+# Download the source.
 if [[ -z "$ZMQ_VERSION" ]]
 then
   # Use the latest version of ZeroMQ if not specified.
@@ -89,7 +86,9 @@ else
   fi
   pushd $ZMQ_DIR
 fi
-if [[ "$ZMQ_ALREADY_BUILT" != true ]]
+# Build libzmq.
+ZMQ_BUILT="${BUILD_DIR}/zeromq-${ZMQ_VERSION}-built"
+if [[ ! -f "$ZMQ_BUILT" ]]
 then
   if [[ -f autogen.sh ]]
   then
@@ -117,6 +116,8 @@ then
   sudo apt-get install autoconf libtool
   ./configure --with-pgm --prefix=$BUILD_DIR/local
   make
+  # Mark as built.
+  touch "$ZMQ_BUILT"
 fi
 make install
 popd
