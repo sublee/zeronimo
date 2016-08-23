@@ -873,11 +873,13 @@ def test_many_calls(request, monkeypatch):
 
 
 def test_silent_stop(worker):
+    print 1
     worker.stop()
     assert not worker.is_running()
     with pytest.raises(RuntimeError):
         worker.stop()
     worker.stop(silent=True)
+    print 2
 
 
 def test_close(worker, collector, push):

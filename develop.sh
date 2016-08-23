@@ -95,11 +95,28 @@ else
   fi
   pushd $ZMQ_DIR
 fi
-# Resolve dependencies via APT.  It should be resolved
-# even though libzmq already built.
+# Resolve dependencies.  It is required even though libzmq is already built.
 if [[ "$ZMQ_VERSION" == 4.1.* ]] || [[ -z "$ZMQ_VERSION" ]]
 then
   sudo apt-get install -y libpgm-dev
+  # ZeroMQ installation fails with libsodium-1.0.6:
+  # https://github.com/zeromq/libzmq/issues/1632
+  LIBSODIUM_DIR="${BUILD_DIR}/libsodium"
+  LIBSODIUM_BUILT="${BUILD_DIR}/libsodium-built"
+  if [[ ! -f "$LIBSODIUM_BUILT" ]]
+  then
+    git clone -b 1.0.5 https://github.com/jedisct1/libsodium.git $LIBSODUM_DIR
+    pushd $LIBSODUM_DIR
+    ./autogen.sh
+    ./configure
+    make check
+    touch "$LIBSODIUM_BUILT"
+  else
+    pushd $LIBSODUM_DIR
+  fi
+  sudo make install
+  sudo ldconfig
+  popd
 elif [[ "$ZMQ_VERSION" == 2.* ]]
 then
   sudo apt-get install -y uuid-dev
@@ -111,19 +128,6 @@ then
 else
   info "Building ${ZMQ_STRING}..."
   [[ -f autogen.sh ]] && ./autogen.sh
-  if [[ "$ZMQ_VERSION" == 4.1.* ]] || [[ -z "$ZMQ_VERSION" ]]
-  then
-    # ZeroMQ installation fails with libsodium-1.0.6:
-    # https://github.com/zeromq/libzmq/issues/1632
-    git clone -b 1.0.5 https://github.com/jedisct1/libsodium.git
-    pushd libsodium
-    ./autogen.sh
-    ./configure
-    make check
-    sudo make install
-    sudo ldconfig
-    popd
-  fi
   sudo apt-get install -y autoconf libtool
   ./configure --with-pgm --prefix=$BUILD_DIR/local
   make
