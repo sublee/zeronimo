@@ -639,7 +639,7 @@ def test_result_broken(worker, collector, push):
         result.get()
 
 
-def _test_close_task(worker, collector, push):
+def test_close_task(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
     result = customer.call('sleep_multiple', 0.1, 10)
     g = result.get()
