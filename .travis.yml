@@ -6,11 +6,11 @@ env:
   # Target versions:
   - ZMQ_VERSION=4.1.5
   - PYZMQ_VERSION=15.4.0
-  # matrix:
-  # -
-  # # The latest versions under development:
+  matrix:
+  -
+  # The latest versions under development:
   # - PYZMQ_VERSION=
-  # - ZMQ_VERSION=
+  - ZMQ_VERSION=
   # - PYZMQ_VERSION= ZMQ_VERSION=
   # # Older PyZMQ versions:
   # - PYZMQ_VERSION=15.3.0
