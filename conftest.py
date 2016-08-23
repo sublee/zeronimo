@@ -254,21 +254,11 @@ def resolve_fixtures(f, request, protocol):
         socket_params = set()
         def make_socket(*args, **kwargs):
             sock = ctx.socket(*args, **kwargs)
-            # request.addfinalizer(sock.close)
-            @request.addfinalizer
-            def fin():
-                print 'close socket'
-                sock.close()
-                print 'socket closed'
+            request.addfinalizer(sock.close)
             return sock
         def register_bg(bg):
             backgrounds.add(bg)
-            # request.addfinalizer(lambda: bg.stop(silent=True))
-            @request.addfinalizer
-            def fin():
-                print 'stop', bg
-                bg.stop(silent=True)
-                print bg, 'stopped'
+            request.addfinalizer(lambda: bg.stop(silent=True))
         # Resolve fixtures.
         @singledispatch
         def resolve_fixture(val, param):

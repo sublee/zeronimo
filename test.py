@@ -277,20 +277,15 @@ def test_1to2(worker1, worker2, collector, push):
 
 
 def test_slow(worker, collector, push):
-    print 1
     customer = zeronimo.Customer(push, collector)
-    print 2
+    r = customer.call('sleep', 0.3)
     with pytest.raises(gevent.Timeout), gevent.Timeout(0.1):
-        print 4
-        customer.call('sleep', 0.3).get()
-        print 5
-    print 6
+        r.get()
     t = time.time()
-    print 7
     assert customer.call('sleep', 0.1).get() == 0.1
-    print 8
     assert time.time() - t >= 0.1
-    print 9
+    # If the task is remaining in the worker, zmq-2.1.4 crashes.
+    r.get()
 
 
 def test_reject(worker1, worker2, collector, push, pub, topic):
