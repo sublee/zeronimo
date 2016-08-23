@@ -435,7 +435,7 @@ def sync_pubsub(pub_sock, sub_socks, topic=''):
        >>> sync_pubsub(pub_sock, [sub_sock1, sub_sock2], topic='test')
 
     """
-    msg = str(random.random())
+    msg = rand_str()
     poller = zmq.Poller()
     for sub_sock in sub_socks:
         poller.register(sub_sock, zmq.POLLIN)
@@ -446,14 +446,18 @@ def sync_pubsub(pub_sock, sub_socks, topic=''):
             pub_sock.send_multipart([topic, msg])
             events = dict(poller.poll(timeout=1))
             for sub_sock in sub_socks:
-                if sub_sock in events:
-                    topic_recv, msg_recv = sub_sock.recv_multipart()
-                    assert topic_recv == topic
-                    assert msg_recv == msg
-                    try:
-                        to_sync.remove(sub_sock)
-                    except ValueError:
-                        pass
+                if sub_sock not in events:
+                    continue
+                topic_recv, msg_recv = sub_sock.recv_multipart()
+                assert topic_recv == topic
+                if msg_recv != msg:
+                    # When using EPGM, it can receive
+                    # a message used at the previous.
+                    continue
+                try:
+                    to_sync.remove(sub_sock)
+                except ValueError:
+                    pass
     # discard garbage sync messges
     while True:
         events = poller.poll(timeout=1)
