@@ -145,7 +145,7 @@ def test_xpub_xsub_type_error(socket):
 
 @require_libzmq((4, 0, 1))
 def test_stream_type_error(socket):
-    # zmq.STREAM is available from libzmq-4.0.1
+    # zmq.STREAM is available from zmq-4.0.1
     with pytest.raises(ValueError):
         zeronimo.Customer(socket(zmq.STREAM))
     with pytest.raises(ValueError):
@@ -942,7 +942,8 @@ def test_xpub_sub(socket, addr, reply_sockets, topic):
 left_right_types = [(zmq.PAIR, zmq.PAIR),
                     (zmq.PULL, zmq.PUSH),
                     (zmq.ROUTER, zmq.DEALER)]
-if zmq.zmq_version_info() >= (3,):
+if zmq.zmq_version_info() >= (4,):
+    # XSUB before zmq-4 didn't allow arbitrary messages to send.
     left_right_types.append((zmq.XPUB, zmq.XSUB))
 
 
