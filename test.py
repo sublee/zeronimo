@@ -970,16 +970,45 @@ def test_collector_without_topic(socket, addr, worker, push,
 
 
 def test_drop_if(worker, collector, pub, topic):
-    fanout_without_drop_if = zeronimo.Fanout(pub, collector)
-    results = list(fanout_without_drop_if .emit(topic, 'zero_div'))
-    assert results
-    with pytest.raises(ZeroDivisionError):
-        results[0].get()
-    assert not list(fanout_without_drop_if.emit(topic[::-1], 'zero_div'))
-    # Drop all calls.
-    fanout = zeronimo.Fanout(pub, collector, drop_if=lambda x: True)
-    assert not list(fanout.emit(topic, 'zero_div'))
-    assert not list(fanout.emit(topic[::-1], 'zero_div'))
+    packed = []
+    def pack(x):
+        packed.append(x)
+        return zeronimo.messaging.PACK(x)
+    # Without drop_if.
+    fanout_without_drop_if = zeronimo.Fanout(pub, collector, pack=pack)
+    assert list(fanout_without_drop_if.emit(topic, 'zeronimo'))
+    assert len(packed) == 1
+    assert not list(fanout_without_drop_if.emit(topic[::-1], 'zeronimo'))
+    assert len(packed) == 2
+    # With drop_if.
+    fanout = zeronimo.Fanout(pub, collector, pack=pack,
+                             drop_if=lambda x: x != topic)
+    assert list(fanout.emit(topic, 'zeronimo'))
+    assert len(packed) == 3
+    assert not list(fanout.emit(topic[::-1], 'zeronimo'))
+    assert len(packed) == 3  # not increased.
+
+
+@require_libzmq((3,))
+def test_drop_not_subscribed_topic(ctx, worker, collector, addr, topic):
+    xpub = ctx.socket(zmq.XPUB)
+    xpub.bind(addr)
+    sub = [s for s in worker.sockets if s.type == zmq.SUB][0]
+    sub.connect(addr)
+    msg = xpub.recv()
+    assert msg.startswith(b'\x01')
+    found_topic = msg[1:]
+    assert found_topic == topic
+    packed = []
+    def pack(x):
+        packed.append(x)
+        return zeronimo.messaging.PACK(x)
+    fanout = zeronimo.Fanout(xpub, collector, pack=pack,
+                             drop_if=lambda x: x == found_topic)
+    assert not list(fanout.emit(topic[::-1], 'zeronimo'))
+    assert len(packed) == 0
+    assert list(fanout.emit(topic, 'zeronimo'))
+    assert len(packed) == 1
 
 
 def test_timeout(worker, push, collector):
