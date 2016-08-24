@@ -23,10 +23,11 @@ import zeronimo.messaging
 
 
 warnings.simplefilter('always')
+zmq_version_info = zmq.zmq_version_info()
 
 
 def require_libzmq(version_info):
-    return pytest.mark.skipif('zmq.zmq_version_info() < %r' % (version_info,))
+    return pytest.mark.skipif('zmq_version_info < %r' % (version_info,))
 
 
 def get_results(results):
@@ -51,7 +52,7 @@ def test_running():
 
 
 socket_types = [zmq.PAIR, zmq.PULL, zmq.SUB, zmq.ROUTER, zmq.DEALER]
-if zmq.zmq_version_info() >= (3,):
+if zmq_version_info >= (3,):
     socket_types.extend([zmq.XPUB, zmq.XSUB])
 
 
@@ -648,6 +649,9 @@ def test_close_task(worker, collector, push):
     result.close()
     with pytest.raises(zeronimo.TaskClosed):
         next(g)
+    if zmq_version_info == (2, 1, 4):
+        worker.join()
+        gevent.sleep(0.1)
 
 
 def _test_duplex(socket, addr, left_type, right_type):
@@ -948,7 +952,7 @@ def test_xpub_sub(socket, addr, reply_sockets, topic):
 left_right_types = [(zmq.PAIR, zmq.PAIR),
                     (zmq.PULL, zmq.PUSH),
                     (zmq.ROUTER, zmq.DEALER)]
-if zmq.zmq_version_info() >= (4,):
+if zmq_version_info >= (4,):
     # XSUB before zmq-4 didn't allow arbitrary messages to send.
     left_right_types.append((zmq.XPUB, zmq.XSUB))
 

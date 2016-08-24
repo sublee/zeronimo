@@ -223,6 +223,8 @@ def incremental_patience(config):
                 kwargs['patience'] = patience
                 try:
                     return f(**kwargs)
+                except KeyboardInterrupt:
+                    raise
                 except:
                     exctype, exc, traceback = sys.exc_info()
                     patience *= 2
