@@ -48,10 +48,11 @@ env:
   # - ZMQ_VERSION=4.0.3
   # - ZMQ_VERSION=4.0.2
   # - ZMQ_VERSION=4.0.1
+  # - ZMQ_VERSION=2.1.8-rc
+  # Too old versions:
   # - ZMQ_VERSION=2.1.11
   # - ZMQ_VERSION=2.1.10
   # - ZMQ_VERSION=2.1.9
-  # - ZMQ_VERSION=2.1.8-rc
   # - ZMQ_VERSION=2.1.7
   # - ZMQ_VERSION=2.1.4
   # Broken ZeroMQ versions:
