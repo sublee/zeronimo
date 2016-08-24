@@ -165,7 +165,7 @@ popd
 INSTALLED_ZMQ_VERSION=$(python -c "print __import__('zmq').zmq_version()")
 INSTALLED_PYZMQ_VERSION=$(python -c "print __import__('zmq').__version__")
 if [[ -n "$ZMQ_VERSION" ]] &&
-   [[ "$ZMQ_VERSION" != "$INSTALLED_ZMQ_VERSION" ]]
+   [[ "$ZMQ_RELEASE" != "$INSTALLED_ZMQ_VERSION" ]]
 then
   info "zmq-${INSTALLED_ZMQ_VERSION} detected instead of ${ZMQ_STRING}."
   exit 1
