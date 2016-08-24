@@ -982,6 +982,18 @@ def test_drop_if(worker, collector, pub, topic):
     assert not list(fanout.emit(topic[::-1], 'zero_div'))
 
 
+def test_timeout(worker, push, collector):
+    worker.stop()
+    t = time.time()
+    with pytest.raises(zeronimo.WorkerNotFound):
+        zeronimo.Customer(push, collector, timeout=0.1).call('zeronimo').get()
+    assert 0.1 <= time.time() - t <= 0.2
+    t = time.time()
+    with pytest.raises(zeronimo.WorkerNotFound):
+        zeronimo.Customer(push, collector, timeout=0.5).call('zeronimo').get()
+    assert 0.5 <= time.time() - t <= 0.6
+
+
 # catch leaks
 
 
