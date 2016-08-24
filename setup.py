@@ -118,6 +118,6 @@ setup(
                  'Topic :: Software Development'],
     install_requires=['gevent>=1', 'pyzmq>=14'],
     test_suite='...',
-    tests_require=['pytest', 'pytest-mock', 'pytest-rerunfailures',
-                   'psutil', 'pylru'],
+    tests_require=['pytest', 'pytest-rerunfailures',
+                   'psutil', 'pylru', 'singledispatch'],
 )

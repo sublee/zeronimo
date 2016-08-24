@@ -13,6 +13,7 @@ import warnings
 
 import gevent
 from gevent import socket
+from singledispatch import singledispatch
 import zmq.green as zmq
 
 import zeronimo
@@ -26,28 +27,37 @@ WINDOWS = platform.system() == 'Windows'
 config = NotImplemented
 
 
-# deferred fixtures
+# fixtures
 
 
-make_deferred_fixture = lambda name: namedtuple(name, ['protocol'])
-deferred_worker = make_deferred_fixture('deferred_worker')
-deferred_collector = make_deferred_fixture('deferred_collector')
-deferred_push_socket = make_deferred_fixture('deferred_push_socket')
-deferred_pub_socket = make_deferred_fixture('deferred_pub_socket')
-deferred_address = make_deferred_fixture('deferred_address')
-deferred_fanout_address = make_deferred_fixture('deferred_fanout_address')
-deferred_topic = make_deferred_fixture('deferred_topic')
-deferred_context = make_deferred_fixture('deferred_context')
-deferred_fixtures = {
-    'worker*': deferred_worker,
-    'collector*': deferred_collector,
-    'push*': deferred_push_socket,
-    'pub*': deferred_pub_socket,
-    'addr*': deferred_address,
-    'fanout_addr*': deferred_fanout_address,
-    'topic': deferred_topic,
-    'ctx': deferred_context,
+def_fixture = lambda name: namedtuple(name, ['protocol'])
+worker_fixture = def_fixture('worker_fixture')
+worker_pub_fixture = def_fixture('worker_pub_fixture')
+collector_fixture = def_fixture('collector_fixture')
+collector_sub_fixture = def_fixture('collector_sub_fixture')
+customer_push_fixture = def_fixture('customer_push_fixture')
+customer_pub_fixture = def_fixture('customer_pub_fixture')
+address_fixture = def_fixture('address_fixture')
+fanout_address_fixture = def_fixture('fanout_address_fixture')
+topic_fixture = def_fixture('topic_fixture')
+socket_fixture = def_fixture('socket_fixture')
+reply_sockets_fixture = def_fixture('reply_sockets_fixture')
+fixtures = {
+    'worker*': worker_fixture,
+    'worker_pub*': worker_pub_fixture,
+    'collector*': collector_fixture,
+    'push*': customer_push_fixture,
+    'pub*': customer_pub_fixture,
+    'addr*': address_fixture,
+    'fanout_addr*': fanout_address_fixture,
+    'topic': topic_fixture,
+    'socket': socket_fixture,
+    'reply_sockets': reply_sockets_fixture,
 }
+fanout_fixtures = set([
+    worker_fixture, worker_pub_fixture, collector_fixture,
+    customer_pub_fixture, fanout_address_fixture, reply_sockets_fixture,
+])
 
 
 # addressing
@@ -124,8 +134,9 @@ def pytest_addoption(parser):
                      help='destroy context at each tests done.')
 
 
-def pytest_configure(config):
-    globals()['config'] = config
+def pytest_report_header(config, startdir):
+    versions = (zmq.zmq_version(), zmq.__version__)
+    print 'zmq: zmq-%s, pyzmq-%s' % versions
 
 
 def pytest_unconfigure(config):
@@ -140,15 +151,22 @@ def pytest_generate_tests(metafunc):
     ids = []
     for protocol in get_testing_protocols(metafunc):
         curargvalues = []
+        has_fanout_fixtures = False
         for param in metafunc.fixturenames:
-            for pattern, deferred_fixture in deferred_fixtures.iteritems():
+            for pattern, fixture in sorted(fixtures.items(),
+                                           key=lambda (k, v): len(k),
+                                           reverse=True):
                 if fnmatch(param, pattern):
-                    curargvalues.append(deferred_fixture(protocol))
+                    if fixture in fanout_fixtures:
+                        has_fanout_fixtures = True
+                    curargvalues.append(fixture(protocol))
                     break
             else:
                 continue
             if not ids:
                 argnames.append(param)
+        if protocol.endswith('pgm') and not has_fanout_fixtures:
+            continue
         argvalues.append(curargvalues)
         ids.append(protocol)
     if argnames:
@@ -184,113 +202,193 @@ def get_testing_protocols(metafunc):
         try:
             socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
         except socket.error as e:
-            if e.errno == 1:  # Operation not permitted
+            if e.errno in [1, 2]:
+                # [1] Operation not permitted
+                # or
+                # [2] No such file or directory (at the first time in PyPy)
                 raise OSError('Enable the CAP_NET_RAW capability to use PGM:\n'
                               '$ sudo setcap CAP_NET_RAW=ep '
                               '$(readlink -f $(which python))')
     return testing_protocols
 
 
-def incremental_patience(f):
+def incremental_patience(config):
     if not config.option.incremental_patience:
-        return f
-    @functools.wraps(f)
-    def patience_increased(**kwargs):
-        patience = config.option.patience
-        for x in xrange(5):
-            kwargs['patience'] = patience
-            try:
-                return f(**kwargs)
-            except:
-                exctype, exc, traceback = sys.exc_info()
-                patience *= 2
-                warnings.warn('Patience increased to {0}'.format(patience))
-        raise exctype, exc, traceback
-    return patience_increased
+        return lambda f: f
+    def decorator(f):
+        @functools.wraps(f)
+        def patience_increased(**kwargs):
+            patience = config.option.patience
+            for x in xrange(5):
+                kwargs['patience'] = patience
+                try:
+                    return f(**kwargs)
+                except KeyboardInterrupt:
+                    raise
+                except:
+                    exctype, exc, traceback = sys.exc_info()
+                    patience *= 2
+                    warnings.warn('Patience increased to {0}'.format(patience))
+            raise exctype, exc, traceback
+        return patience_increased
+    return decorator
 
 
 customer_timeout = zeronimo.Customer.timeout
 fanout_timeout = zeronimo.Fanout.timeout
 
 
-def resolve_fixtures(f, protocol):
+def resolve_fixtures(f, request, protocol):
+    config = request.config
     @functools.wraps(f)
-    @incremental_patience
+    @incremental_patience(config)
     def fixture_resolved(**kwargs):
         ctx = zmq.Context()
+        request.addfinalizer(ctx.term)
         topic = rand_str()
         app = Application()
         patience = kwargs.pop('patience', config.option.patience)
         zeronimo.Customer.timeout = customer_timeout * patience
         zeronimo.Fanout.timeout = fanout_timeout * patience
-        pull_addrs = set()
-        sub_addrs = set()
-        sub_socks = set()
+        worker_pull_addrs = set()
+        worker_sub_addrs = set()
+        worker_pub_addrs = set()
+        worker_sub_socks = set()
+        worker_pub_socks = set()
+        collector_sub_socks = {}
+        reply_socks = set()
         backgrounds = set()
         socket_params = set()
+        def make_socket(*args, **kwargs):
+            sock = ctx.socket(*args, **kwargs)
+            request.addfinalizer(sock.close)
+            return sock
+        def register_bg(bg):
+            backgrounds.add(bg)
+            request.addfinalizer(lambda: bg.stop(silent=True))
+        # Resolve fixtures.
+        @singledispatch
+        def resolve_fixture(val, param):
+            return val
+        @resolve_fixture.register(worker_fixture)
+        def resolve_worker_fixture(val, param):
+            # PULL worker socket.
+            pull_sock = make_socket(zmq.PULL)
+            pull_addr = gen_address(protocol)
+            pull_sock.bind(pull_addr)
+            worker_pull_addrs.add(pull_addr)
+            # SUB worker socket.
+            sub_sock = make_socket(zmq.SUB)
+            sub_sock.set(zmq.SUBSCRIBE, topic)
+            sub_addr = gen_address(protocol, fanout=True)
+            sub_sock.bind(sub_addr)
+            worker_sub_addrs.add(sub_addr)
+            worker_sub_socks.add(sub_sock)
+            # PUB reply socket.
+            pub_sock = make_socket(zmq.PUB)
+            pub_addr = gen_address(protocol, fanout=True)
+            pub_sock.bind(pub_addr)
+            worker_pub_addrs.add(pub_addr)
+            worker_pub_socks.add(pub_sock)
+            # Make a worker.
+            worker_info = '%s[%s](%s)' % (f.__name__, protocol, param)
+            worker = zeronimo.Worker(app, [pull_sock, sub_sock], pub_sock,
+                                     info=worker_info)
+            register_bg(worker)
+            return worker
+        @resolve_fixture.register(collector_fixture)
+        def resolve_collector_fixture(val, param):
+            reply_topic = rand_str()
+            sub_sock = make_socket(zmq.SUB)
+            sub_sock.set(zmq.SUBSCRIBE, reply_topic)
+            collector_sub_socks[reply_topic] = sub_sock
+            collector = zeronimo.Collector(sub_sock, reply_topic)
+            register_bg(collector)
+            return collector
+        @resolve_fixture.register(address_fixture)
+        def resolve_address_fixture(val, param):
+            return gen_address(protocol)
+        @resolve_fixture.register(fanout_address_fixture)
+        def resolve_fanout_address_fixture(val, param):
+            return gen_address(protocol, fanout=True)
+        @resolve_fixture.register(topic_fixture)
+        def resolve_topic_fixture(val, param):
+            return topic
+        @resolve_fixture.register(socket_fixture)
+        def resolve_socket_fixture(val, param):
+            return make_socket
+        @resolve_fixture.register(reply_sockets_fixture)
+        def resolve_reply_sockets_fixture(val, param):
+            def reply_sockets(count=1):
+                # The sockets this function makes don't connect with other
+                # worker or collector fixtures.
+                addr = gen_address(protocol, fanout=True)
+                reply_sock = make_socket(zmq.PUB)
+                reply_sock.bind(addr)
+                reply_socks.add(reply_sock)
+                collector_sock_and_topics = []
+                for x in range(count):
+                    reply_topic = rand_str()
+                    collector_sock = make_socket(zmq.SUB)
+                    collector_sock.set(zmq.SUBSCRIBE, reply_topic)
+                    collector_sock.connect(addr)
+                    sync_pubsub(reply_sock, [collector_sock], reply_topic)
+                    collector_sock_and_topics.append((collector_sock,
+                                                      reply_topic))
+                    reply_socks.add(collector_sock)
+                return (reply_sock,) + tuple(collector_sock_and_topics)
+            return reply_sockets
+        @resolve_fixture.register(worker_pub_fixture)
+        @resolve_fixture.register(collector_sub_fixture)
+        @resolve_fixture.register(customer_push_fixture)
+        @resolve_fixture.register(customer_pub_fixture)
+        def resolve_socket_fixtures(val, param):
+            socket_params.add(param)
+            return val
         for param, val in kwargs.iteritems():
-            if isinstance(val, deferred_worker):
-                pull_sock = ctx.socket(zmq.PULL)
-                pull_addr = gen_address(protocol)
-                pull_sock.bind(pull_addr)
-                pull_addrs.add(pull_addr)
-                sub_sock = ctx.socket(zmq.SUB)
-                sub_sock.set(zmq.SUBSCRIBE, topic)
-                sub_addr = gen_address(protocol, fanout=True)
-                sub_sock.bind(sub_addr)
-                sub_addrs.add(sub_addr)
-                sub_socks.add(sub_sock)
-                worker_info = '{0}[{1}]({2})' \
-                              ''.format(f.__name__, protocol, param)
-                val = zeronimo.Worker(app, [pull_sock, sub_sock], worker_info)
-                backgrounds.add(val)
-            elif isinstance(val, deferred_collector):
-                pull_sock = ctx.socket(zmq.PULL)
-                pull_addr = gen_address(protocol)
-                pull_sock.bind(pull_addr)
-                val = zeronimo.Collector(pull_sock, pull_addr)
-                backgrounds.add(val)
-            elif isinstance(val, deferred_address):
-                val = gen_address(protocol)
-            elif isinstance(val, deferred_fanout_address):
-                val = gen_address(protocol, fanout=True)
-            elif isinstance(val, deferred_topic):
-                val = topic
-            elif isinstance(val, deferred_context):
-                val = ctx
-            elif isinstance(val, (deferred_push_socket, deferred_pub_socket)):
-                socket_params.add(param)
-            kwargs[param] = val
+            if issubclass(val.__class__, object):
+                kwargs[param] = resolve_fixture(val, param)
+        # Resolve worker PUB fixtures.
         for param in socket_params:
             val = kwargs[param]
-            if isinstance(val, deferred_push_socket):
-                sock_type = zmq.PUSH
-                addrs = pull_addrs
-            elif isinstance(val, deferred_pub_socket):
-                sock_type = zmq.PUB
-                addrs = sub_addrs
-            else:
-                assert 0
-            sock = ctx.socket(sock_type)
-            for addr in addrs:
-                sock.connect(addr)
-            if sock_type == zmq.PUB:
-                sync_pubsub(sock, sub_socks, topic)
+            if not isinstance(val, worker_pub_fixture):
+                continue
+            sock = make_socket(zmq.PUB)
+            addr = gen_address(protocol, fanout=True)
+            sock.bind(addr)
+            worker_pub_addrs.add(addr)
+            worker_pub_socks.add(sock)
             kwargs[param] = sock
+        # Collectors connect to workers.
+        for reply_topic, sock in collector_sub_socks.items():
+            for addr in worker_pub_addrs:
+                sock.connect(addr)
+            for pub_sock in worker_pub_socks:
+                sync_pubsub(pub_sock, [sock], reply_topic)
+        # Resolve other socket fixtures.
+        for param in socket_params:
+            val = kwargs[param]
+            if isinstance(val, collector_sub_fixture):
+                sock = make_socket(zmq.SUB)
+                connect_to_addrs(sock, worker_pub_addrs)
+            elif isinstance(val, customer_push_fixture):
+                sock = make_socket(zmq.PUSH)
+                connect_to_addrs(sock, worker_pull_addrs)
+            elif isinstance(val, customer_pub_fixture):
+                sock = make_socket(zmq.PUB)
+                connect_to_addrs(sock, worker_sub_addrs)
+                sync_pubsub(sock, worker_sub_socks, topic)
+            else:
+                continue
+            kwargs[param] = sock
+        # Run the function.
         for bg in backgrounds:
             bg.start()
         try:
             return f(**kwargs)
-        finally:
-            for bg in backgrounds:
-                if bg.is_running():
-                    bg.stop()
-                try:
-                    sockets = bg.sockets
-                except AttributeError:
-                    sockets = [bg.socket]
-                for sock in sockets:
-                    sock.close()
+        except:
+            exc_info = sys.exc_info()
+            raise exc_info[0], exc_info[1], exc_info[2].tb_next
     return fixture_resolved
 
 
@@ -309,7 +407,9 @@ def patched_genfunctions(*args, **kwargs):
         else:
             if callspec._idlist:
                 protocol = callspec._idlist[0]
-                function.obj = resolve_fixtures(function.obj, protocol)
+                request = function._request
+                function.obj = resolve_fixtures(function.obj,
+                                                request, protocol)
         yield function
 _pytest.python.PyCollector._genfunctions = patched_genfunctions
 
@@ -342,25 +442,29 @@ def sync_pubsub(pub_sock, sub_socks, topic=''):
        >>> sync_pubsub(pub_sock, [sub_sock1, sub_sock2], topic='test')
 
     """
-    msg = str(random.random())
+    msg = rand_str()
     poller = zmq.Poller()
     for sub_sock in sub_socks:
         poller.register(sub_sock, zmq.POLLIN)
     to_sync = list(sub_socks)
     # sync all SUB sockets
-    with gevent.Timeout(1, RuntimeError('Are SUB sockets subscribing?')):
+    with gevent.Timeout(1, RuntimeError('are SUB sockets subscribing?')):
         while to_sync:
             pub_sock.send_multipart([topic, msg])
             events = dict(poller.poll(timeout=1))
             for sub_sock in sub_socks:
-                if sub_sock in events:
-                    topic_recv, msg_recv = sub_sock.recv_multipart()
-                    assert topic_recv == topic
-                    assert msg_recv == msg
-                    try:
-                        to_sync.remove(sub_sock)
-                    except ValueError:
-                        pass
+                if sub_sock not in events:
+                    continue
+                topic_recv, msg_recv = sub_sock.recv_multipart()
+                assert topic_recv == topic
+                if msg_recv != msg:
+                    # When using EPGM, it can receive
+                    # a message used at the previous.
+                    continue
+                try:
+                    to_sync.remove(sub_sock)
+                except ValueError:
+                    pass
     # discard garbage sync messges
     while True:
         events = poller.poll(timeout=1)
@@ -370,6 +474,11 @@ def sync_pubsub(pub_sock, sub_socks, topic=''):
             topic_recv, msg_recv = sub_sock.recv_multipart()
             assert topic_recv == topic
             assert msg_recv == msg
+
+
+def connect_to_addrs(sock, addrs):
+    for addr in addrs:
+        sock.connect(addr)
 
 
 def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
@@ -385,17 +494,16 @@ def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
 
 
 @contextmanager
-def running(backgrounds, sockets=None):
+def running(backgrounds, sockets=()):
     try:
         for bg in backgrounds:
-            bg.start()
+            bg.start(silent=True)
         yield
     finally:
         for bg in backgrounds:
             bg.stop()
-        if sockets is not None:
-            for sock in sockets:
-                sock.close()
+        for sock in sockets:
+            sock.close()
 
 
 class Application(object):
