@@ -970,11 +970,15 @@ def test_collector_without_topic(socket, addr, worker, push,
 
 
 def test_drop_if(worker, collector, pub, topic):
-    fanout = zeronimo.Fanout(pub, collector, drop_if=lambda x: x != topic)
-    results = list(fanout.emit(topic, 'zero_div'))
+    fanout_without_drop_if = zeronimo.Fanout(pub, collector)
+    results = list(fanout_without_drop_if .emit(topic, 'zero_div'))
     assert results
     with pytest.raises(ZeroDivisionError):
         results[0].get()
+    assert not list(fanout_without_drop_if.emit(topic[::-1], 'zero_div'))
+    # Drop all calls.
+    fanout = zeronimo.Fanout(pub, collector, drop_if=lambda x: True)
+    assert not list(fanout.emit(topic, 'zero_div'))
     assert not list(fanout.emit(topic[::-1], 'zero_div'))
 
 
