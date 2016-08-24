@@ -165,22 +165,20 @@ def verify_socket_types(name, available_socket_types, *sockets):
 
 
 class Worker(Background):
-    """Worker runs an RPC service of an object through ZeroMQ sockets.  The
-    ZeroMQ sockets should be PULL or SUB socket type.  The PULL sockets receive
-    Round-robin calls; the SUB sockets receive Publish-subscribe (fan-out)
-    calls.
+    """A worker runs an RPC service of an object through ZeroMQ sockets:
 
-    .. sourcecode::
+    ::
 
        import os
-       worker = Worker(os, [sock1, sock2], info='doctor')
+       worker = Worker(os, [sock1, sock2], sock3, info='doctor')
        worker.run()
 
-    :param app: the application to be shared by an RPC service.
-    :param sockets: the ZeroMQ sockets of PULL or SUB socket type.
-    :param info: (optional) the worker will send this value to customers at
-                 accepting an call.  it might be identity of the worker to
-                 let the customer's know what worker accepted.
+    :param app: an application to be shared by an RPC service.
+    :param sockets: ZeroMQ sockets to receive RPC calls.
+    :param reply_socket: a ZeroMQ socket to send RPC replies.
+    :param info: (optional) a worker will send this value to callers at
+                 accepting an call.  It might be the identity of the worker to
+                 let the callers know which worker accepted.
     """
 
     worker_sockets = None
@@ -411,6 +409,10 @@ class Worker(Background):
 
 
 class _Caller(object):
+    """A caller sends RPC calls to workers.  But it could not receive results
+    from the workers by itself.  To receive the results, it should work with
+    :class:`Collector` together.
+    """
 
     available_socket_types = NotImplemented
     timeout = NotImplemented
@@ -464,9 +466,7 @@ class _Caller(object):
 
 
 class Customer(_Caller):
-    """Customer sends RPC calls to the workers.  But it could not receive the
-    result by itself.  It should work with :class:`Collector` to receive
-    worker's results.
+    """A customer is a caller that sends an RPC call to one of workers at once.
     """
 
     available_socket_types = [zmq.PAIR, zmq.DEALER, zmq.PUSH]
@@ -484,9 +484,8 @@ class Customer(_Caller):
 
 
 class Fanout(_Caller):
-    """Customer sends RPC calls to the workers.  But it could not receive the
-    result by itself.  It should work with :class:`Collector` to receive
-    worker's results.
+    """A fanout is a caller that sends an RPC call to all workers subscribing
+    the topic of the call at once.
 
     :param drop_if: (optional) a function which determines to drop RPC calls by
                     the topics it takes.  This parameter allows only as a
@@ -522,7 +521,7 @@ class Fanout(_Caller):
 
 
 class Collector(Background):
-    """Collector receives results from the worker."""
+    """A collector receives RPC results from workers."""
 
     socket = None
     topic = None
