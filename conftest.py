@@ -136,7 +136,7 @@ def pytest_addoption(parser):
 
 def pytest_report_header(config, startdir):
     versions = (zmq.zmq_version(), zmq.__version__)
-    print 'env: zmq-%s, pyzmq-%s' % versions
+    print 'zmq: zmq-%s, pyzmq-%s' % versions
 
 
 def pytest_unconfigure(config):

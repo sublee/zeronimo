@@ -7,7 +7,7 @@ function help {
 }
 
 function info {
-  tput bold && echo $@ && tput sgr0
+  tput setf 2 && echo $@ && tput sgr0
 }
 
 [[ -z "$1" ]] && help
@@ -64,6 +64,7 @@ then
 else
   ZMQ_RELEASE=$(sed 's/-.\+//' <<< $ZMQ_VERSION)
   ZMQ_BUILT="${BUILD_DIR}/zeromq-${ZMQ_RELEASE}-built"
+  ZMQ_DIR="${BUILD_DIR}/zeromq-${ZMQ_RELEASE}"
   if [[ ! -d $ZMQ_DIR ]]
   then
     if [[ "$ZMQ_VERSION" == 4.1.* ]]
@@ -83,10 +84,8 @@ else
     ZMQ_URL="$ZMQ_REPO_URL/releases/download"
     ZMQ_URL="$ZMQ_URL/v$ZMQ_RELEASE"
     ZMQ_URL="$ZMQ_URL/zeromq-$ZMQ_VERSION.tar.gz"
-    if curl -L $ZMQ_URL | tar xz
+    if ! curl -L $ZMQ_URL | tar xz
     then
-      ZMQ_DIR="${BUILD_DIR}/zeromq-${ZMQ_RELEASE}"
-    else
       # There's no release.  Build from a commit archive.
       ZMQ_URL="$ZMQ_REPO_URL/archive/v$ZMQ_VERSION.tar.gz"
       curl -L $ZMQ_URL | tar xz
@@ -135,6 +134,7 @@ else
   # Mark as built.
   [[ -n "$ZMQ_BUILT" ]] && touch "$ZMQ_BUILT"
 fi
+rm -rf $BUILD_DIR/local
 make install
 popd
 
@@ -159,7 +159,22 @@ python setup.py configure --zmq="$BUILD_DIR/local"
 python setup.py build_ext --inplace
 # Uninstall the previous pyzmq clearly.
 while pip uninstall -y pyzmq 2>/dev/null; do sleep 0; done
-python setup.py install
+pip install -e .
 popd
 
-info "Successfully ${ZMQ_STRING} and ${PYZMQ_STRING} installed."
+INSTALLED_ZMQ_VERSION=$(python -c "print __import__('zmq').zmq_version()")
+INSTALLED_PYZMQ_VERSION=$(python -c "print __import__('zmq').__version__")
+if [[ -n "$ZMQ_VERSION" ]] &&
+   [[ "$ZMQ_VERSION" != "$INSTALLED_ZMQ_VERSION" ]]
+then
+  info "zmq-${INSTALLED_ZMQ_VERSION} detected instead of ${ZMQ_STRING}."
+  exit 1
+fi
+if [[ -n "$PYZMQ_VERSION" ]] &&
+   [[ "$PYZMQ_VERSION" != "$INSTALLED_PYZMQ_VERSION" ]]
+then
+  info "pyzmq-${INSTALLED_PYZMQ_VERSION} detected instead of ${PYZMQ_STRING}."
+  exit 1
+fi
+info "Successfully zmq-${INSTALLED_ZMQ_VERSION} and" \
+     "pyzmq-${INSTALLED_PYZMQ_VERSION} installed."

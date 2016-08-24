@@ -688,9 +688,7 @@ def test_pair_with_collector(socket, addr, reply_sockets):
     right.connect(addr)
     reply_sock, (collector_sock, reply_topic) = reply_sockets()
     worker = zeronimo.Worker(Application(), [left], reply_sock)
-    print 'sync...'
     sync_pubsub(reply_sock, [collector_sock], reply_topic)
-    print 'synced'
     collector = zeronimo.Collector(collector_sock, reply_topic)
     customer = zeronimo.Customer(right, collector)
     with running([worker, collector]):
@@ -879,13 +877,11 @@ def test_many_calls(request, monkeypatch):
 
 
 def test_silent_stop(worker):
-    print 1
     worker.stop()
     assert not worker.is_running()
     with pytest.raises(RuntimeError):
         worker.stop()
     worker.stop(silent=True)
-    print 2
 
 
 def test_close(worker, collector, push):
