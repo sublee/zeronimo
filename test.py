@@ -27,7 +27,9 @@ zmq_version_info = zmq.zmq_version_info()
 
 
 def require_libzmq(version_info):
-    return pytest.mark.skipif('zmq_version_info < %r' % (version_info,))
+    args = version_info + ('x',) * (3 - len(version_info))
+    reason = 'at least zmq-%s.%s.%s required' % args
+    return pytest.mark.skipif(zmq_version_info < version_info, reason=reason)
 
 
 def get_results(results):
