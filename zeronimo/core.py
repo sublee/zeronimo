@@ -181,7 +181,7 @@ class Worker(Background):
                  let the callers know which worker accepted.
     """
 
-    worker_sockets = None
+    sockets = None
     reply_socket = None
     info = None
     greenlet_group = None
@@ -190,7 +190,7 @@ class Worker(Background):
     pack = None
     unpack = None
 
-    def __init__(self, app, worker_sockets, reply_socket=None,
+    def __init__(self, app, sockets, reply_socket=None,
                  info=None, greenlet_group=None,
                  exception_handler=default_exception_handler,
                  malformed_message_handler=default_malformed_message_handler,
@@ -199,12 +199,12 @@ class Worker(Background):
         self.app = app
         verify_socket_types(self.__class__.__name__, [
             zmq.PAIR, zmq.PULL, zmq.SUB, ZMQ_XSUB, zmq.ROUTER,
-        ], *worker_sockets)
+        ], *sockets)
         if reply_socket is not None:
             verify_socket_types('%s.reply_socket' % self.__class__.__name__, [
                 zmq.PAIR, zmq.PUSH, zmq.PUB, ZMQ_XPUB, zmq.DEALER,
             ], reply_socket)
-        self.worker_sockets = worker_sockets
+        self.sockets = sockets
         self.reply_socket = reply_socket
         self.info = info
         if greenlet_group is None:
@@ -237,7 +237,7 @@ class Worker(Background):
     def __call__(self):
         """Runs the worker.  While running, an RPC service is online."""
         poller = zmq.Poller()
-        for socket in self.worker_sockets:
+        for socket in self.sockets:
             poller.register(socket, zmq.POLLIN)
         try:
             while True:
@@ -398,7 +398,7 @@ class Worker(Background):
         super(Worker, self).close()
         if self.reply_socket is not None:
             self.reply_socket.close()
-        for socket in self.worker_sockets:
+        for socket in self.sockets:
             socket.close()
 
     def join(self, timeout=None, raise_error=False):

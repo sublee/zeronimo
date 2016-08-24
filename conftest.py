@@ -31,7 +31,6 @@ config = NotImplemented
 
 
 def_fixture = lambda name: namedtuple(name, ['protocol'])
-ctx_fixture = def_fixture('ctx_fixture')
 worker_fixture = def_fixture('worker_fixture')
 worker_pub_fixture = def_fixture('worker_pub_fixture')
 collector_fixture = def_fixture('collector_fixture')
@@ -44,7 +43,6 @@ topic_fixture = def_fixture('topic_fixture')
 socket_fixture = def_fixture('socket_fixture')
 reply_sockets_fixture = def_fixture('reply_sockets_fixture')
 fixtures = {
-    'ctx': ctx_fixture,
     'worker*': worker_fixture,
     'worker_pub*': worker_pub_fixture,
     'collector*': collector_fixture,
@@ -272,9 +270,6 @@ def resolve_fixtures(f, request, protocol):
         @singledispatch
         def resolve_fixture(val, param):
             return val
-        @resolve_fixture.register(ctx_fixture)
-        def resolve_ctx_fixture(val, param):
-            return ctx
         @resolve_fixture.register(worker_fixture)
         def resolve_worker_fixture(val, param):
             # PULL worker socket.

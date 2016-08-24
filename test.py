@@ -159,7 +159,7 @@ def test_stream_type_error(socket):
 
 def test_fixtures(worker, push, pub, collector, addr1, addr2):
     assert isinstance(worker, zeronimo.Worker)
-    assert len(worker.worker_sockets) == 2
+    assert len(worker.sockets) == 2
     assert push.type == zmq.PUSH
     assert pub.type == zmq.PUB
     assert isinstance(collector, zeronimo.Collector)
@@ -390,8 +390,8 @@ def test_max_retries(worker, collector, push):
 
 def test_subscription(worker1, worker2, collector, pub, topic):
     fanout = zeronimo.Fanout(pub, collector)
-    sub1 = [sock for sock in worker1.worker_sockets if sock.type == zmq.SUB][0]
-    sub2 = [sock for sock in worker2.worker_sockets if sock.type == zmq.SUB][0]
+    sub1 = [sock for sock in worker1.sockets if sock.type == zmq.SUB][0]
+    sub2 = [sock for sock in worker2.sockets if sock.type == zmq.SUB][0]
     sub1.set(zmq.UNSUBSCRIBE, topic)
     assert len(fanout.emit(topic, 'zeronimo')) == 1
     sub2.set(zmq.UNSUBSCRIBE, topic)
@@ -891,7 +891,7 @@ def test_close(worker, collector, push):
     customer.close()
     assert not worker.is_running()
     assert not collector.is_running()
-    assert all(s.closed for s in worker.worker_sockets)
+    assert all(s.closed for s in worker.sockets)
     assert collector.socket.closed
     assert customer.socket.closed
 
@@ -983,19 +983,20 @@ def test_drop_if(worker, collector, pub, topic):
     # With drop_if.
     fanout = zeronimo.Fanout(pub, collector, pack=pack,
                              drop_if=lambda x: x != topic)
-    assert list(fanout.emit(topic, 'zeronimo'))
+    assert get_results(fanout.emit(topic, 'zeronimo')) == ['zeronimo']
     assert len(packed) == 3
-    assert not list(fanout.emit(topic[::-1], 'zeronimo'))
+    assert get_results(fanout.emit(topic[::-1], 'zeronimo')) == []
     assert len(packed) == 3  # not increased.
 
 
 @require_libzmq((3,))
-def test_drop_not_subscribed_topic(ctx, worker, collector, addr, topic):
-    xpub = ctx.socket(zmq.XPUB)
+def test_drop_not_subscribed_topic(socket, worker, collector, addr, topic):
+    xpub = socket(zmq.XPUB)
     xpub.bind(addr)
     sub = [s for s in worker.sockets if s.type == zmq.SUB][0]
     sub.connect(addr)
     msg = xpub.recv()
+    sync_pubsub(xpub, [sub], topic)
     assert msg.startswith(b'\x01')
     found_topic = msg[1:]
     assert found_topic == topic
@@ -1004,10 +1005,10 @@ def test_drop_not_subscribed_topic(ctx, worker, collector, addr, topic):
         packed.append(x)
         return zeronimo.messaging.PACK(x)
     fanout = zeronimo.Fanout(xpub, collector, pack=pack,
-                             drop_if=lambda x: x == found_topic)
-    assert not list(fanout.emit(topic[::-1], 'zeronimo'))
+                             drop_if=lambda x: x != found_topic)
+    assert get_results(fanout.emit(topic[::-1], 'zeronimo')) == []
     assert len(packed) == 0
-    assert list(fanout.emit(topic, 'zeronimo'))
+    assert get_results(fanout.emit(topic, 'zeronimo')) == ['zeronimo']
     assert len(packed) == 1
 
 
