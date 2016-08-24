@@ -487,6 +487,15 @@ class Fanout(_Caller):
     """Customer sends RPC calls to the workers.  But it could not receive the
     result by itself.  It should work with :class:`Collector` to receive
     worker's results.
+
+    :param drop_if: (optional) a function which determines to drop RPC calls by
+                    the topics it takes.  This parameter allows only as a
+                    keyword-argument.
+
+                    If you already know the list of topics which have one or
+                    more subscribers, drop unnecessary RPC calls to reduce
+                    serialization cost.  The XPUB socket type may can help you
+                    to detect necessary topics.
     """
 
     available_socket_types = [zmq.PUB, ZMQ_XPUB]
