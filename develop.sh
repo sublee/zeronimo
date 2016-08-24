@@ -105,14 +105,15 @@ then
   LIBSODIUM_BUILT="${BUILD_DIR}/libsodium-built"
   if [[ ! -f "$LIBSODIUM_BUILT" ]]
   then
-    git clone -b 1.0.5 https://github.com/jedisct1/libsodium.git $LIBSODUM_DIR
-    pushd $LIBSODUM_DIR
+    rm -rf "$LIBSODIUM_DIR"
+    git clone -b 1.0.5 https://github.com/jedisct1/libsodium.git $LIBSODIUM_DIR
+    pushd $LIBSODIUM_DIR
     ./autogen.sh
     ./configure
     make check
     touch "$LIBSODIUM_BUILT"
   else
-    pushd $LIBSODUM_DIR
+    pushd $LIBSODIUM_DIR
   fi
   sudo make install
   sudo ldconfig
