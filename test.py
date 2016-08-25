@@ -18,7 +18,7 @@ from conftest import (
 import zeronimo
 from zeronimo.core import Background, uuid4_bytes
 from zeronimo.exceptions import Rejected
-from zeronimo.helpers import eintr_retry_zmq
+from zeronimo.helpers import eintr_retry_zmq, socket_type_name
 import zeronimo.messaging
 
 
@@ -53,12 +53,10 @@ def test_running():
     assert not bg.is_running()
 
 
-socket_types = [zmq.PAIR, zmq.PULL, zmq.SUB, zmq.ROUTER, zmq.DEALER]
-if zmq_version_info >= (3,):
-    socket_types.extend([zmq.XPUB, zmq.XSUB])
-
-
-@pytest.mark.parametrize('socket_type', socket_types)
+@pytest.mark.parametrize('socket_type', [
+    zmq.PAIR, zmq.PULL, zmq.SUB, zmq.ROUTER, zmq.DEALER] +
+    ([zmq.XPUB, zmq.XSUB] if zmq_version_info >= (3,) else []),
+    ids=socket_type_name)
 def test_recv_detects_closing(socket, socket_type):
     sock = socket(socket_type)
     gevent.spawn_later(0.5, sock.close)
@@ -101,60 +99,6 @@ def test_from_socket(socket, addr, reply_sockets):
         # test
         result = customer.call('zeronimo')
         assert result.get() == 'zeronimo'
-
-
-def test_socket_type_error(socket):
-    # customer
-    with pytest.raises(ValueError):
-        zeronimo.Customer(socket(zmq.SUB))
-    with pytest.raises(ValueError):
-        zeronimo.Customer(socket(zmq.REQ))
-    with pytest.raises(ValueError):
-        zeronimo.Customer(socket(zmq.REP))
-    with pytest.raises(ValueError):
-        zeronimo.Customer(socket(zmq.ROUTER))
-    with pytest.raises(ValueError):
-        zeronimo.Customer(socket(zmq.PULL))
-    # worker
-    with pytest.raises(ValueError):
-        zeronimo.Worker(None, [socket(zmq.PUB)])
-    with pytest.raises(ValueError):
-        zeronimo.Worker(None, [socket(zmq.REQ)])
-    with pytest.raises(ValueError):
-        zeronimo.Worker(None, [socket(zmq.REP)])
-    with pytest.raises(ValueError):
-        zeronimo.Worker(None, [socket(zmq.DEALER)])
-    with pytest.raises(ValueError):
-        zeronimo.Worker(None, [socket(zmq.PUSH)])
-    # TODO: reply_socket
-    # collector
-    with pytest.raises(ValueError):
-        zeronimo.Collector(socket(zmq.PUB), 'x')
-    with pytest.raises(ValueError):
-        zeronimo.Collector(socket(zmq.REQ), 'x')
-    with pytest.raises(ValueError):
-        zeronimo.Collector(socket(zmq.REP), 'x')
-    with pytest.raises(ValueError):
-        zeronimo.Collector(socket(zmq.PUSH), 'x')
-
-
-@require_libzmq((3,))
-def test_xpub_xsub_type_error(socket):
-    with pytest.raises(ValueError):
-        zeronimo.Customer(socket(zmq.XSUB))
-    with pytest.raises(ValueError):
-        zeronimo.Worker(None, [socket(zmq.XPUB)])
-
-
-@require_libzmq((4, 0, 1))
-def test_stream_type_error(socket):
-    # zmq.STREAM is available from zmq-4.0.1
-    with pytest.raises(ValueError):
-        zeronimo.Customer(socket(zmq.STREAM))
-    with pytest.raises(ValueError):
-        zeronimo.Worker(None, [socket(zmq.STREAM)])
-    with pytest.raises(ValueError):
-        zeronimo.Collector(socket(zmq.STREAM), 'x')
 
 
 def test_fixtures(worker, push, pub, collector, addr1, addr2):
@@ -947,15 +891,11 @@ def test_xpub_sub(socket, addr, reply_sockets, topic):
         assert took
 
 
-left_right_types = [(zmq.PAIR, zmq.PAIR),
-                    (zmq.PULL, zmq.PUSH),
-                    (zmq.ROUTER, zmq.DEALER)]
-if zmq_version_info >= (4,):
+@pytest.mark.parametrize('left_type, right_type', [
+    (zmq.PAIR, zmq.PAIR), (zmq.PULL, zmq.PUSH), (zmq.ROUTER, zmq.DEALER)] +
     # XSUB before zmq-4 didn't allow arbitrary messages to send.
-    left_right_types.append((zmq.XPUB, zmq.XSUB))
-
-
-@pytest.mark.parametrize('left_type, right_type', left_right_types)
+    ([(zmq.XPUB, zmq.XSUB)] if zmq_version_info >= (4,) else []),
+    ids=socket_type_name)
 def test_collector_without_topic(socket, addr, worker, push,
                                  left_type, right_type):
     left = socket(left_type)
@@ -1022,6 +962,28 @@ def test_timeout(worker, push, collector):
     with pytest.raises(zeronimo.WorkerNotFound):
         zeronimo.Customer(push, collector, timeout=0.5).call('zeronimo').get()
     assert 0.5 <= time.time() - t <= 0.6
+
+
+@pytest.mark.parametrize('left_type, right_type', [
+    (zmq.PAIR, zmq.PAIR), (zmq.PUSH, zmq.PULL)] +
+    # XSUB before zmq-4 didn't allow arbitrary messages to send.
+    ([(zmq.XSUB, zmq.XPUB)] if zmq_version_info >= (4,) else []),
+    ids=socket_type_name)
+def test_fanout_by_other_types(left_type, right_type, socket, addr1, addr2):
+    fanout_sock = socket(left_type)
+    worker_sock = socket(right_type)
+    worker_sock.bind(addr1)
+    fanout_sock.connect(addr1)
+    worker_pub, collector_sub = socket(zmq.PUB), socket(zmq.SUB)
+    worker_pub.bind(addr2)
+    collector_sub.connect(addr2)
+    collector_sub.set(zmq.SUBSCRIBE, 'xxx')
+    sync_pubsub(worker_pub, [collector_sub], 'xxx')
+    worker = zeronimo.Worker(Application(), [worker_sock], worker_pub)
+    collector = zeronimo.Collector(collector_sub, 'xxx')
+    fanout = zeronimo.Fanout(fanout_sock, collector)
+    with running([worker]):
+        assert get_results(fanout.emit('anything', 'zeronimo')) == ['zeronimo']
 
 
 # catch leaks

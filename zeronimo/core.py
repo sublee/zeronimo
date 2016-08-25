@@ -30,7 +30,7 @@ from .application import default_rpc_spec, rpc_table
 from .exceptions import (
     EmissionError, MalformedMessage, Reject, Rejected, TaskClosed, Undelivered,
     WorkerNotFound)
-from .helpers import class_name, eintr_retry_zmq, Flag, socket_type_name
+from .helpers import class_name, eintr_retry_zmq, Flag
 from .messaging import (
     ACCEPT, ACK, BREAK, Call, PACK, RAISE, recv, REJECT, Reply, RETURN, send,
     UNPACK, YIELD)
@@ -157,13 +157,6 @@ def _ack(worker, reply_socket, channel, call, acked,
         raise Reject
 
 
-def verify_socket_types(name, available_socket_types, *sockets):
-    if not set(s.type for s in sockets).difference(available_socket_types):
-        return
-    only = ', '.join(socket_type_name(t) for t in available_socket_types)
-    raise ValueError('%s accepts only %s' % (name, only))
-
-
 class Worker(Background):
     """A worker runs an RPC service of an object through ZeroMQ sockets:
 
@@ -197,13 +190,6 @@ class Worker(Background):
                  pack=PACK, unpack=UNPACK):
         super(Worker, self).__init__()
         self.app = app
-        verify_socket_types(self.__class__.__name__, [
-            zmq.PAIR, zmq.PULL, zmq.SUB, ZMQ_XSUB, zmq.ROUTER,
-        ], *sockets)
-        if reply_socket is not None:
-            verify_socket_types('%s.reply_socket' % self.__class__.__name__, [
-                zmq.PAIR, zmq.PUSH, zmq.PUB, ZMQ_XPUB, zmq.DEALER,
-            ], reply_socket)
         self.sockets = sockets
         self.reply_socket = reply_socket
         self.info = info
@@ -414,7 +400,6 @@ class _Caller(object):
     :class:`Collector` together.
     """
 
-    available_socket_types = NotImplemented
     timeout = NotImplemented
 
     socket = None
@@ -422,8 +407,6 @@ class _Caller(object):
     pack = None
 
     def __init__(self, socket, collector=None, timeout=None, pack=PACK):
-        verify_socket_types(self.__class__.__name__,
-                            self.available_socket_types, socket)
         self.socket = socket
         self.collector = collector
         self.pack = pack
@@ -469,7 +452,6 @@ class Customer(_Caller):
     """A customer is a caller that sends an RPC call to one of workers at once.
     """
 
-    available_socket_types = [zmq.PAIR, zmq.DEALER, zmq.PUSH]
     timeout = CUSTOMER_TIMEOUT
     max_retries = None
 
@@ -497,7 +479,6 @@ class Fanout(_Caller):
                     to detect necessary topics.
     """
 
-    available_socket_types = [zmq.PUB, ZMQ_XPUB]
     timeout = FANOUT_TIMEOUT
     drop_if = None
 
@@ -529,10 +510,6 @@ class Collector(Background):
 
     def __init__(self, socket, topic=None, unpack=UNPACK):
         super(Collector, self).__init__()
-        verify_socket_types(self.__class__.__name__, [
-            zmq.PAIR, zmq.PULL, zmq.SUB, ZMQ_XSUB,
-            zmq.XPUB, zmq.ROUTER, zmq.DEALER,
-        ], socket)
         self.socket = socket
         self.topic = topic
         self.unpack = unpack
