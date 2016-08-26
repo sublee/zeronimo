@@ -964,6 +964,11 @@ def test_timeout(worker, push, collector):
     assert 0.5 <= time.time() - t <= 0.6
 
 
+def test_max_retries_option(push):
+    assert zeronimo.Customer(push).max_retries is None
+    assert zeronimo.Customer(push, max_retries=999).max_retries == 999
+
+
 @pytest.mark.parametrize('left_type, right_type', [
     (zmq.PAIR, zmq.PAIR), (zmq.PUSH, zmq.PULL)] +
     # XSUB before zmq-4 didn't allow arbitrary messages to send.

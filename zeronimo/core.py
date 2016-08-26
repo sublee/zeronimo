@@ -455,6 +455,12 @@ class Customer(_Caller):
     timeout = CUSTOMER_TIMEOUT
     max_retries = None
 
+    def __init__(self, *args, **kwargs):
+        max_retries = kwargs.pop('max_retries', None)
+        if max_retries is not None:
+            self.max_retries = max_retries
+        super(Customer, self).__init__(*args, **kwargs)
+
     def call(self, *args, **kwargs):
         name, args = args[0], args[1:]
         if self.collector is None:
