@@ -63,6 +63,9 @@ class TaskClosed(TaskError):
 class MalformedMessage(ZeronimoException, RuntimeWarning):
     """Warns when a received message is not expected format."""
 
+    exception = None
+    message_parts = ()
+
     def __init__(self, *args):
         num_args = len(args)
         if num_args == 1:
@@ -76,10 +79,10 @@ class MalformedMessage(ZeronimoException, RuntimeWarning):
 
     @classmethod
     @contextmanager
-    def wrap(cls, msg_parts):
+    def wrap(cls, message_parts):
         """Wraps exceptions in the context with :exc:`MalformedMessage`."""
         try:
             yield
-        except BaseException as exc:
+        except BaseException as exception:
             __, __, tb = sys.exc_info()
-            raise cls, cls(exc, msg_parts), tb
+            raise cls, cls(exception, message_parts), tb

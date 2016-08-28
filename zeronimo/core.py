@@ -225,6 +225,7 @@ class Worker(Background):
         poller = zmq.Poller()
         for socket in self.sockets:
             poller.register(socket, zmq.POLLIN)
+        group = self.greenlet_group
         try:
             while True:
                 for socket, event in eintr_retry_zmq(poller.poll):
@@ -233,25 +234,29 @@ class Worker(Background):
                         prefix, args = recv(socket, unpack=self.unpack)
                     except MalformedMessage as exc:
                         # The worker received a malformed message.
-                        if self.malformed_message_handler is not None:
+                        handle = self.malformed_message_handler
+                        if handle is not None:
                             __, __, tb = sys.exc_info()
                             inner_exc = exc.exception
                             msg_parts = exc.message_parts
                             exc_info = (inner_exc.__class__, inner_exc, tb)
-                            handle = self.malformed_message_handler
                             handle(self, exc_info, msg_parts)
+                        del handle
                         continue
                     call = Call(*args)
-                    if self.greenlet_group.full():
+                    if group.full():
                         # Reject immediately.
-                        reply_socket, prefix = \
-                            self.get_replier(socket, prefix, call.reply_to)
+                        reply_socket, prefix = self.get_replier(socket, prefix,
+                                                                call.reply_to)
                         self.reject(reply_socket, call, prefix)
-                        continue
-                    self.greenlet_group.spawn(self.work, socket, call, prefix)
-                    self.greenlet_group.join(0)
+                        del reply_socket
+                    else:
+                        # Spawn a task.
+                        group.spawn(self.work, socket, call, prefix)
+                        group.join(0)
+                    del call, prefix, args
         finally:
-            self.greenlet_group.kill()
+            group.kill()
 
     def work(self, socket, call, prefix=None):
         """Calls a function and send results to the collector.  It supports

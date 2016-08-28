@@ -8,7 +8,7 @@ import warnings
 
 import gevent
 from gevent import joinall, spawn
-from gevent.pool import Group, Pool
+from gevent.pool import Pool
 from psutil import Process
 import pytest
 import zmq.green as zmq
@@ -235,7 +235,7 @@ def test_slow(worker, collector, push):
     r.get()
 
 
-def test_reject(worker1, worker2, collector, push, pub, topic):
+def test_reject(worker1, worker2, collector, push, pub, topic, monkeypatch):
     customer = zeronimo.Customer(push, collector)
     fanout = zeronimo.Fanout(pub, collector)
     def count_workers(iteration=10):
@@ -247,6 +247,8 @@ def test_reject(worker1, worker2, collector, push, pub, topic):
     assert count_workers() == 2
     # worker1 uses a greenlet pool sized by 1.
     worker1.greenlet_group = Pool(1)
+    worker1.stop()
+    worker1.start()
     # emit long task.
     how_slow = zeronimo.Fanout.timeout * 4
     assert len(fanout.emit(topic, 'sleep', how_slow)) == 2
@@ -311,23 +313,21 @@ def test_manual_ack(worker1, worker2, collector, push):
     assert not errors
 
 
-def test_max_retries(worker, collector, push):
-    def start_accepting():
-        worker.greenlet_group = Group()
+def test_max_retries(worker, collector, push, monkeypatch):
     def stop_accepting():
-        worker.greenlet_group = Pool(0)
+        monkeypatch.setattr(worker.greenlet_group, 'full', lambda: True)
     customer = zeronimo.Customer(push, collector)
     # don't retry.
     customer.max_retries = 0
     stop_accepting()
-    g = gevent.spawn_later(1, start_accepting)
+    g = gevent.spawn_later(1, monkeypatch.undo)
     with pytest.raises(Rejected):
         customer.call('zeronimo')
     g.join()
     # do retry.
     customer.max_retries = 1000
     stop_accepting()
-    g = gevent.spawn_later(0.01, start_accepting)
+    g = gevent.spawn_later(0.01, monkeypatch.undo)
     assert customer.call('zeronimo').get() == 'zeronimo'
     g.join()
 
