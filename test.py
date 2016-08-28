@@ -991,6 +991,12 @@ def test_fanout_by_other_types(left_type, right_type, socket, addr1, addr2):
         assert get_results(fanout.emit('anything', 'zeronimo')) == ['zeronimo']
 
 
+def test_worker_releases_call(worker, push, collector):
+    customer = zeronimo.Customer(push, collector)
+    customer.call('zeronimo').get()
+    assert not find_objects(zeronimo.messaging.Call)
+
+
 # catch leaks
 
 

@@ -244,6 +244,7 @@ class Worker(Background):
                         del handle
                         continue
                     call = Call(*args)
+                    del args
                     if group.full():
                         # Reject immediately.
                         reply_socket, prefix = self.get_replier(socket, prefix,
@@ -254,7 +255,7 @@ class Worker(Background):
                         # Spawn a task.
                         group.spawn(self.work, socket, call, prefix)
                         group.join(0)
-                    del call, prefix, args
+                    del call, prefix
         finally:
             group.kill()
 
