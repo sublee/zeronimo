@@ -259,6 +259,16 @@ def test_reject(worker1, worker2, collector, push, pub, topic, monkeypatch):
     assert count_workers() == 2
 
 
+def test_reject_if(worker, collector, pub, topic):
+    for s in worker.sockets:
+        if s.type == zmq.SUB:
+            s.set(zmq.SUBSCRIBE, b'')
+    worker.reject_if = lambda prefix, call: prefix != topic
+    fanout = zeronimo.Fanout(pub, collector)
+    assert get_results(fanout.emit(topic, 'zeronimo')) == ['zeronimo']
+    assert get_results(fanout.emit(topic[::-1], 'zeronimo')) == []
+
+
 # def test_reject_on_exception(worker1, worker2, collector, push):
 #     # Workers wrap own object.
 #     worker1.app = Application()

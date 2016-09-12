@@ -187,7 +187,7 @@ class Worker(Background):
                  info=None, greenlet_group=None,
                  exception_handler=default_exception_handler,
                  malformed_message_handler=default_malformed_message_handler,
-                 pack=PACK, unpack=UNPACK):
+                 reject_if=(lambda *__: False), pack=PACK, unpack=UNPACK):
         super(Worker, self).__init__()
         self.app = app
         self.sockets = sockets
@@ -198,6 +198,7 @@ class Worker(Background):
         self.greenlet_group = greenlet_group
         self.exception_handler = exception_handler
         self.malformed_message_handler = malformed_message_handler
+        self.reject_if = reject_if
         self.pack = pack
         self.unpack = unpack
 
@@ -245,7 +246,7 @@ class Worker(Background):
                         continue
                     call = Call(*args)
                     del args
-                    if group.full():
+                    if group.full() or self.reject_if(prefix, call):
                         # Reject immediately.
                         reply_socket, prefix = self.get_replier(socket, prefix,
                                                                 call.reply_to)
