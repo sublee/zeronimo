@@ -17,7 +17,6 @@ except ImportError:
 
 import zmq
 
-from .exceptions import MalformedMessage
 from .helpers import eintr_retry_zmq, make_repr
 
 
@@ -31,12 +30,14 @@ DONE = 0b01000000
 ITER = 0b00100000
 
 # methods
-ACCEPT = ACK | 0b01
-REJECT = ACK | 0b10
-RETURN = DONE | 0b01
-RAISE = DONE | 0b10
-YIELD = ITER | 0b01
-BREAK = ITER | DONE | 0b10
+ACCEPT = chr(ACK | 0b01)
+REJECT = chr(ACK | 0b10)
+RETURN = chr(DONE | 0b01)
+RAISE = chr(DONE | 0b10)
+YIELD = chr(ITER | 0b01)
+BREAK = chr(ITER | DONE | 0b10)
+
+NULL = '\0'
 
 
 #: The default function to pack message.
@@ -46,13 +47,15 @@ PACK = lambda obj: pickle.dumps(obj, pickle.HIGHEST_PROTOCOL)
 UNPACK = pickle.loads
 
 
-class Call(namedtuple('Call', 'name args kwargs call_id reply_to')):
-
-    def __repr__(self):
-        return make_repr(self, keywords=self._fields)
+repr_namedtuple = lambda x: make_repr(x, keywords=x._fields)
 
 
-class Reply(namedtuple('Reply', 'method data call_id task_id')):
+class Call(namedtuple('Call', 'name call_id reply_to')):
+
+    __repr__ = repr_namedtuple
+
+
+class Reply(namedtuple('Reply', 'method call_id task_id')):
 
     def __repr__(self):
         method = {
@@ -69,26 +72,31 @@ class Reply(namedtuple('Reply', 'method data call_id task_id')):
         return make_repr(self, keywords=self._fields, data={'method': M()})
 
 
-def send(socket, obj, flags=0, prefix=None, pack=PACK):
+def send(socket, header, payload, flags=0, prefix=''):
     """Sends a Python object via a ZeroMQ socket. It also can append PUB/SUB
     prefix.
+
+    :param socket: a zmq socket.
+    :param header: a list of byte strings which represent a message header.
+    :param payload: the serialized byte string of a payload.
+
     """
-    msg = pack(obj)
-    if prefix:
-        eintr_retry_zmq(socket.send, prefix, flags | zmq.SNDMORE)
-    return eintr_retry_zmq(socket.send, msg, flags)
+    eintr_retry_zmq(socket.send, prefix, flags | zmq.SNDMORE)
+    eintr_retry_zmq(socket.send, NULL, flags | zmq.SNDMORE)
+    for item in header:
+        eintr_retry_zmq(socket.send, item, flags | zmq.SNDMORE)
+    return eintr_retry_zmq(socket.send, payload, flags)
 
 
-def recv(socket, flags=0, unpack=UNPACK):
+def recv(socket, flags=0):
     """Receives a Python object via a ZeroMQ socket."""
-    msg_parts = eintr_retry_zmq(socket.recv_multipart, flags)
-    num_msg_parts = len(msg_parts)
-    with MalformedMessage.wrap(msg_parts):
-        if num_msg_parts == 1:
-            prefix, msg = None, msg_parts[0]
-        elif num_msg_parts == 2:
-            prefix, msg = msg_parts
-        else:
-            raise ValueError('too many message parts')
-        obj = unpack(msg)
-    return prefix, obj
+    prefix = eintr_retry_zmq(socket.recv, flags)
+    assert socket.getsockopt(zmq.RCVMORE)
+    null = eintr_retry_zmq(socket.recv, flags)
+    assert null == NULL
+    header = []
+    while socket.getsockopt(zmq.RCVMORE):
+        part = eintr_retry_zmq(socket.recv, flags)
+        header.append(part)
+    payload = header.pop()
+    return prefix, header, payload
