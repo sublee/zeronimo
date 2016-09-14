@@ -549,11 +549,11 @@ def test_pgm_connect(socket, fanout_addr):
 def test_malformed_message(worker, push):
     expectations = []
     expect = expectations.append
-    expect('EOFError: seam after prefixes not received')
+    expect('EOFError: no seam')
     push.send('')
-    expect('EOFError: seam after prefixes not received')
+    expect('EOFError: no seam')
     push.send_multipart(['a', 'b', 'c', 'd'])
-    expect('EOFError: too few message parts')
+    expect('EOFError: neither header nor payload')
     push.send_multipart([zeronimo.messaging.SEAM])
     expect('TypeError')
     push.send_multipart([zeronimo.messaging.SEAM, 'x'])

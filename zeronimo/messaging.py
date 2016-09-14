@@ -97,10 +97,10 @@ def recv(socket, flags=0):
         if msg == SEAM:
             break
         elif not socket.getsockopt(zmq.RCVMORE):
-            raise EOFError('seam after prefixes not received')
+            raise EOFError('no seam')
         prefixes.append(msg)
     if not socket.getsockopt(zmq.RCVMORE):
-        raise EOFError('too few message parts')
+        raise EOFError('neither header nor payload')
     parts = eintr_retry_zmq(socket.recv_multipart, flags)
     header, payload = parts[:-1], parts[-1]
     return prefixes, header, payload
