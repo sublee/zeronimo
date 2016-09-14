@@ -83,7 +83,7 @@ class RemoteResult(AsyncResult):
             self._raise(value)
         elif method == BREAK:
             self._break(value)
-        if ord(method) & DONE:
+        if method & DONE:
             self.collector.remove_result(self)
 
     def _return(self, value):

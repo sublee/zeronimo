@@ -833,8 +833,7 @@ def test_eintr_retry_zmq(itimer, signo, socket, addr):
 def test_many_calls(request, monkeypatch):
     worker = zeronimo.Worker(Application(), [])
     paylaod = zeronimo.messaging.PACK(((), {}))
-    parts = [zeronimo.messaging.PREFIX_END,
-             'zeronimo', uuid4_bytes(), '', paylaod]
+    parts = [zeronimo.messaging.SEAM, 'zeronimo', uuid4_bytes(), '', paylaod]
     class fake_socket(object):
         type = zmq.PULL
         x = 0

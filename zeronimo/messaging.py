@@ -30,12 +30,12 @@ DONE = 0b01000000
 ITER = 0b00100000
 
 # methods
-ACCEPT = chr(ACK | 0b01)
-REJECT = chr(ACK | 0b10)
-RETURN = chr(DONE | 0b01)
-RAISE = chr(DONE | 0b10)
-YIELD = chr(ITER | 0b01)
-BREAK = chr(ITER | DONE | 0b10)
+ACCEPT = ACK | 0b01
+REJECT = ACK | 0b10
+RETURN = DONE | 0b01
+RAISE = DONE | 0b10
+YIELD = ITER | 0b01
+BREAK = ITER | DONE | 0b10
 
 SEAM = '\xff'
 
@@ -47,12 +47,9 @@ PACK = lambda obj: pickle.dumps(obj, pickle.HIGHEST_PROTOCOL)
 UNPACK = pickle.loads
 
 
-repr_namedtuple = lambda x: make_repr(x, keywords=x._fields)
-
-
 class Call(namedtuple('Call', 'name call_id reply_to')):
 
-    __repr__ = repr_namedtuple
+    __repr__ = lambda x: make_repr(x, keywords=x._fields)
 
 
 class Reply(namedtuple('Reply', 'method call_id task_id')):

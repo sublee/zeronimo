@@ -384,7 +384,7 @@ class Worker(Background):
         if not socket:
             return
         # normal tuple is faster than namedtuple.
-        header = [method, call_id, task_id]
+        header = [chr(method), call_id, task_id]
         payload = self.pack(value)
         try:
             safe(send, socket, header, payload, prefixes, zmq.NOBLOCK)
@@ -590,9 +590,10 @@ class Collector(Background):
             except:
                 # TODO: warn MalformedMessage
                 continue
-            reply = Reply(*header)
+            method, call_id, reply_id = header
+            reply = Reply(ord(method), call_id, reply_id)
             value = self.unpack(payload)
-            del header, payload
+            del header, payload, method, call_id, reply_id
             try:
                 self.dispatch_reply(reply, value)
             except KeyError:
@@ -606,7 +607,7 @@ class Collector(Background):
         method = reply.method
         call_id = reply.call_id
         task_id = reply.task_id
-        if ord(method) & ACK:
+        if method & ACK:
             try:
                 result_queue = self.result_queues[call_id]
             except KeyError:
