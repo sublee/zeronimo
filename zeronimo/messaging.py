@@ -37,7 +37,7 @@ RAISE = chr(DONE | 0b10)
 YIELD = chr(ITER | 0b01)
 BREAK = chr(ITER | DONE | 0b10)
 
-PREFIX_END = '\xff'
+SEAM = '\xff'
 
 
 #: The default function to pack message.
@@ -83,7 +83,7 @@ def send(socket, header, payload, prefixes=(), flags=0):
     """
     parts = []
     parts.extend(prefixes)
-    parts.append(PREFIX_END)
+    parts.append(SEAM)
     parts.extend(header)
     parts.append(payload)
     return eintr_retry_zmq(socket.send_multipart, parts, flags)
@@ -94,11 +94,13 @@ def recv(socket, flags=0):
     prefixes = []
     while True:
         msg = eintr_retry_zmq(socket.recv, flags)
-        if msg == PREFIX_END or not socket.getsockopt(zmq.RCVMORE):
+        if msg == SEAM:
             break
+        elif not socket.getsockopt(zmq.RCVMORE):
+            raise EOFError('seam after prefixes not received')
         prefixes.append(msg)
     if not socket.getsockopt(zmq.RCVMORE):
-        raise EOFError('too few parts')
+        raise EOFError('too few message parts')
     parts = eintr_retry_zmq(socket.recv_multipart, flags)
     header, payload = parts[:-1], parts[-1]
     return prefixes, header, payload

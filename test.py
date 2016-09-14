@@ -547,24 +547,31 @@ def test_pgm_connect(socket, fanout_addr):
 
 @pytest.mark.flaky(reruns=3)
 def test_malformed_message(worker, push):
-    push.send('')  # EOFError
-    push.send('Zeronimo!')  # UnpicklingError
-    push.send('c__main__\nNOTEXIST\np0\n.')  # AttributeError
-    push.send_multipart(['a', 'b', 'c', 'd'])  # Too many message parts
+    expectations = []
+    expect = expectations.append
+    expect('EOFError: seam after prefixes not received')
+    push.send('')
+    expect('EOFError: seam after prefixes not received')
+    push.send_multipart(['a', 'b', 'c', 'd'])
+    expect('EOFError: too few message parts')
+    push.send_multipart([zeronimo.messaging.SEAM])
+    expect('TypeError')
+    push.send_multipart([zeronimo.messaging.SEAM, 'x'])
+    expect('TypeError')
+    push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y'])
+    expect('TypeError')
+    push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y', 'z'])
+    expect('UnpicklingError')
+    push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y', 'z', 'w'])
+    expect('AttributeError')
+    push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y', 'z',
+                         'c__main__\nNOTEXIST\np0\n.'])
     with warnings.catch_warnings(record=True) as w:
         gevent.sleep(0.1)
-    assert len(w) == 4
+    assert len(w) == len(expectations)
     assert all(w_.category is zeronimo.MalformedMessage for w_ in w)
-    w1, w2, w3, w4 = w[0].message, w[1].message, w[2].message, w[3].message
-    assert 'EOFError' in str(w1)
-    assert 'UnpicklingError' in str(w2)
-    assert 'AttributeError' in str(w3)
-    assert 'ValueError' in str(w4)
-    assert str(w1).endswith(repr(['']))
-    assert str(w2).endswith(repr(['Zeronimo!']))
-    assert str(w3).endswith(repr(['c__main__\nNOTEXIST\np0\n.']))
-    assert str(w4).startswith('<ValueError: too many message parts>')
-    assert str(w4).endswith(repr(['a', 'b', 'c', 'd']))
+    for err, warn in zip(expectations, w):
+        assert err in str(warn.message)
 
 
 @pytest.mark.flaky(reruns=3)
