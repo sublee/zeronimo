@@ -153,7 +153,7 @@ def _ack(worker, reply_socket, channel, call, acked,
         worker.accept(reply_socket, channel)
         return
     __, __, prefix = channel
-    worker.reject(reply_socket, call, prefix)
+    worker.reject(reply_socket, call.call_id, prefix)
     if not silent:
         raise Reject
 
@@ -228,10 +228,6 @@ class Worker(Background):
         for socket in self.sockets:
             poller.register(socket, zmq.POLLIN)
         group = self.greenlet_group
-        def reject(socket, prefix, call):
-            __, call_id, reply_to = call
-            reply_socket, prefix = self.get_replier(socket, prefix, reply_to)
-            self.reject(reply_socket, call_id, prefix)
         try:
             while True:
                 for socket, event in eintr_retry_zmq(poller.poll):
@@ -242,7 +238,10 @@ class Worker(Background):
                             call = Call(*header)
                             del header
                             if group.full() or self.reject_if(prefix, call):
-                                reject(socket, prefix, call)
+                                __, call_id, reply_to = call
+                                reply_socket, prefix = \
+                                    self.get_replier(socket, prefix, reply_to)
+                                self.reject(reply_socket, call_id, prefix)
                                 del call, prefix, payload
                                 continue
                             args, kwargs = self.unpack(payload)

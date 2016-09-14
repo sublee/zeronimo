@@ -37,7 +37,7 @@ RAISE = chr(DONE | 0b10)
 YIELD = chr(ITER | 0b01)
 BREAK = chr(ITER | DONE | 0b10)
 
-NULL = '\0'
+PREFIX_END = '\xff'
 
 
 #: The default function to pack message.
@@ -81,22 +81,45 @@ def send(socket, header, payload, flags=0, prefix=''):
     :param payload: the serialized byte string of a payload.
 
     """
-    eintr_retry_zmq(socket.send, prefix, flags | zmq.SNDMORE)
-    eintr_retry_zmq(socket.send, NULL, flags | zmq.SNDMORE)
-    for item in header:
-        eintr_retry_zmq(socket.send, item, flags | zmq.SNDMORE)
-    return eintr_retry_zmq(socket.send, payload, flags)
+    parts = [prefix, PREFIX_END] + header + [payload]
+    return eintr_retry_zmq(socket.send_multipart, parts, flags)
+    # eintr_retry_zmq(socket.send, prefix, flags | zmq.SNDMORE)
+    # eintr_retry_zmq(socket.send, NULL, flags | zmq.SNDMORE)
+    # for item in header:
+    #     eintr_retry_zmq(socket.send, item, flags | zmq.SNDMORE)
+    # return eintr_retry_zmq(socket.send, payload, flags)
 
 
 def recv(socket, flags=0):
     """Receives a Python object via a ZeroMQ socket."""
-    prefix = eintr_retry_zmq(socket.recv, flags)
-    assert socket.getsockopt(zmq.RCVMORE)
-    null = eintr_retry_zmq(socket.recv, flags)
-    assert null == NULL
-    header = []
-    while socket.getsockopt(zmq.RCVMORE):
-        part = eintr_retry_zmq(socket.recv, flags)
-        header.append(part)
-    payload = header.pop()
+    prefix = ''
+    msg = eintr_retry_zmq(socket.recv, flags)
+    while msg != PREFIX_END and socket.getsockopt(zmq.RCVMORE):
+        if msg:
+            prefix = msg
+        msg = eintr_retry_zmq(socket.recv, flags)
+    parts = eintr_retry_zmq(socket.recv_multipart, flags)
+    header, payload = parts[:-1], parts[-1]
     return prefix, header, payload
+
+    msg = eintr_retry_zmq(socket.recv, flags)
+    parts = eintr_retry_zmq(socket.recv_multipart, flags)
+    click.secho('recv %r' % parts, fg='red')
+    prefix, prefix_end = parts[:2]
+    assert prefix_end == PREFIX_END
+    header, payload = parts[2:-1], parts[-1]
+    return prefix, header, payload
+    # prefix = eintr_retry_zmq(socket.recv, flags)
+    # assert socket.getsockopt(zmq.RCVMORE)
+    # null = eintr_retry_zmq(socket.recv, flags)
+    # header = []
+    # while socket.getsockopt(zmq.RCVMORE):
+    #     part = eintr_retry_zmq(socket.recv, flags)
+    #     header.append(part)
+    # try:
+    #     payload = header.pop()
+    # except IndexError:
+    #     payload = None
+    # click.secho('recv %r %r %r %r' % (prefix, null, header, payload), fg='red')
+    # assert null == NULL
+    # return prefix, header, payload
