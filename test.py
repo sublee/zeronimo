@@ -809,12 +809,22 @@ def test_eintr_retry_zmq(itimer, signo, socket, addr):
 
 def test_many_calls(request, monkeypatch):
     worker = zeronimo.Worker(Application(), [])
-    call = ('zeronimo', (), {}, uuid4_bytes(), None)
-    msg = zeronimo.messaging.PACK(call)
+    paylaod = zeronimo.messaging.PACK(((), {}))
+    parts = [zeronimo.messaging.PREFIX_END,
+             'zeronimo', uuid4_bytes(), '', paylaod]
     class fake_socket(object):
         type = zmq.PULL
+        x = 0
+        def recv(self, *args, **kwargs):
+            x = self.x
+            self.x = (self.x + 1) % len(parts)
+            return parts[x]
         def recv_multipart(self, *args, **kwargs):
-            return [msg]
+            x = self.x % len(parts)
+            self.x = 0
+            return parts[x:]
+        def getsockopt(self, *args, **kwargs):
+            return self.x != len(parts) - 1
     class infinite_events(object):
         def __iter__(self):
             return self
