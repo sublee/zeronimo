@@ -69,8 +69,8 @@ def test_messaging(socket, addr, topic):
     pull = socket(zmq.PULL)
     link_sockets(addr, push, [pull])
     for t in ['', topic]:
-        zeronimo.messaging.send(push, ['doctor'], 'who', prefix=t)
-        assert zeronimo.messaging.recv(pull) == (t, ['doctor'], 'who')
+        zeronimo.messaging.send(push, ['doctor'], 'who', (t,))
+        assert zeronimo.messaging.recv(pull) == ([t], ['doctor'], 'who')
     with pytest.raises(TypeError):
         zeronimo.messaging.send(push, 1)
 
