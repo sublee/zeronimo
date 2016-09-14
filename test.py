@@ -255,7 +255,7 @@ def test_reject_if(worker, collector, pub, topic):
     for s in worker.sockets:
         if s.type == zmq.SUB:
             s.set(zmq.SUBSCRIBE, b'')
-    worker.reject_if = lambda prefix, call: prefix != topic
+    worker.reject_if = lambda prefixes, call: prefixes[-1] != topic
     fanout = zeronimo.Fanout(pub, collector)
     assert get_results(fanout.emit(topic, 'zeronimo')) == ['zeronimo']
     assert get_results(fanout.emit(topic[::-1], 'zeronimo')) == []
