@@ -274,7 +274,7 @@ class Worker(Background):
         if reply_socket:
             channel = (call.call_id, task_id, prefixes)
         else:
-            channel = ('', '', ())
+            channel = (None, None, None)
         f, rpc_spec = self.find_call_target(call)
         acked = Flag()
         ack = partial(_ack, self, reply_socket, channel, call, acked)
