@@ -13,6 +13,7 @@ import warnings
 
 import gevent
 from gevent import socket
+import pytest
 from singledispatch import singledispatch
 import zmq.green as zmq
 
@@ -491,6 +492,15 @@ def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
     finally:
         in_sock.close()
         out_sock.close()
+
+
+@pytest.fixture
+def device(request):
+    def f(*args, **kwargs):
+        g = gevent.spawn(run_device, *args, **kwargs)
+        request.addfinalizer(g.kill)
+        g.join(0)
+    return f
 
 
 @contextmanager

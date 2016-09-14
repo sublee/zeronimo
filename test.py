@@ -602,14 +602,10 @@ def test_close_task(worker, collector, push):
         gevent.sleep(0.1)
 
 
-def _test_duplex(socket, addr, left_type, right_type):
-    left = socket(left_type)
-    right = socket(right_type)
-    left.bind(addr)
-    right.connect(addr)
-    worker = zeronimo.Worker(Application(), [left])
-    collector = zeronimo.Collector(right)
-    customer = zeronimo.Customer(right, collector)
+def _test_duplex(socket, worker_socket, customer_and_collector_socket):
+    worker = zeronimo.Worker(Application(), [worker_socket])
+    collector = zeronimo.Collector(customer_and_collector_socket)
+    customer = zeronimo.Customer(customer_and_collector_socket, collector)
     with running([worker, collector]):
         assert customer.call('zeronimo').get() == 'zeronimo'
         assert ' '.join(customer.call('rycbar123').get()) == \
@@ -619,11 +615,32 @@ def _test_duplex(socket, addr, left_type, right_type):
 
 
 def test_pair(socket, addr):
-    _test_duplex(socket, addr, zmq.PAIR, zmq.PAIR)
+    ws = socket(zmq.PAIR)
+    cs = socket(zmq.PAIR)
+    ws.bind(addr)
+    cs.connect(addr)
+    _test_duplex(socket, ws, cs)
 
 
 def test_router_dealer(socket, addr):
-    _test_duplex(socket, addr, zmq.ROUTER, zmq.DEALER)
+    ws = socket(zmq.ROUTER)
+    cs = socket(zmq.DEALER)
+    ws.bind(addr)
+    cs.connect(addr)
+    _test_duplex(socket, ws, cs)
+
+
+def test_proxied_router_dealer(socket, addr1, addr2, device):
+    s1 = socket(zmq.ROUTER)
+    s2 = socket(zmq.DEALER)
+    s3 = socket(zmq.ROUTER)
+    s4 = socket(zmq.DEALER)
+    s1.bind(addr1)
+    s2.connect(addr1)
+    s3.bind(addr2)
+    s4.connect(addr2)
+    device(s2, s3)
+    _test_duplex(socket, s1, s4)
 
 
 def test_pair_with_collector(socket, addr, reply_sockets):
