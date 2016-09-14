@@ -58,7 +58,8 @@ CUSTOMER_TIMEOUT = 5
 FANOUT_TIMEOUT = 0.1
 
 
-DUPLEX = '\xff'
+NO_REPLY = '\x00'
+DUPLEX = '\x01'
 # # Used for a value for `reply_to`.  When a worker receives this, the worker
 # # should reply through the socket received the call.
 # class Duplex:
@@ -372,7 +373,7 @@ class Worker(Background):
                 self.exception_handler(self, exc_info)
 
     def replier(self, socket, prefixes, reply_to):
-        if not reply_to:
+        if reply_to == NO_REPLY:
             return None, ()
         elif reply_to == DUPLEX:
             return socket, prefixes
@@ -423,16 +424,16 @@ class _Caller(object):
         if timeout is not None:
             self.timeout = timeout
 
-    def _call_nowait(self, name, args, kwargs, topic=''):
-        header = [name, '', '']
+    def _call_nowait(self, name, args, kwargs, prefixes=()):
+        header = [name, '', NO_REPLY]
         payload = self.pack((args, kwargs))
         try:
-            safe(send, self.socket, header, payload, (topic,), zmq.NOBLOCK)
+            safe(send, self.socket, header, payload, prefixes, zmq.NOBLOCK)
         except zmq.Again:
             pass  # ignore.
 
-    def _call(self, name, args, kwargs,
-              topic='', limit=None, retry=False, max_retries=None):
+    def _call(self, name, args, kwargs, prefixes=(),
+              limit=None, retry=False, max_retries=None):
         """Allocates a call id and emit."""
         col = self.collector
         if not col.is_running():
@@ -445,7 +446,7 @@ class _Caller(object):
         # Use short names.
         def send_call():
             try:
-                safe(send, self.socket, header, payload, (topic,), zmq.NOBLOCK)
+                safe(send, self.socket, header, payload, prefixes, zmq.NOBLOCK)
             except zmq.Again:
                 raise Undelivered('emission was not delivered')
         col.prepare(call_id)
@@ -508,11 +509,12 @@ class Fanout(_Caller):
             # Drop the call without emission.
             return None if self.collector is None else []
         name, args = args[1], args[2:]
+        prefixes = (topic,) if topic else ()
         if self.collector is None:
-            self._call_nowait(name, args, kwargs, topic=topic)
+            self._call_nowait(name, args, kwargs, prefixes)
             return
         try:
-            return self._call(name, args, kwargs, topic=topic)
+            return self._call(name, args, kwargs, prefixes)
         except EmissionError:
             return []
 
