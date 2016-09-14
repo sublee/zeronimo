@@ -361,7 +361,7 @@ def test_subscription(worker1, worker2, collector, pub, topic):
     # same reason
     worker1.stop()
     worker2.stop()
-    sync_pubsub(pub, [sub2], topic)
+    sync_pubsub(pub, [sub1, sub2], topic)
     worker1.start()
     worker2.start()
     assert len(fanout.emit(topic, 'zeronimo')) == 2

@@ -229,9 +229,9 @@ class Worker(Background):
             poller.register(socket, zmq.POLLIN)
         group = self.greenlet_group
         def reject(socket, prefix, call):
-            reply_socket, prefix = self.get_replier(socket, prefix,
-                                                    call.reply_to)
-            self.reject(reply_socket, call.call_id, prefix)
+            __, call_id, reply_to = call
+            reply_socket, prefix = self.get_replier(socket, prefix, reply_to)
+            self.reject(reply_socket, call_id, prefix)
         try:
             while True:
                 for socket, event in eintr_retry_zmq(poller.poll):
