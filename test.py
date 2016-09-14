@@ -256,9 +256,16 @@ def test_reject_if(worker, collector, pub, topic):
         if s.type == zmq.SUB:
             s.set(zmq.SUBSCRIBE, b'')
     worker.reject_if = lambda prefixes, call: prefixes[-1] != topic
+    unpacked = []
+    def unpack(x):
+        unpacked.append(x)
+        return zeronimo.messaging.UNPACK(x)
+    worker.unpack = unpack
     fanout = zeronimo.Fanout(pub, collector)
     assert get_results(fanout.emit(topic, 'zeronimo')) == ['zeronimo']
+    assert len(unpacked) == 1
     assert get_results(fanout.emit(topic[::-1], 'zeronimo')) == []
+    assert len(unpacked) == 1
 
 
 # def test_reject_on_exception(worker1, worker2, collector, push):
