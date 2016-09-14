@@ -68,19 +68,11 @@ def test_messaging(socket, addr, topic):
     push = socket(zmq.PUSH)
     pull = socket(zmq.PULL)
     link_sockets(addr, push, [pull])
-    for t in [None, topic]:
-        zeronimo.messaging.send(push, 1, prefix=t)
-        assert zeronimo.messaging.recv(pull) == (t, 1)
-        zeronimo.messaging.send(push, 'doctor', prefix=t)
-        assert zeronimo.messaging.recv(pull) == (t, 'doctor')
-        zeronimo.messaging.send(push, {'doctor': 'who'}, prefix=t)
-        assert zeronimo.messaging.recv(pull) == (t, {'doctor': 'who'})
-        zeronimo.messaging.send(push, ['doctor', 'who'], prefix=t)
-        assert zeronimo.messaging.recv(pull) == (t, ['doctor', 'who'])
-        zeronimo.messaging.send(push, Exception, prefix=t)
-        assert zeronimo.messaging.recv(pull) == (t, Exception)
-        zeronimo.messaging.send(push, Exception('Allons-y'), prefix=t)
-        assert isinstance(zeronimo.messaging.recv(pull)[1], Exception)
+    for t in ['', topic]:
+        zeronimo.messaging.send(push, ['doctor'], 'who', prefix=t)
+        assert zeronimo.messaging.recv(pull) == (t, ['doctor'], 'who')
+    with pytest.raises(TypeError):
+        zeronimo.messaging.send(push, 1)
 
 
 def test_from_socket(socket, addr, reply_sockets):
