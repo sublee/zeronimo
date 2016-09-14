@@ -30,7 +30,7 @@ from .application import default_rpc_spec, rpc_table
 from .exceptions import (
     EmissionError, MalformedMessage, Reject, Rejected, TaskClosed, Undelivered,
     WorkerNotFound)
-from .helpers import class_name, eintr_retry_zmq, Flag
+from .helpers import class_name, eintr_retry_zmq as safe, Flag
 from .messaging import (
     ACCEPT, ACK, BREAK, Call, PACK, RAISE, recv, REJECT, Reply, RETURN, send,
     UNPACK, YIELD)
@@ -58,7 +58,7 @@ CUSTOMER_TIMEOUT = 5
 FANOUT_TIMEOUT = 0.1
 
 
-DUPLEX = '\0'
+DUPLEX = '\xff'
 # # Used for a value for `reply_to`.  When a worker receives this, the worker
 # # should reply through the socket received the call.
 # class Duplex:
@@ -152,8 +152,8 @@ def _ack(worker, reply_socket, channel, call, acked,
     if accept:
         worker.accept(reply_socket, channel)
         return
-    __, __, prefix = channel
-    worker.reject(reply_socket, call.call_id, prefix)
+    __, __, prefixes = channel
+    worker.reject(reply_socket, call.call_id, prefixes)
     if not silent:
         raise Reject
 
@@ -228,21 +228,21 @@ class Worker(Background):
         for socket in self.sockets:
             poller.register(socket, zmq.POLLIN)
         group = self.greenlet_group
+        def reject(socket, prefixes, (__, call_id, reply_to)):
+            reply_socket, prefixes = self.replier(socket, prefixes, reply_to)
+            self.reject(reply_socket, call_id, prefixes)
         try:
             while True:
-                for socket, event in eintr_retry_zmq(poller.poll):
+                for socket, event in safe(poller.poll):
                     assert event & zmq.POLLIN
                     try:
                         with MalformedMessage.wrap([]):
-                            prefix, header, payload = recv(socket)
+                            prefixes, header, payload = recv(socket)
                             call = Call(*header)
                             del header
-                            if group.full() or self.reject_if(prefix, call):
-                                __, call_id, reply_to = call
-                                reply_socket, prefix = \
-                                    self.get_replier(socket, prefix, reply_to)
-                                self.reject(reply_socket, call_id, prefix)
-                                del call, prefix, payload
+                            if group.full() or self.reject_if(prefixes, call):
+                                reject(socket, prefixes, call)
+                                del call, prefixes, payload
                                 continue
                             args, kwargs = self.unpack(payload)
                             del payload
@@ -257,23 +257,24 @@ class Worker(Background):
                             handle(self, exc_info, msg_parts)
                         del handle
                         continue
-                    group.spawn(self.work, socket, call, args, kwargs, prefix)
+                    group.spawn(self.work, socket, call,
+                                args, kwargs, prefixes)
                     group.join(0)
-                    del call, args, kwargs, prefix
+                    del call, args, kwargs, prefixes
         finally:
             group.kill()
 
-    def work(self, socket, call, args, kwargs, prefix=''):
+    def work(self, socket, call, args, kwargs, prefixes=()):
         """Calls a function and send results to the collector.  It supports
         all of function actions.  A function could return, yield, raise any
         packable objects.
         """
         task_id = uuid4_bytes()
-        reply_socket, prefix = self.get_replier(socket, prefix, call.reply_to)
+        reply_socket, prefixes = self.replier(socket, prefixes, call.reply_to)
         if reply_socket:
-            channel = (call.call_id, task_id, prefix)
+            channel = (call.call_id, task_id, prefixes)
         else:
-            channel = (None, None, None)
+            channel = ('', '', ())
         f, rpc_spec = self.find_call_target(call)
         acked = Flag()
         ack = partial(_ack, self, reply_socket, channel, call, acked)
@@ -337,9 +338,10 @@ class Worker(Background):
         """Sends ACCEPT reply."""
         self.send_reply(reply_socket, ACCEPT, self.info, *channel)
 
-    def reject(self, reply_socket, call_id, prefix=''):
+    def reject(self, reply_socket, call_id, prefixes=()):
         """Sends REJECT reply."""
-        self.send_reply(reply_socket, REJECT, self.info, call_id, '', prefix)
+        self.send_reply(reply_socket, REJECT, self.info,
+                        call_id, '', prefixes)
 
     def raise_(self, reply_socket, channel, exc_info=None):
         """Sends RAISE reply."""
@@ -369,22 +371,22 @@ class Worker(Background):
                 exc_info = sys.exc_info()
                 self.exception_handler(self, exc_info)
 
-    def get_replier(self, socket, prefix, reply_to):
-        if reply_to is False:
-            return None, None
+    def replier(self, socket, prefixes, reply_to):
+        if not reply_to:
+            return None, ()
         elif reply_to == DUPLEX:
-            return socket, prefix
+            return socket, prefixes
         else:
-            return self.reply_socket, reply_to
+            return self.reply_socket, (reply_to,)
 
-    def send_reply(self, socket, method, value, call_id, task_id, prefix=''):
+    def send_reply(self, socket, method, value, call_id, task_id, prefixes=()):
         if not socket:
             return
         # normal tuple is faster than namedtuple.
         header = [method, call_id, task_id]
         payload = self.pack(value)
         try:
-            eintr_retry_zmq(send, socket, header, payload, zmq.NOBLOCK, prefix)
+            safe(send, socket, header, payload, prefixes, zmq.NOBLOCK)
         except (zmq.Again, zmq.ZMQError):
             pass  # ignore.
 
@@ -425,8 +427,7 @@ class _Caller(object):
         header = [name, '', '']
         payload = self.pack((args, kwargs))
         try:
-            eintr_retry_zmq(send, self.socket, header,
-                            payload, zmq.NOBLOCK, topic)
+            safe(send, self.socket, header, payload, (topic,), zmq.NOBLOCK)
         except zmq.Again:
             pass  # ignore.
 
@@ -444,8 +445,7 @@ class _Caller(object):
         # Use short names.
         def send_call():
             try:
-                eintr_retry_zmq(send, self.socket, header,
-                                payload, zmq.NOBLOCK, topic)
+                safe(send, self.socket, header, payload, (topic,), zmq.NOBLOCK)
             except zmq.Again:
                 raise Undelivered('emission was not delivered')
         col.prepare(call_id)
@@ -576,7 +576,7 @@ class Collector(Background):
     def __call__(self):
         while True:
             try:
-                prefix, header, payload = recv(self.socket)
+                __, header, payload = recv(self.socket)
             except GreenletExit:
                 break
             except zmq.ZMQError:

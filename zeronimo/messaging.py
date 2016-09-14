@@ -72,7 +72,7 @@ class Reply(namedtuple('Reply', 'method call_id task_id')):
         return make_repr(self, keywords=self._fields, data={'method': M()})
 
 
-def send(socket, header, payload, flags=0, prefix=''):
+def send(socket, header, payload, prefixes=(), flags=0):
     """Sends a Python object via a ZeroMQ socket. It also can append PUB/SUB
     prefix.
 
@@ -81,18 +81,24 @@ def send(socket, header, payload, flags=0, prefix=''):
     :param payload: the serialized byte string of a payload.
 
     """
-    parts = [prefix, PREFIX_END] + header + [payload]
+    parts = []
+    parts.extend(prefixes)
+    parts.append(PREFIX_END)
+    parts.extend(header)
+    parts.append(payload)
     return eintr_retry_zmq(socket.send_multipart, parts, flags)
 
 
 def recv(socket, flags=0):
     """Receives a Python object via a ZeroMQ socket."""
-    prefix = ''
-    msg = eintr_retry_zmq(socket.recv, flags)
-    while msg != PREFIX_END and socket.getsockopt(zmq.RCVMORE):
-        if msg:
-            prefix = msg
+    prefixes = []
+    while True:
         msg = eintr_retry_zmq(socket.recv, flags)
+        if msg == PREFIX_END or not socket.getsockopt(zmq.RCVMORE):
+            break
+        prefixes.append(msg)
+    if not socket.getsockopt(zmq.RCVMORE):
+        raise EOFError('too few parts')
     parts = eintr_retry_zmq(socket.recv_multipart, flags)
     header, payload = parts[:-1], parts[-1]
-    return prefix, header, payload
+    return prefixes, header, payload
