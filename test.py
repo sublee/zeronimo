@@ -70,7 +70,7 @@ def test_messaging(socket, addr, topic):
     link_sockets(addr, push, [pull])
     for t in ['', topic]:
         zeronimo.messaging.send(push, ['doctor'], 'who', (t,))
-        assert zeronimo.messaging.recv(pull) == ([t], ['doctor'], 'who')
+        assert zeronimo.messaging.recv(pull) == (['doctor'], 'who', [t])
     with pytest.raises(TypeError):
         zeronimo.messaging.send(push, 1)
 

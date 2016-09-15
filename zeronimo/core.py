@@ -232,34 +232,34 @@ class Worker(Background):
         def reject(socket, prefixes, (__, call_id, reply_to)):
             reply_socket, prefixes = self.replier(socket, prefixes, reply_to)
             self.reject(reply_socket, call_id, prefixes)
+        msgs = []
+        capture = msgs.extend
         try:
             while True:
                 for socket, event in safe(poller.poll):
                     assert event & zmq.POLLIN
-                    msgs = []
                     try:
-                        prefixes, header, payload = \
-                            recv(socket, capture=msgs.extend)
+                        header, payload, prefixes = recv(socket, 0, capture)
                         call = Call(*header)
                         del header
                         if group.full() or self.reject_if(prefixes, call):
                             reject(socket, prefixes, call)
-                            del call, prefixes, payload, msgs
+                            del call, prefixes, payload, msgs[:]
                             continue
                         args, kwargs = self.unpack(payload)
-                        del payload
+                        del payload, msgs[:]
                     except:
                         # The worker received a malformed message.
                         handle = self.malformed_message_handler
                         if handle is not None:
                             exc_info = sys.exc_info()
-                            handle(self, exc_info, msgs)
-                        del handle, msgs
+                            handle(self, exc_info, msgs[:])
+                        del handle, msgs[:]
                         continue
                     group.spawn(self.work, socket, call,
                                 args, kwargs, prefixes)
                     group.join(0)
-                    del call, args, kwargs, prefixes, msgs
+                    del call, args, kwargs, prefixes, msgs[:]
         finally:
             group.kill()
 
@@ -576,7 +576,7 @@ class Collector(Background):
     def __call__(self):
         while True:
             try:
-                __, header, payload = recv(self.socket)
+                header, payload, __ = recv(self.socket)
             except GreenletExit:
                 break
             except zmq.ZMQError:

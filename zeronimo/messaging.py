@@ -70,12 +70,12 @@ class Reply(namedtuple('Reply', 'method call_id task_id')):
 
 
 def send(socket, header, payload, prefixes=(), flags=0):
-    """Sends a Python object via a ZeroMQ socket. It also can append PUB/SUB
-    prefix.
+    """Sends prefixes, header, payload through a ZeroMQ socket.
 
     :param socket: a zmq socket.
     :param header: a list of byte strings which represent a message header.
     :param payload: the serialized byte string of a payload.
+    :param prefixes: a chain of prefixes.
 
     """
     msgs = []
@@ -87,7 +87,7 @@ def send(socket, header, payload, prefixes=(), flags=0):
 
 
 def recv(socket, flags=0, capture=(lambda msgs: None)):
-    """Receives a Python object via a ZeroMQ socket."""
+    """Receives prefixes, header, payload via a ZeroMQ socket."""
     prefixes = []
     while True:
         msg = eintr_retry_zmq(socket.recv, flags)
@@ -102,4 +102,4 @@ def recv(socket, flags=0, capture=(lambda msgs: None)):
     msgs = eintr_retry_zmq(socket.recv_multipart, flags)
     capture(msgs)
     header, payload = msgs[:-1], msgs[-1]
-    return prefixes, header, payload
+    return header, payload, prefixes
