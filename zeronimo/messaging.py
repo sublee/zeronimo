@@ -78,26 +78,28 @@ def send(socket, header, payload, prefixes=(), flags=0):
     :param payload: the serialized byte string of a payload.
 
     """
-    parts = []
-    parts.extend(prefixes)
-    parts.append(SEAM)
-    parts.extend(header)
-    parts.append(payload)
-    return eintr_retry_zmq(socket.send_multipart, parts, flags)
+    msgs = []
+    msgs.extend(prefixes)
+    msgs.append(SEAM)
+    msgs.extend(header)
+    msgs.append(payload)
+    return eintr_retry_zmq(socket.send_multipart, msgs, flags)
 
 
-def recv(socket, flags=0):
+def recv(socket, flags=0, capture=(lambda msgs: None)):
     """Receives a Python object via a ZeroMQ socket."""
     prefixes = []
     while True:
         msg = eintr_retry_zmq(socket.recv, flags)
+        capture([msg])
         if msg == SEAM:
             break
         elif not socket.getsockopt(zmq.RCVMORE):
-            raise EOFError('no seam')
+            raise EOFError('no seam after prefixes')
         prefixes.append(msg)
     if not socket.getsockopt(zmq.RCVMORE):
         raise EOFError('neither header nor payload')
-    parts = eintr_retry_zmq(socket.recv_multipart, flags)
-    header, payload = parts[:-1], parts[-1]
+    msgs = eintr_retry_zmq(socket.recv_multipart, flags)
+    capture(msgs)
+    header, payload = msgs[:-1], msgs[-1]
     return prefixes, header, payload

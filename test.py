@@ -549,9 +549,9 @@ def test_pgm_connect(socket, fanout_addr):
 def test_malformed_message(worker, push):
     expectations = []
     expect = expectations.append
-    expect('EOFError: no seam')
+    expect('EOFError: no seam after prefixes')
     push.send('')
-    expect('EOFError: no seam')
+    expect('EOFError: no seam after prefixes')
     push.send_multipart(['a', 'b', 'c', 'd'])
     expect('EOFError: neither header nor payload')
     push.send_multipart([zeronimo.messaging.SEAM])
@@ -572,6 +572,20 @@ def test_malformed_message(worker, push):
     assert all(w_.category is zeronimo.MalformedMessage for w_ in w)
     for err, warn in zip(expectations, w):
         assert err in str(warn.message)
+
+
+def test_malformed_message_handler(worker, push, capsys):
+    messages = []
+    def malformed_message_handler(worker, exc_info, msgs):
+        messages.append(msgs)
+        raise exc_info[0], exc_info[1], exc_info[2]
+    worker.malformed_message_handler = malformed_message_handler
+    push.send('Zeronimo!')
+    worker.wait()
+    out, err = capsys.readouterr()
+    assert not worker.is_running()
+    assert 'EOFError: no seam after prefixes' in err
+    assert ['Zeronimo!'] in messages
 
 
 @pytest.mark.flaky(reruns=3)
@@ -744,20 +758,6 @@ def test_exception_handler(worker, collector, push, capsys):
     assert 'ZeroDivisionError:' not in err
     assert len(exceptions) == 1
     assert exceptions[0] is ZeroDivisionError
-
-
-def test_malformed_message_handler(worker, push, capsys):
-    messages = []
-    def malformed_message_handler(worker, exc_info, message_parts):
-        messages.append(message_parts)
-        raise exc_info[0], exc_info[1], exc_info[2]
-    worker.malformed_message_handler = malformed_message_handler
-    push.send('Zeronimo!')
-    worker.wait()
-    out, err = capsys.readouterr()
-    assert not worker.is_running()
-    assert 'UnpicklingError' in err
-    assert ['Zeronimo!'] in messages
 
 
 class ExampleException(BaseException):

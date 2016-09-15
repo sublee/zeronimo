@@ -236,32 +236,30 @@ class Worker(Background):
             while True:
                 for socket, event in safe(poller.poll):
                     assert event & zmq.POLLIN
+                    msgs = []
                     try:
-                        with MalformedMessage.wrap([]):
-                            prefixes, header, payload = recv(socket)
-                            call = Call(*header)
-                            del header
-                            if group.full() or self.reject_if(prefixes, call):
-                                reject(socket, prefixes, call)
-                                del call, prefixes, payload
-                                continue
-                            args, kwargs = self.unpack(payload)
-                            del payload
-                    except MalformedMessage as exc:
+                        prefixes, header, payload = \
+                            recv(socket, capture=msgs.extend)
+                        call = Call(*header)
+                        del header
+                        if group.full() or self.reject_if(prefixes, call):
+                            reject(socket, prefixes, call)
+                            del call, prefixes, payload, msgs
+                            continue
+                        args, kwargs = self.unpack(payload)
+                        del payload
+                    except:
                         # The worker received a malformed message.
                         handle = self.malformed_message_handler
                         if handle is not None:
-                            __, __, tb = sys.exc_info()
-                            inner_exc = exc.exception
-                            msg_parts = exc.message_parts
-                            exc_info = (inner_exc.__class__, inner_exc, tb)
-                            handle(self, exc_info, msg_parts)
-                        del handle
+                            exc_info = sys.exc_info()
+                            handle(self, exc_info, msgs)
+                        del handle, msgs
                         continue
                     group.spawn(self.work, socket, call,
                                 args, kwargs, prefixes)
                     group.join(0)
-                    del call, args, kwargs, prefixes
+                    del call, args, kwargs, prefixes, msgs
         finally:
             group.kill()
 
