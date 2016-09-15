@@ -268,6 +268,17 @@ def test_reject_if(worker, collector, pub, topic):
     assert len(unpacked) == 1
 
 
+def test_error_on_reject_if(worker, collector, pub, topic):
+    worker.reject_if = lambda topics, call: 0 / 0
+    fanout = zeronimo.Fanout(pub, collector)
+    with warnings.catch_warnings(record=True) as w:
+        fanout.emit(topic, 'zeronimo')
+        gevent.sleep(0.1)
+    assert worker.is_running()
+    assert len(w) == 1
+    assert 'ZeroDivisionError' in str(w[0].message)
+
+
 # def test_reject_on_exception(worker1, worker2, collector, push):
 #     # Workers wrap own object.
 #     worker1.app = Application()

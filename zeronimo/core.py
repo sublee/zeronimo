@@ -231,10 +231,6 @@ class Worker(Background):
         group = self.greenlet_group
         msgs = []
         capture = msgs.extend
-        def handle_malformed_messages():
-            if self.malformed_message_handler is not None:
-                exc_info = sys.exc_info()
-                self.malformed_message_handler(self, exc_info, msgs[:])
         def accept(socket, call, args, kwargs, topics):
             group.spawn(self.work, socket, call, args, kwargs, topics)
             group.join(0)
@@ -246,22 +242,22 @@ class Worker(Background):
                 for socket, event in safe(poller.poll):
                     assert event & zmq.POLLIN
                     del msgs[:]
-                    # Receive messages and unpack a call.
                     try:
                         header, payload, topics = recv(socket, capture=capture)
                         call = Call(*header)
-                    except:
-                        handle_malformed_messages()
-                        continue
-                    # Reject the call if it should.
-                    if group.full() or self.reject_if(topics, call):
-                        reject(socket, call, topics)
-                        continue
-                    # Unpack args, kwargs.
-                    try:
+                        if group.full() or self.reject_if(topics, call):
+                            # Reject the call if it should.
+                            reject(socket, call, topics)
+                            continue
                         args, kwargs = self.unpack(payload)
                     except:
-                        handle_malformed_messages()
+                        # If any exception occurs in the above block,
+                        # the messages are treated as malformed.
+                        handle = self.malformed_message_handler
+                        if handle is not None:
+                            exc_info = sys.exc_info()
+                            handle(self, exc_info, msgs[:])
+                        del handle
                         continue
                     # Accept the call.
                     accept(socket, call, args, kwargs, topics)
