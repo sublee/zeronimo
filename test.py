@@ -255,7 +255,7 @@ def test_reject_if(worker, collector, pub, topic):
     for s in worker.sockets:
         if s.type == zmq.SUB:
             s.set(zmq.SUBSCRIBE, b'')
-    worker.reject_if = lambda prefixes, call: prefixes[-1] != topic
+    worker.reject_if = lambda topics, call: topics[-1] != topic
     unpacked = []
     def unpack(x):
         unpacked.append(x)
@@ -549,9 +549,9 @@ def test_pgm_connect(socket, fanout_addr):
 def test_malformed_message(worker, push):
     expectations = []
     expect = expectations.append
-    expect('EOFError: no seam after prefixes')
+    expect('EOFError: no seam after topics')
     push.send('')
-    expect('EOFError: no seam after prefixes')
+    expect('EOFError: no seam after topics')
     push.send_multipart(['a', 'b', 'c', 'd'])
     expect('EOFError: neither header nor payload')
     push.send_multipart([zeronimo.messaging.SEAM])
@@ -584,7 +584,7 @@ def test_malformed_message_handler(worker, push, capsys):
     worker.wait()
     out, err = capsys.readouterr()
     assert not worker.is_running()
-    assert 'EOFError: no seam after prefixes' in err
+    assert 'EOFError: no seam after topics' in err
     assert ['Zeronimo!'] in messages
 
 

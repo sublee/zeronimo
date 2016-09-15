@@ -69,17 +69,17 @@ class Reply(namedtuple('Reply', 'method call_id task_id')):
         return make_repr(self, keywords=self._fields, data={'method': M()})
 
 
-def send(socket, header, payload, prefixes=(), flags=0):
-    """Sends prefixes, header, payload through a ZeroMQ socket.
+def send(socket, header, payload, topics=(), flags=0):
+    """Sends header, payload, and topics through a ZeroMQ socket.
 
     :param socket: a zmq socket.
     :param header: a list of byte strings which represent a message header.
     :param payload: the serialized byte string of a payload.
-    :param prefixes: a chain of prefixes.
+    :param topics: a chain of topics.
 
     """
     msgs = []
-    msgs.extend(prefixes)
+    msgs.extend(topics)
     msgs.append(SEAM)
     msgs.extend(header)
     msgs.append(payload)
@@ -87,19 +87,19 @@ def send(socket, header, payload, prefixes=(), flags=0):
 
 
 def recv(socket, flags=0, capture=(lambda msgs: None)):
-    """Receives prefixes, header, payload via a ZeroMQ socket."""
-    prefixes = []
+    """Receives header, payload, and topics through a ZeroMQ socket."""
+    topics = []
     while True:
         msg = eintr_retry_zmq(socket.recv, flags)
         capture([msg])
         if msg == SEAM:
             break
         elif not socket.getsockopt(zmq.RCVMORE):
-            raise EOFError('no seam after prefixes')
-        prefixes.append(msg)
+            raise EOFError('no seam after topics')
+        topics.append(msg)
     if not socket.getsockopt(zmq.RCVMORE):
         raise EOFError('neither header nor payload')
     msgs = eintr_retry_zmq(socket.recv_multipart, flags)
     capture(msgs)
     header, payload = msgs[:-1], msgs[-1]
-    return header, payload, prefixes
+    return header, payload, topics
