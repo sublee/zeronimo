@@ -495,12 +495,17 @@ def run_device(in_sock, out_sock, in_addr=None, out_addr=None):
 
 
 @pytest.fixture
-def device(request):
+def device(fin):
     def f(*args, **kwargs):
         g = gevent.spawn(run_device, *args, **kwargs)
-        request.addfinalizer(g.kill)
+        fin(g.kill)
         g.join(0)
     return f
+
+
+@pytest.fixture
+def fin(request):
+    return request.addfinalizer
 
 
 @contextmanager
