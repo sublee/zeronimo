@@ -15,8 +15,6 @@ try:
 except ImportError:
     import pickle
 
-import zmq
-
 from .helpers import eintr_retry_zmq, make_repr
 
 
@@ -88,18 +86,15 @@ def send(socket, header, payload, topics=(), flags=0):
 
 def recv(socket, flags=0, capture=(lambda msgs: None)):
     """Receives header, payload, and topics through a ZeroMQ socket."""
-    topics = []
-    while True:
-        msg = eintr_retry_zmq(socket.recv, flags)
-        capture([msg])
-        if msg == SEAM:
-            break
-        elif not socket.getsockopt(zmq.RCVMORE):
-            raise EOFError('no seam after topics')
-        topics.append(msg)
-    if not socket.getsockopt(zmq.RCVMORE):
-        raise EOFError('neither header nor payload')
     msgs = eintr_retry_zmq(socket.recv_multipart, flags)
     capture(msgs)
-    header, payload = msgs[:-1], msgs[-1]
+    try:
+        seam = msgs.index(SEAM)
+    except ValueError:
+        raise EOFError('no seam after topics')
+    if seam == len(msgs) - 1:
+        raise EOFError('neither header nor payload')
+    topics = msgs[:seam]
+    header = msgs[seam + 1:-1]
+    payload = msgs[-1]
     return header, payload, topics
