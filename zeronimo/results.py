@@ -74,31 +74,30 @@ class RemoteResult(AsyncResult):
 
     # reply receivers
 
-    def set_reply(self, reply):
-        method = reply.method
+    def set_reply(self, method, value):
         if method == RETURN:
-            self._return(reply)
+            self._return(value)
         elif method == YIELD:
-            self._yield(reply)
+            self._yield(value)
         elif method == RAISE:
-            self._raise(reply)
+            self._raise(value)
         elif method == BREAK:
-            self._break(reply)
+            self._break(value)
         if method & DONE:
             self.collector.remove_result(self)
 
-    def _return(self, reply):
-        self.set(reply.data)
+    def _return(self, value):
+        self.set(value)
 
-    def _yield(self, reply):
+    def _yield(self, value):
         if not self.is_iterator():
             self.set_iterator()
-        self.get().send(reply.data)
+        self.get().send(value)
 
-    def _raise(self, reply):
-        self.set_remote_exception(reply.data)
+    def _raise(self, value):
+        self.set_remote_exception(value)
 
-    def _break(self, reply):
+    def _break(self, value):
         if self.is_iterator():
             self.get().close()
         else:

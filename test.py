@@ -13,8 +13,7 @@ from psutil import Process
 import pytest
 import zmq.green as zmq
 
-from conftest import (
-    Application, link_sockets, rand_str, run_device, running, sync_pubsub)
+from conftest import Application, link_sockets, rand_str, running, sync_pubsub
 import zeronimo
 from zeronimo.core import Background, uuid4_bytes
 from zeronimo.exceptions import Rejected
@@ -68,19 +67,11 @@ def test_messaging(socket, addr, topic):
     push = socket(zmq.PUSH)
     pull = socket(zmq.PULL)
     link_sockets(addr, push, [pull])
-    for t in [None, topic]:
-        zeronimo.messaging.send(push, 1, prefix=t)
-        assert zeronimo.messaging.recv(pull) == (t, 1)
-        zeronimo.messaging.send(push, 'doctor', prefix=t)
-        assert zeronimo.messaging.recv(pull) == (t, 'doctor')
-        zeronimo.messaging.send(push, {'doctor': 'who'}, prefix=t)
-        assert zeronimo.messaging.recv(pull) == (t, {'doctor': 'who'})
-        zeronimo.messaging.send(push, ['doctor', 'who'], prefix=t)
-        assert zeronimo.messaging.recv(pull) == (t, ['doctor', 'who'])
-        zeronimo.messaging.send(push, Exception, prefix=t)
-        assert zeronimo.messaging.recv(pull) == (t, Exception)
-        zeronimo.messaging.send(push, Exception('Allons-y'), prefix=t)
-        assert isinstance(zeronimo.messaging.recv(pull)[1], Exception)
+    for t in ['', topic]:
+        zeronimo.messaging.send(push, ['doctor'], 'who', (t,))
+        assert zeronimo.messaging.recv(pull) == (['doctor'], 'who', [t])
+    with pytest.raises(TypeError):
+        zeronimo.messaging.send(push, 1)
 
 
 def test_from_socket(socket, addr, reply_sockets):
@@ -259,23 +250,32 @@ def test_reject(worker1, worker2, collector, push, pub, topic, monkeypatch):
     assert count_workers() == 2
 
 
-# def test_reject_on_exception(worker1, worker2, collector, push):
-#     # Workers wrap own object.
-#     worker1.app = Application()
-#     worker2.app = Application()
-#     # Any worker accepts.
-#     customer = zeronimo.Customer(push, collector)
-#     assert customer.call('f_under_reject_on_exception').get() == 'zeronimo'
-#     # worker1 will reject.
-#     worker1.app.f = worker1.app.zero_div
-#     # But worker2 still accepts.
-#     assert customer.call('f_under_reject_on_exception').get() == 'zeronimo'
-#     # worker2 will also reject.
-#     worker2.app.f = worker2.app.zero_div
-#     # All workers reject.
-#     customer.timeout = 0.1
-#     with pytest.raises(Rejected):
-#         customer.call('f_under_reject_on_exception')
+def test_reject_if(worker, collector, pub, topic):
+    for s in worker.sockets:
+        if s.type == zmq.SUB:
+            s.set(zmq.SUBSCRIBE, b'')
+    worker.reject_if = lambda topics, call: topics[-1] != topic
+    unpacked = []
+    def unpack(x):
+        unpacked.append(x)
+        return zeronimo.messaging.UNPACK(x)
+    worker.unpack = unpack
+    fanout = zeronimo.Fanout(pub, collector)
+    assert get_results(fanout.emit(topic, 'zeronimo')) == ['zeronimo']
+    assert len(unpacked) == 1
+    assert get_results(fanout.emit(topic[::-1], 'zeronimo')) == []
+    assert len(unpacked) == 1
+
+
+def test_error_on_reject_if(worker, collector, pub, topic):
+    worker.reject_if = lambda topics, call: 0 / 0
+    fanout = zeronimo.Fanout(pub, collector)
+    with warnings.catch_warnings(record=True) as w:
+        fanout.emit(topic, 'zeronimo')
+        gevent.sleep(0.1)
+    assert worker.is_running()
+    assert len(w) == 1
+    assert 'ZeroDivisionError' in str(w[0].message)
 
 
 def test_manual_ack(worker1, worker2, collector, push):
@@ -351,124 +351,102 @@ def test_subscription(worker1, worker2, collector, pub, topic):
     # same reason
     worker1.stop()
     worker2.stop()
-    sync_pubsub(pub, [sub2], topic)
+    sync_pubsub(pub, [sub1, sub2], topic)
     worker1.start()
     worker2.start()
     assert len(fanout.emit(topic, 'zeronimo')) == 2
 
 
-def test_device(collector, worker_pub, socket,
-                topic, addr1, addr2, addr3, addr4):
+def test_device(collector, worker_pub, socket, device,
+                topic, addr1, addr2, addr3, addr4, fin):
     # customer  |-----| forwarder |---> | worker
     #           | <----| streamer |-----|
-    try:
-        # run streamer
-        streamer_in_addr, streamer_out_addr = addr1, addr2
-        forwarder_in_addr, forwarder_out_addr = addr3, addr4
-        streamer = spawn(run_device, socket(zmq.PULL), socket(zmq.PUSH),
-                         streamer_in_addr, streamer_out_addr)
-        streamer.join(0)
-        # run forwarder
-        sub = socket(zmq.SUB)
-        sub.set(zmq.SUBSCRIBE, '')
-        forwarder = spawn(run_device, sub, socket(zmq.PUB),
-                          forwarder_in_addr, forwarder_out_addr)
-        forwarder.join(0)
-        # connect to the devices
-        worker_pull1 = socket(zmq.PULL)
-        worker_pull2 = socket(zmq.PULL)
-        worker_pull1.connect(streamer_out_addr)
-        worker_pull2.connect(streamer_out_addr)
-        worker_sub1 = socket(zmq.SUB)
-        worker_sub2 = socket(zmq.SUB)
-        worker_sub1.set(zmq.SUBSCRIBE, topic)
-        worker_sub2.set(zmq.SUBSCRIBE, topic)
-        worker_sub1.connect(forwarder_out_addr)
-        worker_sub2.connect(forwarder_out_addr)
-        push = socket(zmq.PUSH)
-        push.connect(streamer_in_addr)
-        pub = socket(zmq.PUB)
-        pub.connect(forwarder_in_addr)
-        sync_pubsub(pub, [worker_sub1, worker_sub2], topic)
-        # make and start workers
-        app = Application()
-        worker1 = zeronimo.Worker(app, [worker_pull1, worker_sub1], worker_pub)
-        worker2 = zeronimo.Worker(app, [worker_pull2, worker_sub2], worker_pub)
-        worker1.start()
-        worker2.start()
-        # zeronimo!
-        customer = zeronimo.Customer(push, collector)
-        fanout = zeronimo.Fanout(pub, collector)
-        assert customer.call('zeronimo').get() == 'zeronimo'
-        assert \
-            get_results(fanout.emit(topic, 'zeronimo')) == \
-            ['zeronimo', 'zeronimo']
-    finally:
-        try:
-            streamer.kill()
-            forwarder.kill()
-            worker1.stop()
-            worker2.stop()
-        except UnboundLocalError:
-            pass
+    # run streamer
+    streamer_in_addr, streamer_out_addr = addr1, addr2
+    forwarder_in_addr, forwarder_out_addr = addr3, addr4
+    device(socket(zmq.PULL), socket(zmq.PUSH),
+           streamer_in_addr, streamer_out_addr)
+    # run forwarder
+    sub = socket(zmq.SUB)
+    sub.set(zmq.SUBSCRIBE, '')
+    device(sub, socket(zmq.PUB), forwarder_in_addr, forwarder_out_addr)
+    # connect to the devices
+    worker_pull1 = socket(zmq.PULL)
+    worker_pull2 = socket(zmq.PULL)
+    worker_pull1.connect(streamer_out_addr)
+    worker_pull2.connect(streamer_out_addr)
+    worker_sub1 = socket(zmq.SUB)
+    worker_sub2 = socket(zmq.SUB)
+    worker_sub1.set(zmq.SUBSCRIBE, topic)
+    worker_sub2.set(zmq.SUBSCRIBE, topic)
+    worker_sub1.connect(forwarder_out_addr)
+    worker_sub2.connect(forwarder_out_addr)
+    push = socket(zmq.PUSH)
+    push.connect(streamer_in_addr)
+    pub = socket(zmq.PUB)
+    pub.connect(forwarder_in_addr)
+    sync_pubsub(pub, [worker_sub1, worker_sub2], topic)
+    # make and start workers
+    app = Application()
+    worker1 = zeronimo.Worker(app, [worker_pull1, worker_sub1], worker_pub)
+    worker2 = zeronimo.Worker(app, [worker_pull2, worker_sub2], worker_pub)
+    worker1.start()
+    worker2.start()
+    fin(worker1.stop)
+    fin(worker2.stop)
+    # zeronimo!
+    customer = zeronimo.Customer(push, collector)
+    fanout = zeronimo.Fanout(pub, collector)
+    assert customer.call('zeronimo').get() == 'zeronimo'
+    assert \
+        get_results(fanout.emit(topic, 'zeronimo')) == \
+        ['zeronimo', 'zeronimo']
 
 
 @require_libzmq((3,))
-def test_proxied_fanout(collector, worker_pub, socket, topic, addr1, addr2):
+def test_proxied_fanout(collector, worker_pub, socket, device,
+                        topic, addr1, addr2):
     # customer  |----| forwarder with XPUB/XSUB |---> | worker
     # collector | <-----------------------------------|
     # run forwarder
     forwarder_in_addr, forwarder_out_addr = addr1, addr2
-    forwarder = spawn(run_device, socket(zmq.XSUB), socket(zmq.XPUB),
-                      forwarder_in_addr, forwarder_out_addr)
-    try:
-        forwarder.join(0)
-        # connect to the devices
-        worker_sub1 = socket(zmq.SUB)
-        worker_sub2 = socket(zmq.SUB)
-        worker_sub1.set(zmq.SUBSCRIBE, topic)
-        worker_sub2.set(zmq.SUBSCRIBE, topic)
-        worker_sub1.connect(forwarder_out_addr)
-        worker_sub2.connect(forwarder_out_addr)
-        pub = socket(zmq.PUB)
-        pub.connect(forwarder_in_addr)
-        sync_pubsub(pub, [worker_sub1, worker_sub2], topic)
-        # make and start workers
-        app = Application()
-        worker1 = zeronimo.Worker(app, [worker_sub1], worker_pub)
-        worker2 = zeronimo.Worker(app, [worker_sub2], worker_pub)
-        fanout = zeronimo.Fanout(pub, collector)
-        with running([worker1, worker2, collector]):
-            # zeronimo!
-            results = fanout.emit(topic, 'zeronimo')
-            assert get_results(results) == ['zeronimo', 'zeronimo']
-    finally:
-        forwarder.kill()
+    device(socket(zmq.XSUB), socket(zmq.XPUB),
+           forwarder_in_addr, forwarder_out_addr)
+    # connect to the devices
+    worker_sub1 = socket(zmq.SUB)
+    worker_sub2 = socket(zmq.SUB)
+    worker_sub1.set(zmq.SUBSCRIBE, topic)
+    worker_sub2.set(zmq.SUBSCRIBE, topic)
+    worker_sub1.connect(forwarder_out_addr)
+    worker_sub2.connect(forwarder_out_addr)
+    pub = socket(zmq.PUB)
+    pub.connect(forwarder_in_addr)
+    sync_pubsub(pub, [worker_sub1, worker_sub2], topic)
+    # make and start workers
+    app = Application()
+    worker1 = zeronimo.Worker(app, [worker_sub1], worker_pub)
+    worker2 = zeronimo.Worker(app, [worker_sub2], worker_pub)
+    fanout = zeronimo.Fanout(pub, collector)
+    with running([worker1, worker2, collector]):
+        # zeronimo!
+        results = fanout.emit(topic, 'zeronimo')
+        assert get_results(results) == ['zeronimo', 'zeronimo']
 
 
 @require_libzmq((3,))
-def test_proxied_collector(worker, push, socket, addr1, addr2):
+def test_proxied_collector(worker, push, socket, device, addr1, addr2, fin):
     # customer  |-------------------> | worker
     # collector | <---| forwarder |---|
-    try:
-        forwarder = spawn(run_device, socket(zmq.XSUB), socket(zmq.XPUB),
-                          addr1, addr2)
-        forwarder.join(0)
-        reply_topic = rand_str()
-        collector_sock = socket(zmq.SUB)
-        collector_sock.set(zmq.SUBSCRIBE, reply_topic)
-        collector_sock.connect(addr2)
-        worker.reply_socket.connect(addr1)
-        sync_pubsub(worker.reply_socket, [collector_sock], reply_topic)
-        collector = zeronimo.Collector(collector_sock, reply_topic)
-        customer = zeronimo.Customer(push, collector)
-        assert customer.call('zeronimo').get() == 'zeronimo'
-    finally:
-        try:
-            forwarder.kill()
-            collector.stop()
-        except UnboundLocalError:
-            pass
+    device(socket(zmq.XSUB), socket(zmq.XPUB), addr1, addr2)
+    reply_topic = rand_str()
+    collector_sock = socket(zmq.SUB)
+    collector_sock.set(zmq.SUBSCRIBE, reply_topic)
+    collector_sock.connect(addr2)
+    worker.reply_socket.connect(addr1)
+    sync_pubsub(worker.reply_socket, [collector_sock], reply_topic)
+    collector = zeronimo.Collector(collector_sock, reply_topic)
+    customer = zeronimo.Customer(push, collector)
+    assert customer.call('zeronimo').get() == 'zeronimo'
 
 
 def test_2nd_start(worker, collector):
@@ -538,24 +516,45 @@ def test_pgm_connect(socket, fanout_addr):
 
 @pytest.mark.flaky(reruns=3)
 def test_malformed_message(worker, push):
-    push.send('')  # EOFError
-    push.send('Zeronimo!')  # UnpicklingError
-    push.send('c__main__\nNOTEXIST\np0\n.')  # AttributeError
-    push.send_multipart(['a', 'b', 'c', 'd'])  # Too many message parts
+    expectations = []
+    expect = expectations.append
+    expect('EOFError: no seam after topics')
+    push.send('')
+    expect('EOFError: no seam after topics')
+    push.send_multipart(['a', 'b', 'c', 'd'])
+    expect('EOFError: neither header nor payload')
+    push.send_multipart([zeronimo.messaging.SEAM])
+    expect('TypeError')
+    push.send_multipart([zeronimo.messaging.SEAM, 'x'])
+    expect('TypeError')
+    push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y'])
+    expect('TypeError')
+    push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y', 'z'])
+    expect('UnpicklingError')
+    push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y', 'z', 'w'])
+    expect('AttributeError')
+    push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y', 'z',
+                         'c__main__\nNOTEXIST\np0\n.'])
     with warnings.catch_warnings(record=True) as w:
         gevent.sleep(0.1)
-    assert len(w) == 4
+    assert len(w) == len(expectations)
     assert all(w_.category is zeronimo.MalformedMessage for w_ in w)
-    w1, w2, w3, w4 = w[0].message, w[1].message, w[2].message, w[3].message
-    assert 'EOFError' in str(w1)
-    assert 'UnpicklingError' in str(w2)
-    assert 'AttributeError' in str(w3)
-    assert 'ValueError' in str(w4)
-    assert str(w1).endswith(repr(['']))
-    assert str(w2).endswith(repr(['Zeronimo!']))
-    assert str(w3).endswith(repr(['c__main__\nNOTEXIST\np0\n.']))
-    assert str(w4).startswith('<ValueError: too many message parts>')
-    assert str(w4).endswith(repr(['a', 'b', 'c', 'd']))
+    for err, warn in zip(expectations, w):
+        assert err in str(warn.message)
+
+
+def test_malformed_message_handler(worker, push, capsys):
+    messages = []
+    def malformed_message_handler(worker, exc_info, msgs):
+        messages.append(msgs)
+        raise exc_info[0], exc_info[1], exc_info[2]
+    worker.malformed_message_handler = malformed_message_handler
+    push.send('Zeronimo!')
+    worker.wait()
+    out, err = capsys.readouterr()
+    assert not worker.is_running()
+    assert 'EOFError: no seam after topics' in err
+    assert ['Zeronimo!'] in messages
 
 
 @pytest.mark.flaky(reruns=3)
@@ -600,14 +599,10 @@ def test_close_task(worker, collector, push):
         gevent.sleep(0.1)
 
 
-def _test_duplex(socket, addr, left_type, right_type):
-    left = socket(left_type)
-    right = socket(right_type)
-    left.bind(addr)
-    right.connect(addr)
-    worker = zeronimo.Worker(Application(), [left])
-    collector = zeronimo.Collector(right)
-    customer = zeronimo.Customer(right, collector)
+def _test_duplex(socket, worker_socket, customer_and_collector_socket):
+    worker = zeronimo.Worker(Application(), [worker_socket])
+    collector = zeronimo.Collector(customer_and_collector_socket)
+    customer = zeronimo.Customer(customer_and_collector_socket, collector)
     with running([worker, collector]):
         assert customer.call('zeronimo').get() == 'zeronimo'
         assert ' '.join(customer.call('rycbar123').get()) == \
@@ -617,11 +612,32 @@ def _test_duplex(socket, addr, left_type, right_type):
 
 
 def test_pair(socket, addr):
-    _test_duplex(socket, addr, zmq.PAIR, zmq.PAIR)
+    ws = socket(zmq.PAIR)
+    cs = socket(zmq.PAIR)
+    ws.bind(addr)
+    cs.connect(addr)
+    _test_duplex(socket, ws, cs)
 
 
 def test_router_dealer(socket, addr):
-    _test_duplex(socket, addr, zmq.ROUTER, zmq.DEALER)
+    ws = socket(zmq.ROUTER)
+    cs = socket(zmq.DEALER)
+    ws.bind(addr)
+    cs.connect(addr)
+    _test_duplex(socket, ws, cs)
+
+
+def test_proxied_router_dealer(socket, addr1, addr2, device):
+    s1 = socket(zmq.ROUTER)
+    s2 = socket(zmq.DEALER)
+    s3 = socket(zmq.ROUTER)
+    s4 = socket(zmq.DEALER)
+    s1.bind(addr1)
+    s2.connect(addr1)
+    s3.bind(addr2)
+    s4.connect(addr2)
+    device(s2, s3)
+    _test_duplex(socket, s1, s4)
 
 
 def test_pair_with_collector(socket, addr, reply_sockets):
@@ -713,20 +729,6 @@ def test_exception_handler(worker, collector, push, capsys):
     assert exceptions[0] is ZeroDivisionError
 
 
-def test_malformed_message_handler(worker, push, capsys):
-    messages = []
-    def malformed_message_handler(worker, exc_info, message_parts):
-        messages.append(message_parts)
-        raise exc_info[0], exc_info[1], exc_info[2]
-    worker.malformed_message_handler = malformed_message_handler
-    push.send('Zeronimo!')
-    worker.wait()
-    out, err = capsys.readouterr()
-    assert not worker.is_running()
-    assert 'UnpicklingError' in err
-    assert ['Zeronimo!'] in messages
-
-
 class ExampleException(BaseException):
 
     errno = None
@@ -799,12 +801,21 @@ def test_eintr_retry_zmq(itimer, signo, socket, addr):
 
 def test_many_calls(request, monkeypatch):
     worker = zeronimo.Worker(Application(), [])
-    call = ('zeronimo', (), {}, uuid4_bytes(), None)
-    msg = zeronimo.messaging.PACK(call)
+    paylaod = zeronimo.messaging.PACK(((), {}))
+    parts = [zeronimo.messaging.SEAM, 'zeronimo', uuid4_bytes(), '', paylaod]
     class fake_socket(object):
         type = zmq.PULL
+        x = 0
+        def recv(self, *args, **kwargs):
+            x = self.x
+            self.x = (self.x + 1) % len(parts)
+            return parts[x]
         def recv_multipart(self, *args, **kwargs):
-            return [msg]
+            x = self.x % len(parts)
+            self.x = 0
+            return parts[x:]
+        def getsockopt(self, *args, **kwargs):
+            return self.x != len(parts) - 1
     class infinite_events(object):
         def __iter__(self):
             return self
