@@ -254,7 +254,7 @@ def test_reject_if(worker, collector, pub, topic):
     for s in worker.sockets:
         if s.type == zmq.SUB:
             s.set(zmq.SUBSCRIBE, b'')
-    worker.reject_if = lambda topics, call: topics[-1] != topic
+    worker.reject_if = lambda call, topics: topics[-1] != topic
     unpacked = []
     def unpack(x):
         unpacked.append(x)
@@ -268,7 +268,7 @@ def test_reject_if(worker, collector, pub, topic):
 
 
 def test_error_on_reject_if(worker, collector, pub, topic):
-    worker.reject_if = lambda topics, call: 0 / 0
+    worker.reject_if = lambda call, topics: 0 / 0
     fanout = zeronimo.Fanout(pub, collector)
     with warnings.catch_warnings(record=True) as w:
         fanout.emit(topic, 'zeronimo')

@@ -242,7 +242,7 @@ class Worker(Background):
                     try:
                         header, payload, topics = recv(socket, capture=capture)
                         call = Call(*header)
-                        if group.full() or self.reject_if(topics, call):
+                        if group.full() or self.reject_if(call, topics):
                             # Reject the call if it should.
                             reject(socket, call, topics)
                             continue
