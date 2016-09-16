@@ -40,7 +40,7 @@ from .results import RemoteResult
 __all__ = ['Worker', 'Customer', 'Fanout', 'Collector']
 
 
-# Compatible zmq constants.
+# Compatible zmq constants:
 try:
     ZMQ_XPUB = zmq.XPUB
     ZMQ_XSUB = zmq.XSUB
@@ -53,22 +53,19 @@ except AttributeError:
     ZMQ_STREAM = -1
 
 
-# Default timeouts.
+# Default timeouts:
 CUSTOMER_TIMEOUT = 5
 FANOUT_TIMEOUT = 0.1
 
 
+# Used for a value for `reply_to`:
 NO_REPLY = '\x00'
 DUPLEX = '\x01'
-# # Used for a value for `reply_to`.  When a worker receives this, the worker
-# # should reply through the socket received the call.
-# class Duplex:
-#     pass
 
 
 class Background(object):
-    """A background object spawns one greenlet at a time.  The greenlet will
-    call :meth:`__call__`.
+    """A background object spawns only one greenlet at a time.  The greenlet
+    will call its :meth:`__call__`.
     """
 
     #: The greenlet class to be spawned.

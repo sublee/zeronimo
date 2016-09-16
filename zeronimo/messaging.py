@@ -22,12 +22,12 @@ __all__ = ['ACK', 'DONE', 'ITER', 'ACCEPT', 'REJECT', 'RETURN', 'RAISE',
            'YIELD', 'BREAK', 'PACK', 'UNPACK', 'Call', 'Reply', 'send', 'recv']
 
 
-# method masks
+# Method masks:
 ACK = 0b10000000
 DONE = 0b01000000
 ITER = 0b00100000
 
-# methods
+# Methods:
 ACCEPT = ACK | 0b01
 REJECT = ACK | 0b10
 RETURN = DONE | 0b01
@@ -35,6 +35,7 @@ RAISE = DONE | 0b10
 YIELD = ITER | 0b01
 BREAK = ITER | DONE | 0b10
 
+#: The seam between topics (prefixes) and header-payload.
 SEAM = '\xff'
 
 
@@ -74,6 +75,7 @@ def send(socket, header, payload, topics=(), flags=0):
     :param header: a list of byte strings which represent a message header.
     :param payload: the serialized byte string of a payload.
     :param topics: a chain of topics.
+    :param flags: zmq flags to send messages.
 
     """
     msgs = []
@@ -85,7 +87,13 @@ def send(socket, header, payload, topics=(), flags=0):
 
 
 def recv(socket, flags=0, capture=(lambda msgs: None)):
-    """Receives header, payload, and topics through a ZeroMQ socket."""
+    """Receives header, payload, and topics through a ZeroMQ socket.
+
+    :param socket: a zmq socket.
+    :param flags: zmq flags to receive messages.
+    :param capture: a function to capture received messages.
+
+    """
     msgs = eintr_retry_zmq(socket.recv_multipart, flags)
     capture(msgs)
     try:
