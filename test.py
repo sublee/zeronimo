@@ -278,25 +278,6 @@ def test_error_on_reject_if(worker, collector, pub, topic):
     assert 'ZeroDivisionError' in str(w[0].message)
 
 
-# def test_reject_on_exception(worker1, worker2, collector, push):
-#     # Workers wrap own object.
-#     worker1.app = Application()
-#     worker2.app = Application()
-#     # Any worker accepts.
-#     customer = zeronimo.Customer(push, collector)
-#     assert customer.call('f_under_reject_on_exception').get() == 'zeronimo'
-#     # worker1 will reject.
-#     worker1.app.f = worker1.app.zero_div
-#     # But worker2 still accepts.
-#     assert customer.call('f_under_reject_on_exception').get() == 'zeronimo'
-#     # worker2 will also reject.
-#     worker2.app.f = worker2.app.zero_div
-#     # All workers reject.
-#     customer.timeout = 0.1
-#     with pytest.raises(Rejected):
-#         customer.call('f_under_reject_on_exception')
-
-
 def test_manual_ack(worker1, worker2, collector, push):
     # Workers wrap own object.
     worker1.app = Application()
