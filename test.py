@@ -1013,10 +1013,17 @@ def test_unicode(worker, push, collector):
     assert customer.call(u'zeronimo').get() == 'zeronimo'
 
 
-def test_fanout_with_multiple_topics(worker, pub, collector, topic):
+def test_hints(worker, pub, collector, topic):
     fanout = zeronimo.Fanout(pub, collector)
-    r = fanout.emit([topic, 'hello', 'world'], 'zeronimo')
+    r = fanout.emit(topic, ['hello', 'world'], 'zeronimo')
     assert get_results(r) == ['zeronimo']
+    worker.reject_if = lambda call, topics: 'reject' in call.hints
+    r = fanout.emit(topic, ['hello', 'world'], 'zeronimo')
+    assert get_results(r) == ['zeronimo']
+    r = fanout.emit(topic, ['reject'], 'zeronimo')
+    assert get_results(r) == []
+    r = fanout.emit(topic, ['foo', 'reject', 'bar'], 'zeronimo')
+    assert get_results(r) == []
 
 
 # catch leaks

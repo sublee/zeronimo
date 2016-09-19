@@ -249,7 +249,7 @@ class Worker(Background):
                     del msgs[:]
                     try:
                         header, payload, topics = recv(socket, capture=capture)
-                        call = Call(*header)
+                        call = Call(*(header[:3] + [tuple(header[3:])]))
                         if group.full() or self.reject_if(call, topics):
                             # Reject the call if it should.
                             reject(socket, call, topics)
@@ -436,15 +436,16 @@ class _Caller(object):
         if timeout is not None:
             self.timeout = timeout
 
-    def _call_nowait(self, name, args, kwargs, topics=()):
+    def _call_nowait(self, hints, name, args, kwargs, topics=()):
         header = [name.encode(ENCODING), '', NO_REPLY]
+        header.extend(hints)
         payload = self.pack((args, kwargs))
         try:
             safe(send, self.socket, header, payload, topics, zmq.NOBLOCK)
         except zmq.Again:
             pass  # ignore.
 
-    def _call(self, name, args, kwargs, topics=(),
+    def _call(self, hints, name, args, kwargs, topics=(),
               limit=None, retry=False, max_retries=None):
         """Allocates a call id and emit."""
         col = self.collector
@@ -454,6 +455,7 @@ class _Caller(object):
         reply_to = (DUPLEX if self.socket is col.socket else col.topic)
         # Normal tuple is faster than namedtuple.
         header = [name.encode(ENCODING), call_id, reply_to]
+        header.extend(hints)
         payload = self.pack((args, kwargs))
         # Use short names.
         def send_call():
@@ -471,6 +473,15 @@ class _Caller(object):
         self.socket.close()
 
 
+def split_call_args(args, start=0):
+    if isinstance(args[start], basestring):
+        name, args = args[start], args[start + 1:]
+        hints = ()
+    else:
+        hints, name, args = args[start], args[start + 1], args[start + 2:]
+    return hints, name, args
+
+
 class Customer(_Caller):
     """A customer is a caller that sends an RPC call to one of workers at once.
     """
@@ -485,11 +496,11 @@ class Customer(_Caller):
         super(Customer, self).__init__(*args, **kwargs)
 
     def call(self, *args, **kwargs):
-        name, args = args[0], args[1:]
+        hints, name, args = split_call_args(args)
         if self.collector is None:
-            self._call_nowait(name, args, kwargs)
+            self._call_nowait(hints, name, args, kwargs)
             return
-        results = self._call(name, args, kwargs, limit=1,
+        results = self._call(hints, name, args, kwargs, limit=1,
                              retry=True, max_retries=self.max_retries)
         return results[0]
 
@@ -516,21 +527,17 @@ class Fanout(_Caller):
         super(Fanout, self).__init__(*args, **kwargs)
 
     def emit(self, *args, **kwargs):
-        topics = args[0]
-        if not topics:
-            topics = ()
-        elif isinstance(topics, str):
-            topic = topics
-            topics = (topic,)
-        if self.drop_if(topics):
+        topic = args[0]
+        if self.drop_if(topic):
             # Drop the call without emission.
             return None if self.collector is None else []
-        name, args = args[1], args[2:]
+        hints, name, args = split_call_args(args, start=1)
+        topics = (topic,) if topic else ()
         if self.collector is None:
-            self._call_nowait(name, args, kwargs, topics)
+            self._call_nowait(hints, name, args, kwargs, topics)
             return
         try:
-            return self._call(name, args, kwargs, topics)
+            return self._call(hints, name, args, kwargs, topics)
         except EmissionError:
             return []
 
