@@ -66,6 +66,11 @@ DUPLEX = '\x01'
 ENCODING = 'utf-8'
 
 
+#: A function which always returns ``False``.  It is used for default of
+#: `Worker.reject_if` and `Fanout.drop_if`.
+FALSE_RETURNER = lambda *a, **k: False
+
+
 class Background(object):
     """A background object spawns only one greenlet at a time.  The greenlet
     will call its :meth:`__call__`.
@@ -189,7 +194,7 @@ class Worker(Background):
                  info=None, greenlet_group=None,
                  exception_handler=default_exception_handler,
                  malformed_message_handler=default_malformed_message_handler,
-                 reject_if=(lambda *__: False), pack=PACK, unpack=UNPACK):
+                 reject_if=FALSE_RETURNER, pack=PACK, unpack=UNPACK):
         super(Worker, self).__init__()
         self.app = app
         self.sockets = sockets
@@ -507,16 +512,20 @@ class Fanout(_Caller):
     drop_if = None
 
     def __init__(self, *args, **kwargs):
-        self.drop_if = kwargs.pop('drop_if', None)
+        self.drop_if = kwargs.pop('drop_if', FALSE_RETURNER)
         super(Fanout, self).__init__(*args, **kwargs)
 
     def emit(self, *args, **kwargs):
-        topic = args[0]
-        if self.drop_if is not None and self.drop_if(topic):
+        topics = args[0]
+        if not topics:
+            topics = ()
+        elif isinstance(topics, str):
+            topic = topics
+            topics = (topic,)
+        if self.drop_if(topics):
             # Drop the call without emission.
             return None if self.collector is None else []
         name, args = args[1], args[2:]
-        topics = (topic,) if topic else ()
         if self.collector is None:
             self._call_nowait(name, args, kwargs, topics)
             return

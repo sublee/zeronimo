@@ -933,7 +933,7 @@ def test_drop_if(worker, collector, pub, topic):
     assert len(packed) == 2
     # With drop_if.
     fanout = zeronimo.Fanout(pub, collector, pack=pack,
-                             drop_if=lambda x: x != topic)
+                             drop_if=lambda topics: topic not in topics)
     assert get_results(fanout.emit(topic, 'zeronimo')) == ['zeronimo']
     assert len(packed) == 3
     assert get_results(fanout.emit(topic[::-1], 'zeronimo')) == []
@@ -956,7 +956,7 @@ def test_drop_not_subscribed_topic(socket, worker, collector, addr, topic):
         packed.append(x)
         return zeronimo.messaging.PACK(x)
     fanout = zeronimo.Fanout(xpub, collector, pack=pack,
-                             drop_if=lambda x: x != found_topic)
+                             drop_if=lambda topics: found_topic not in topics)
     assert get_results(fanout.emit(topic[::-1], 'zeronimo')) == []
     assert len(packed) == 0
     assert get_results(fanout.emit(topic, 'zeronimo')) == ['zeronimo']
@@ -1011,6 +1011,12 @@ def test_worker_releases_call(worker, push, collector):
 def test_unicode(worker, push, collector):
     customer = zeronimo.Customer(push, collector)
     assert customer.call(u'zeronimo').get() == 'zeronimo'
+
+
+def test_fanout_with_multiple_topics(worker, pub, collector, topic):
+    fanout = zeronimo.Fanout(pub, collector)
+    r = fanout.emit([topic, 'hello', 'world'], 'zeronimo')
+    assert get_results(r) == ['zeronimo']
 
 
 # catch leaks
