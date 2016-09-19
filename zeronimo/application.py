@@ -22,13 +22,13 @@ __all__ = ['default_rpc_spec', 'rpc', 'rpc_table', 'get_rpc_spec']
 RPC_SPEC_ATTR = '__zeronimo__'
 
 
-RPCSpec = namedtuple('RPCSpec', 'name manual_ack')
+RPCSpec = namedtuple('RPCSpec', 'name pass_call manual_ack')
 
 
-def _spec_as_rpc(f, name=None, manual_ack=False):
+def _spec_as_rpc(f, name=None, pass_call=False, manual_ack=False):
     if name is None:
         name = f.__name__
-    rpc_spec = RPCSpec(name, manual_ack)
+    rpc_spec = RPCSpec(name, pass_call, manual_ack)
     setattr(f, RPC_SPEC_ATTR, rpc_spec)
     return f
 

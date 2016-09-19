@@ -239,7 +239,8 @@ class Worker(Background):
         def accept(socket, call, args, kwargs, topics):
             group.spawn(self.work, socket, call, args, kwargs, topics)
             group.join(0)
-        def reject(socket, (__, call_id, reply_to), topics):
+        def reject(socket, call, topics):
+            __, call_id, reply_to, __ = call
             reply_socket, topics = self.replier(socket, topics, reply_to)
             self.reject(reply_socket, call_id, topics)
         try:
@@ -345,6 +346,8 @@ class Worker(Background):
             f, rpc_spec = self.find_call_target(call)
         if rpc_spec.manual_ack:
             args = (ack,) + args
+        if rpc_spec.pass_call:
+            args = (call,) + args
         return f(*args, **kwargs)
 
     def accept(self, reply_socket, channel):

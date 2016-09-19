@@ -620,3 +620,7 @@ class Application(object):
     @zeronimo.rpc('is_remote')
     def _rpc_is_remote(self):
         return True
+
+    @zeronimo.rpc(pass_call=True)
+    def hints(self, call):
+        return call.hints

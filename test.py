@@ -1024,6 +1024,8 @@ def test_hints(worker, pub, collector, topic):
     assert get_results(r) == []
     r = fanout.emit(topic, ['foo', 'reject', 'bar'], 'zeronimo')
     assert get_results(r) == []
+    r = fanout.emit(topic, ['hello', 'world'], 'hints')
+    assert get_results(r) == [('hello', 'world')]
 
 
 # catch leaks
