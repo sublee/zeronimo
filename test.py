@@ -1008,6 +1008,11 @@ def test_worker_releases_call(worker, push, collector):
     assert not find_objects(zeronimo.messaging.Call)
 
 
+def test_unicode(worker, push, collector):
+    customer = zeronimo.Customer(push, collector)
+    assert customer.call(u'zeronimo').get() == 'zeronimo'
+
+
 # catch leaks
 
 

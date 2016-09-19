@@ -63,6 +63,9 @@ NO_REPLY = '\x00'
 DUPLEX = '\x01'
 
 
+ENCODING = 'utf-8'
+
+
 class Background(object):
     """A background object spawns only one greenlet at a time.  The greenlet
     will call its :meth:`__call__`.
@@ -429,7 +432,7 @@ class _Caller(object):
             self.timeout = timeout
 
     def _call_nowait(self, name, args, kwargs, topics=()):
-        header = [name, '', NO_REPLY]
+        header = [name.encode(ENCODING), '', NO_REPLY]
         payload = self.pack((args, kwargs))
         try:
             safe(send, self.socket, header, payload, topics, zmq.NOBLOCK)
@@ -445,7 +448,7 @@ class _Caller(object):
         call_id = uuid4_bytes()
         reply_to = (DUPLEX if self.socket is col.socket else col.topic)
         # Normal tuple is faster than namedtuple.
-        header = [name, call_id, reply_to]
+        header = [name.encode(ENCODING), call_id, reply_to]
         payload = self.pack((args, kwargs))
         # Use short names.
         def send_call():
