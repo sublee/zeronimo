@@ -1036,6 +1036,12 @@ def test_raw(worker, push, pub, collector, topic):
     assert \
         get_results(fanout.emit_raw(topic, 'kwargs', payload)) == \
         [{'hello': 'world'}]
+    with pytest.raises(TypeError):
+        customer.call_raw('kwargs')
+    with pytest.raises(TypeError):
+        customer.call_raw('kwargs', payload=payload)
+    with pytest.raises(TypeError):
+        customer.call_raw('kwargs', payload, payload)
 
 
 # catch leaks
