@@ -39,7 +39,7 @@ class RPCSpec(object):
 
 def reject_if_registrar(rpc_spec):
     def register_reject_if(reject_if):
-        rpc_spec.reject_if = lambda x, c, t: reject_if.__get__(x)(c, t)
+        rpc_spec.reject_if = reject_if
         return reject_if
     return register_reject_if
 

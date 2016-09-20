@@ -238,6 +238,11 @@ class Worker(Background):
             __, call_id, reply_to, __ = call
             reply_socket, topics = self.replier(socket, topics, reply_to)
             self.reject(reply_socket, call_id, topics)
+        def reject_if(call, topics):
+            if self.reject_if(call, topics):
+                return True
+            __, rpc_spec = self.find_call_target(call)
+            return rpc_spec.reject_if.__get__(self.app)(call, topics)
         try:
             while True:
                 for socket, event in safe(poller.poll):
@@ -246,17 +251,10 @@ class Worker(Background):
                     try:
                         header, payload, topics = recv(socket, capture=capture)
                         call = Call(*(header[:3] + [tuple(header[3:])]))
-                        if group.full():
-                            raise Reject
-                        __, rpc_spec = self.find_call_target(call)
-                        if rpc_spec.reject_if(self.app, call, topics):
-                            raise Reject
-                        if self.reject_if(call, topics):
-                            raise Reject
+                        if group.full() or reject_if(call, topics):
+                            reject(socket, call, topics)
+                            continue
                         args, kwargs = self.unpack(payload)
-                    except Reject:
-                        reject(socket, call, topics)
-                        continue
                     except:
                         # If any exception occurs in the above block,
                         # the messages are treated as malformed.
