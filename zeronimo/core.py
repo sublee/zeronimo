@@ -291,6 +291,9 @@ class Worker(Background):
         f, rpc_spec = self.find_call_target(call)
         acked = Flag()
         ack = partial(_ack, self, reply_socket, channel, call, acked)
+        if rpc_spec.reject_if.__get__(self.app)(call, topics):
+            ack(accept=False, silent=True)
+            return
         if not rpc_spec.manual_ack:
             # Acknowledge automatically.
             ack()

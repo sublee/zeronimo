@@ -537,7 +537,10 @@ class Application(object):
         for attr in dir(obj):
             if attr.endswith('__'):
                 continue
-            setattr(obj, attr, count(getattr(obj, attr)))
+            value = getattr(obj, attr)
+            if not callable(value):
+                continue
+            setattr(obj, attr, count(value))
         obj.counter = counter
         return obj
 
@@ -626,22 +629,41 @@ class Application(object):
         return call.hints
 
     @zeronimo.rpc
-    def reject_by_hints1(self):
+    def reject_by_hints(self):
         return 'accepted'
 
-    @reject_by_hints1.reject_if
-    def _reject_by_hints1(self, call, topics):
-        return (True if 'reject' in call.hints else
-                None if 'defer' in call.hints else
-                False)
+    @reject_by_hints.reject_if
+    def _reject_by_hints(self, call, topics):
+        assert isinstance(self, Application)
+        return 'reject' in call.hints
 
     @zeronimo.rpc
-    def reject_by_hints2(self):
+    def reject_by_hints_staticmethod(self):
         return 'accepted'
 
-    @reject_by_hints2.reject_if
+    @reject_by_hints_staticmethod.reject_if
     @staticmethod
-    def _reject_by_hints2(call, topics):
-        return (True if 'reject' in call.hints else
-                None if 'defer' in call.hints else
-                False)
+    def _reject_by_hints_staticmethod(call, topics):
+        return 'reject' in call.hints
+
+    @zeronimo.rpc
+    def reject_by_hints_classmethod(self):
+        return 'accepted'
+
+    @reject_by_hints_classmethod.reject_if
+    @classmethod
+    def _reject_by_hints_classmethod(cls, call, topics):
+        assert isinstance(cls, type)
+        return 'reject' in call.hints
+
+    odd = False
+
+    @zeronimo.rpc
+    def reject_by_odd_even(self):
+        return 'accepted'
+
+    @reject_by_odd_even.reject_if
+    def _reject_by_odd_even(self, call, topics):
+        reject = self.odd
+        self.odd = not self.odd
+        return reject

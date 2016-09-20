@@ -1046,12 +1046,27 @@ def test_raw(worker, push, pub, collector, topic):
 
 def test_specific_reject_if(worker, push, collector):
     customer = zeronimo.Customer(push, collector, timeout=0.1)
-    assert customer.call(['accept'], 'reject_by_hints1').get() == 'accepted'
-    assert customer.call(['accept'], 'reject_by_hints2').get() == 'accepted'
+    assert customer.call('reject_by_hints').get() == 'accepted'
+    assert customer.call('reject_by_hints_staticmethod').get() == 'accepted'
+    assert customer.call('reject_by_hints_classmethod').get() == 'accepted'
+    unpack_called = []
+    def unpack(*args, **kwargs):
+        unpack_called.append(True)
+        return zeronimo.messaging.UNPACK(*args, **kwargs)
+    worker.unpack = unpack
+    assert not unpack_called
     with pytest.raises(Rejected):
-        customer.call(['reject'], 'reject_by_hints1').wait()
+        customer.call(['reject'], 'reject_by_hints').wait()
+    assert not unpack_called
     with pytest.raises(Rejected):
-        customer.call(['reject'], 'reject_by_hints2').wait()
+        customer.call(['reject'], 'reject_by_hints_staticmethod').wait()
+    assert not unpack_called
+    with pytest.raises(Rejected):
+        customer.call(['reject'], 'reject_by_hints_classmethod').wait()
+    assert not unpack_called
+    with pytest.raises(Rejected):
+        customer.call('reject_by_odd_even').wait()
+    assert unpack_called
 
 
 # catch leaks
