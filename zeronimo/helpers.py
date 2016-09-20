@@ -14,8 +14,13 @@ from errno import EINTR
 import zmq
 
 
-__all__ = ['class_name', 'make_repr', 'socket_type_name',
+__all__ = ['FALSE_RETURNER', 'class_name', 'make_repr', 'socket_type_name',
            'eintr_retry', 'eintr_retry_zmq', 'Flag']
+
+
+#: A function which always returns ``False``.  It is used for default of
+#: `Worker.reject_if` and `Fanout.drop_if`.
+FALSE_RETURNER = lambda *a, **k: False
 
 
 def class_name(obj):

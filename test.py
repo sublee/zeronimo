@@ -1045,13 +1045,13 @@ def test_raw(worker, push, pub, collector, topic):
 
 
 def test_specific_reject_if(worker, push, collector):
-    customer = zeronimo.Customer(push, collector)
+    customer = zeronimo.Customer(push, collector, timeout=0.1)
     assert customer.call(['accept'], 'reject_by_hints1').get() == 'accepted'
     assert customer.call(['accept'], 'reject_by_hints2').get() == 'accepted'
     with pytest.raises(Rejected):
-        customer.call(['reject'], 'reject_by_hints1')
+        customer.call(['reject'], 'reject_by_hints1').wait()
     with pytest.raises(Rejected):
-        customer.call(['reject'], 'reject_by_hints2')
+        customer.call(['reject'], 'reject_by_hints2').wait()
 
 
 # catch leaks

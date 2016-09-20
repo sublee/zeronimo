@@ -631,19 +631,17 @@ class Application(object):
 
     @reject_by_hints1.reject_if
     def _reject_by_hints1(self, call, topics):
-        if 'reject' in call.hints:
-            return True
-        elif 'defer' in call.hints:
-            return None
-        else:
-            return False
+        return (True if 'reject' in call.hints else
+                None if 'defer' in call.hints else
+                False)
 
     @zeronimo.rpc
     def reject_by_hints2(self):
         return 'accepted'
 
-    reject_by_hints2.reject_if = lambda call, __: (
-        True if 'reject' in call.hints else
-        None if 'defer' in call.hints else
-        False
-    )
+    @reject_by_hints2.reject_if
+    @staticmethod
+    def _reject_by_hints2(call, topics):
+        return (True if 'reject' in call.hints else
+                None if 'defer' in call.hints else
+                False)

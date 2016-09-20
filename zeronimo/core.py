@@ -30,7 +30,7 @@ from .application import DEFAULT_RPC_SPEC, rpc_table
 from .exceptions import (
     EmissionError, MalformedMessage, Reject, Rejected, TaskClosed, Undelivered,
     WorkerNotFound)
-from .helpers import class_name, eintr_retry_zmq as safe, Flag
+from .helpers import class_name, eintr_retry_zmq as safe, FALSE_RETURNER, Flag
 from .messaging import (
     ACCEPT, ACK, BREAK, Call, PACK, RAISE, recv, REJECT, Reply, RETURN, send,
     UNPACK, YIELD)
@@ -64,11 +64,6 @@ DUPLEX = '\x01'
 
 
 ENCODING = 'utf-8'
-
-
-#: A function which always returns ``False``.  It is used for default of
-#: `Worker.reject_if` and `Fanout.drop_if`.
-FALSE_RETURNER = lambda *a, **k: False
 
 
 class Background(object):
@@ -251,11 +246,17 @@ class Worker(Background):
                     try:
                         header, payload, topics = recv(socket, capture=capture)
                         call = Call(*(header[:3] + [tuple(header[3:])]))
-                        if group.full() or self.reject_if(call, topics):
-                            # Reject the call if it should.
-                            reject(socket, call, topics)
-                            continue
+                        if group.full():
+                            raise Reject
+                        __, rpc_spec = self.find_call_target(call)
+                        if rpc_spec.reject_if(self.app, call, topics):
+                            raise Reject
+                        if self.reject_if(call, topics):
+                            raise Reject
                         args, kwargs = self.unpack(payload)
+                    except Reject:
+                        reject(socket, call, topics)
+                        continue
                     except:
                         # If any exception occurs in the above block,
                         # the messages are treated as malformed.
