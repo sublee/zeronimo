@@ -530,11 +530,13 @@ def test_malformed_message(worker, push):
     push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y'])
     expect('TypeError')
     push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y', 'z'])
-    expect('UnpicklingError')
+    expect('AttributeError')
     push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y', 'z', 'w'])
     expect('AttributeError')
     push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y', 'z',
                          'c__main__\nNOTEXIST\np0\n.'])
+    expect('UnpicklingError')
+    push.send_multipart([zeronimo.messaging.SEAM, 'zeronimo', 'y', 'z', 'w'])
     with warnings.catch_warnings(record=True) as w:
         gevent.sleep(0.1)
     assert len(w) == len(expectations)
