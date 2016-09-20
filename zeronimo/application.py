@@ -16,7 +16,7 @@ import functools
 import inspect
 
 
-__all__ = ['default_rpc_spec', 'rpc', 'rpc_table', 'get_rpc_spec']
+__all__ = ['DEFAULT_RPC_SPEC', 'rpc', 'rpc_table', 'get_rpc_spec']
 
 
 RPC_SPEC_ATTR = '__zeronimo__'
@@ -34,7 +34,7 @@ def _spec_as_rpc(f, name=None, pass_call=False, manual_ack=False):
 
 
 #: The :class:`RPCSpec` with default values.
-default_rpc_spec = RPCSpec(*inspect.getargspec(_spec_as_rpc).defaults)
+DEFAULT_RPC_SPEC = RPCSpec(*inspect.getargspec(_spec_as_rpc).defaults)
 
 
 def rpc(f=None, **kwargs):
@@ -60,6 +60,6 @@ def rpc_table(app):
     return table
 
 
-def get_rpc_spec(f, default=default_rpc_spec):
+def get_rpc_spec(f, default=DEFAULT_RPC_SPEC):
     """Gets an RPC spec from a method."""
     return getattr(f, RPC_SPEC_ATTR, default)

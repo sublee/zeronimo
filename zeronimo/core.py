@@ -26,7 +26,7 @@ except ImportError:
     uuid4_bytes = lambda: uuid.uuid4().get_bytes()
 import zmq.green as zmq
 
-from .application import default_rpc_spec, rpc_table
+from .application import DEFAULT_RPC_SPEC, rpc_table
 from .exceptions import (
     EmissionError, MalformedMessage, Reject, Rejected, TaskClosed, Undelivered,
     WorkerNotFound)
@@ -339,7 +339,7 @@ class Worker(Background):
         try:
             return self.rpc_table[call.name]
         except KeyError:
-            return getattr(self.app, call.name), default_rpc_spec
+            return getattr(self.app, call.name), DEFAULT_RPC_SPEC
 
     def call(self, call, args, kwargs, ack, f=None, rpc_spec=None):
         if f is None and rpc_spec is None:
@@ -439,17 +439,17 @@ class _Caller(object):
         if timeout is not None:
             self.timeout = timeout
 
-    def _call_nowait(self, hints, name, args, kwargs, topics=()):
+    def _call_nowait(self, hints, name, args, kwargs, topics=(), raw=False):
         header = [name.encode(ENCODING), '', NO_REPLY]
         header.extend(hints)
-        payload = self.pack((args, kwargs))
+        payload = self._pack(args, kwargs, raw)
         try:
             safe(send, self.socket, header, payload, topics, zmq.NOBLOCK)
         except zmq.Again:
             pass  # ignore.
 
-    def _call(self, hints, name, args, kwargs, topics=(),
-              limit=None, retry=False, max_retries=None):
+    def _call_wait(self, hints, name, args, kwargs, topics=(), raw=False,
+                   limit=None, retry=False, max_retries=None):
         """Allocates a call id and emit."""
         col = self.collector
         if not col.is_running():
@@ -459,7 +459,7 @@ class _Caller(object):
         # Normal tuple is faster than namedtuple.
         header = [name.encode(ENCODING), call_id, reply_to]
         header.extend(hints)
-        payload = self.pack((args, kwargs))
+        payload = self._pack(args, kwargs, raw)
         # Use short names.
         def send_call():
             try:
@@ -471,6 +471,13 @@ class _Caller(object):
         return col.establish(call_id, self.timeout, limit,
                              send_call if retry else None,
                              max_retries=max_retries)
+
+    def _pack(self, args, kwargs, raw=False):
+        if raw:
+            if kwargs or len(args) == 1:
+                raise TypeError('too many arguments')
+            return args[0]
+        return self.pack((args, kwargs))
 
     def close(self):
         self.socket.close()
@@ -498,14 +505,21 @@ class Customer(_Caller):
             self.max_retries = max_retries
         super(Customer, self).__init__(*args, **kwargs)
 
-    def call(self, *args, **kwargs):
+    def _call(self, raw, *args, **kwargs):
         hints, name, args = split_call_args(args)
         if self.collector is None:
-            self._call_nowait(hints, name, args, kwargs)
+            self._call_nowait(hints, name, args, kwargs, raw=raw)
             return
-        results = self._call(hints, name, args, kwargs, limit=1,
-                             retry=True, max_retries=self.max_retries)
+        results = self._call_wait(hints, name, args, kwargs,
+                                  raw=raw, limit=1, retry=True,
+                                  max_retries=self.max_retries)
         return results[0]
+
+    def call(self, *args, **kwargs):
+        return self._call(False, *args, **kwargs)
+
+    def call_raw(self, *args, **kwargs):
+        return self._call(True, *args, **kwargs)
 
 
 class Fanout(_Caller):
@@ -529,7 +543,7 @@ class Fanout(_Caller):
         self.drop_if = kwargs.pop('drop_if', FALSE_RETURNER)
         super(Fanout, self).__init__(*args, **kwargs)
 
-    def emit(self, *args, **kwargs):
+    def _emit(self, raw, *args, **kwargs):
         topic = args[0]
         if self.drop_if(topic):
             # Drop the call without emission.
@@ -537,12 +551,18 @@ class Fanout(_Caller):
         hints, name, args = split_call_args(args, start=1)
         topics = (topic,) if topic else ()
         if self.collector is None:
-            self._call_nowait(hints, name, args, kwargs, topics)
+            self._call_nowait(hints, name, args, kwargs, topics, raw=raw)
             return
         try:
-            return self._call(hints, name, args, kwargs, topics)
+            return self._call_wait(hints, name, args, kwargs, topics, raw=raw)
         except EmissionError:
             return []
+
+    def emit(self, *args, **kwargs):
+        return self._emit(False, *args, **kwargs)
+
+    def emit_raw(self, *args, **kwargs):
+        return self._emit(True, *args, **kwargs)
 
 
 class Collector(Background):
