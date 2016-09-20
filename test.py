@@ -1028,6 +1028,16 @@ def test_hints(worker, pub, collector, topic):
     assert get_results(r) == [('hello', 'world')]
 
 
+def test_raw(worker, push, pub, collector, topic):
+    customer = zeronimo.Customer(push, collector)
+    fanout = zeronimo.Fanout(pub, collector)
+    payload = zeronimo.messaging.PACK(((), {'hello': 'world'}))
+    assert customer.call_raw('kwargs', payload).get() == {'hello': 'world'}
+    assert \
+        get_results(fanout.emit_raw(topic, 'kwargs', payload)) == \
+        [{'hello': 'world'}]
+
+
 # catch leaks
 
 

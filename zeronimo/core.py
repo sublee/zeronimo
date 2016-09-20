@@ -474,7 +474,7 @@ class _Caller(object):
 
     def _pack(self, args, kwargs, raw=False):
         if raw:
-            if kwargs or len(args) == 1:
+            if kwargs or len(args) != 1:
                 raise TypeError('too many arguments')
             return args[0]
         return self.pack((args, kwargs))
