@@ -18,7 +18,7 @@ import inspect
 from .helpers import FALSE_RETURNER
 
 
-__all__ = ['DEFAULT_RPC_SPEC', 'rpc', 'rpc_table', 'get_rpc_spec']
+__all__ = ['DEFAULT_RPC_SPEC', 'rpc', 'rpc_spec_table', 'get_rpc_spec']
 
 
 RPC_SPEC_ATTR = '__zeronimo__'
@@ -69,7 +69,7 @@ def rpc(f=None, **kwargs):
     return functools.partial(_spec_as_rpc, **kwargs)
 
 
-def rpc_table(app):
+def rpc_spec_table(app):
     """Collects methods which are speced as RPC."""
     table = {}
     for attr, value in inspect.getmembers(app):

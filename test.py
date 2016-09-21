@@ -1071,6 +1071,16 @@ def test_specific_reject_if(worker, push, collector):
     assert unpack_called
 
 
+def test_require_rpc_specs(worker, push, collector):
+    worker.require_rpc_specs = True
+    customer = zeronimo.Customer(push, collector, timeout=0.1)
+    with pytest.raises(Rejected):
+        customer.call('add', 0, 42).wait()
+    assert customer.call('zeronimo').get() == 'zeronimo'
+    with pytest.raises(Rejected):
+        customer.call('_zeronimo').wait()
+
+
 # catch leaks
 
 

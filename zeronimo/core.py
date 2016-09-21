@@ -26,7 +26,7 @@ except ImportError:
     uuid4_bytes = lambda: uuid.uuid4().get_bytes()
 import zmq.green as zmq
 
-from .application import DEFAULT_RPC_SPEC, rpc_table
+from .application import DEFAULT_RPC_SPEC, rpc_spec_table
 from .exceptions import (
     EmissionError, MalformedMessage, Reject, Rejected, TaskClosed, Undelivered,
     WorkerNotFound)
@@ -189,7 +189,8 @@ class Worker(Background):
                  info=None, greenlet_group=None,
                  exception_handler=default_exception_handler,
                  malformed_message_handler=default_malformed_message_handler,
-                 reject_if=FALSE_RETURNER, pack=PACK, unpack=UNPACK):
+                 reject_if=FALSE_RETURNER, require_rpc_specs=False,
+                 pack=PACK, unpack=UNPACK):
         super(Worker, self).__init__()
         self.app = app
         self.sockets = sockets
@@ -201,6 +202,7 @@ class Worker(Background):
         self.exception_handler = exception_handler
         self.malformed_message_handler = malformed_message_handler
         self.reject_if = reject_if
+        self.require_rpc_specs = require_rpc_specs
         self.pack = pack
         self.unpack = unpack
 
@@ -211,12 +213,12 @@ class Worker(Background):
     @app.setter
     def app(self, app):
         self._app = app
-        self.rpc_table = rpc_table(app)
+        self.rpc_spec_table = rpc_spec_table(app)
 
     @app.deleter
     def app(self):
         del self._app
-        del self.rpc_table
+        del self.rpc_spec_table
 
     @property
     def obj(self):
@@ -241,7 +243,10 @@ class Worker(Background):
         def reject_if(call, topics):
             if self.reject_if(call, topics):
                 return True
-            __, rpc_spec = self.find_call_target(call)
+            try:
+                __, rpc_spec = self.find_call_target(call)
+            except KeyError:
+                return True
             return rpc_spec.reject_if.__get__(self.app)(call, topics)
         try:
             while True:
@@ -339,8 +344,10 @@ class Worker(Background):
 
     def find_call_target(self, call):
         try:
-            return self.rpc_table[call.name]
+            return self.rpc_spec_table[call.name]
         except KeyError:
+            if self.require_rpc_specs:
+                raise
             return getattr(self.app, call.name), DEFAULT_RPC_SPEC
 
     def call(self, call, args, kwargs, ack, f=None, rpc_spec=None):
