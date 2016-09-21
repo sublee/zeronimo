@@ -278,41 +278,6 @@ def test_error_on_reject_if(worker, collector, pub, topic):
     assert 'ZeroDivisionError' in str(w[0].message)
 
 
-def test_manual_ack(worker1, worker2, collector, push):
-    # Workers wrap own object.
-    worker1.app = Application()
-    worker2.app = Application()
-    errors = []
-    worker1.exception_handler = lambda w, e: errors.append(e)
-    # Any worker accepts.
-    customer = zeronimo.Customer(push, collector)
-    assert customer.call('maybe_reject', 1, 2).get() == 3
-    # worker1 will reject.
-    worker1.app.maybe_reject.reject = True
-    # But worker2 still accepts.
-    assert customer.call('maybe_reject', 3, 4).get() == 7
-    assert not errors
-    # worker2 will also reject.
-    worker2.app.maybe_reject.reject = True
-    # All workers reject.
-    customer.timeout = 0.1
-    with pytest.raises(Rejected):
-        customer.call('maybe_reject', 5, 6)
-    # A generator marked as manual_rpc=True.
-    worker1.app.iter_maybe_reject.reject = True
-    gen = customer.call('iter_maybe_reject', 7, 8).get()
-    assert next(gen) == 7
-    assert next(gen) == 8
-    assert worker2.app.iter_maybe_reject.final_state == (True, 7, 8)
-    # All generators marked as manual_rpc=True.
-    worker2.app.iter_maybe_reject.reject = True
-    with pytest.raises(Rejected):
-        customer.call('iter_maybe_reject', 9, 10)
-    assert worker1.app.iter_maybe_reject.final_state is None
-    assert worker2.app.iter_maybe_reject.final_state is None
-    assert not errors
-
-
 def test_max_retries(worker, collector, push, monkeypatch):
     def stop_accepting():
         monkeypatch.setattr(worker.greenlet_group, 'full', lambda: True)

@@ -604,20 +604,6 @@ class Application(object):
     def kwargs(self, **kwargs):
         return kwargs
 
-    @zeronimo.rpc(manual_ack=True)
-    def maybe_reject(self, ack, x, y):
-        ack(not getattr(self.maybe_reject, 'reject', False))
-        return x + y
-
-    @zeronimo.rpc(manual_ack=True)
-    def iter_maybe_reject(self, ack, x, y):
-        self.iter_maybe_reject.final_state = None
-        ack(not getattr(self.iter_maybe_reject, 'reject', False))
-        self.iter_maybe_reject.final_state = (False, x, y)
-        yield x
-        yield y
-        self.iter_maybe_reject.final_state = (True, x, y)
-
     def is_remote(self):
         return False
     @zeronimo.rpc('is_remote')

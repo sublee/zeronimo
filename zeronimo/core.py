@@ -11,7 +11,6 @@ from __future__ import absolute_import
 
 from collections import Iterator
 from contextlib import contextmanager
-from functools import partial
 import sys
 import traceback
 from warnings import warn
@@ -26,11 +25,11 @@ except ImportError:
     uuid4_bytes = lambda: uuid.uuid4().get_bytes()
 import zmq.green as zmq
 
-from .application import DEFAULT_RPC_SPEC, rpc_spec_table
+from .application import NULL_RPC_SPEC, rpc_spec_table
 from .exceptions import (
-    EmissionError, MalformedMessage, Reject, Rejected, TaskClosed, Undelivered,
+    EmissionError, MalformedMessage, Rejected, TaskClosed, Undelivered,
     WorkerNotFound)
-from .helpers import class_name, eintr_retry_zmq as safe, FALSE_RETURNER, Flag
+from .helpers import class_name, eintr_retry_zmq as safe, FALSE_RETURNER
 from .messaging import (
     ACCEPT, ACK, BREAK, Call, PACK, RAISE, recv, REJECT, Reply, RETURN, send,
     UNPACK, YIELD)
@@ -139,24 +138,6 @@ def default_malformed_message_handler(worker, exc_info, message_parts):
     if len(exc_strs) > 1:
         exc_str += '...'
     warn('<%s> occurred by %r' % (exc_str, message_parts), MalformedMessage)
-
-
-def _ack(worker, reply_socket, channel, call, acked,
-         accept=True, silent=False):
-    if not reply_socket:
-        return
-    elif acked:
-        if silent:
-            return
-        raise RuntimeError('already acknowledged')
-    acked(True)
-    if accept:
-        worker.accept(reply_socket, channel)
-        return
-    __, __, topics = channel
-    worker.reject(reply_socket, call.call_id, topics)
-    if not silent:
-        raise Reject
 
 
 class Worker(Background):
@@ -294,23 +275,16 @@ class Worker(Background):
         else:
             channel = (None, None, None)
         f, rpc_spec = self.find_call_target(call)
-        acked = Flag()
-        ack = partial(_ack, self, reply_socket, channel, call, acked)
         if rpc_spec.reject_if.__get__(self.app)(call, topics):
-            ack(accept=False, silent=True)
+            reply_socket and self.reject(reply_socket, call.call_id, topics)
             return
-        if not rpc_spec.manual_ack:
-            # Acknowledge automatically.
-            ack()
+        reply_socket and self.accept(reply_socket, channel)
         success = False
         with self.catch_exceptions():
             try:
-                val = self.call(call, args, kwargs, ack, f, rpc_spec)
-            except Reject:
-                return
+                val = self.call(call, args, kwargs, f, rpc_spec)
             except:
                 exc_info = sys.exc_info()
-                ack(accept=False, silent=True)
                 self.raise_(reply_socket, channel, exc_info)
                 raise exc_info[0], exc_info[1], exc_info[2]
             success = True
@@ -324,22 +298,17 @@ class Worker(Background):
                     try:
                         val = next(vals)
                     except StopIteration:
-                        ack(accept=True, silent=True)
+                        pass
                     else:
-                        ack(accept=True, silent=True)
                         self.send_reply(reply_socket, YIELD, val, *channel)
                         for val in vals:
                             self.send_reply(reply_socket, YIELD, val, *channel)
                     self.send_reply(reply_socket, BREAK, None, *channel)
-                except Reject:
-                    return
                 except:
                     exc_info = sys.exc_info()
-                    ack(accept=False, silent=True)
                     self.raise_(reply_socket, channel, exc_info)
                     raise exc_info[0], exc_info[1], exc_info[2]
         else:
-            ack(accept=True, silent=True)
             self.send_reply(reply_socket, RETURN, val, *channel)
 
     def find_call_target(self, call):
@@ -348,13 +317,11 @@ class Worker(Background):
         except KeyError:
             if self.require_rpc_specs:
                 raise
-            return getattr(self.app, call.name), DEFAULT_RPC_SPEC
+            return getattr(self.app, call.name), NULL_RPC_SPEC
 
-    def call(self, call, args, kwargs, ack, f=None, rpc_spec=None):
+    def call(self, call, args, kwargs, f=None, rpc_spec=None):
         if f is None and rpc_spec is None:
             f, rpc_spec = self.find_call_target(call)
-        if rpc_spec.manual_ack:
-            args = (ack,) + args
         if rpc_spec.pass_call:
             args = (call,) + args
         return f(*args, **kwargs)

@@ -22,14 +22,6 @@ class ZeronimoException(BaseException):
     pass
 
 
-class Reject(ZeronimoException):
-    """Worker rejects a task.  Mark a method with ``defer_ack=True`` to control
-    rejection by this.
-    """
-
-    pass
-
-
 class EmissionError(ZeronimoException):
 
     pass

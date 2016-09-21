@@ -11,54 +11,50 @@
 """
 from __future__ import absolute_import
 
-# from collections import namedtuple
 import functools
 import inspect
 
 from .helpers import FALSE_RETURNER
 
 
-__all__ = ['DEFAULT_RPC_SPEC', 'rpc', 'rpc_spec_table', 'get_rpc_spec']
+__all__ = ['NULL_RPC_SPEC', 'rpc', 'rpc_spec_table', 'get_rpc_spec']
 
 
 RPC_SPEC_ATTR = '__zeronimo__'
 
 
-# RPCSpec = namedtuple('RPCSpec', 'name pass_call manual_ack')
 class RPCSpec(object):
 
-    __slots__ = ('name', 'pass_call', 'manual_ack', 'reject_if')
+    __slots__ = ('name', 'pass_call', 'reject_if')
 
-    def __init__(self, name, pass_call=False, manual_ack=False,
-                 reject_if=FALSE_RETURNER):
+    def __init__(self, name=None, pass_call=False, reject_if=FALSE_RETURNER):
         self.name = name
         self.pass_call = pass_call
-        self.manual_ack = manual_ack
         self.reject_if = reject_if
 
 
-def reject_if_registrar(rpc_spec):
-    def register_reject_if(reject_if):
-        rpc_spec.reject_if = reject_if
-        return reject_if
-    return register_reject_if
-
-
-def _spec_as_rpc(f, name=None, pass_call=False, manual_ack=False):
-    if name is None:
-        name = f.__name__
-    rpc_spec = RPCSpec(name, pass_call, manual_ack)
-    setattr(f, RPC_SPEC_ATTR, rpc_spec)
-    f.reject_if = reject_if_registrar(rpc_spec)
-    return f
+def register_reject_if(rpc_spec, reject_if):
+    rpc_spec.reject_if = reject_if
+    return reject_if
 
 
 #: The :class:`RPCSpec` with default values.
-DEFAULT_RPC_SPEC = RPCSpec(*inspect.getargspec(_spec_as_rpc).defaults)
+NULL_RPC_SPEC = RPCSpec()
+
+
+def _rpc(f, name=None, pass_call=False, reject_if=None):
+    if name is None:
+        name = f.__name__
+    rpc_spec = RPCSpec(name, pass_call)
+    setattr(f, RPC_SPEC_ATTR, rpc_spec)
+    f.reject_if = functools.partial(register_reject_if, rpc_spec)
+    if reject_if is not None:
+        f.reject_if(reject_if)
+    return f
 
 
 def rpc(f=None, **kwargs):
-    """Spec a method as RPC."""
+    """Marks a method as RPC."""
     if f is not None:
         if isinstance(f, basestring):
             if 'name' in kwargs:
@@ -66,7 +62,7 @@ def rpc(f=None, **kwargs):
             kwargs['name'] = f
         else:
             return rpc(**kwargs)(f)
-    return functools.partial(_spec_as_rpc, **kwargs)
+    return functools.partial(_rpc, **kwargs)
 
 
 def rpc_spec_table(app):
@@ -80,6 +76,6 @@ def rpc_spec_table(app):
     return table
 
 
-def get_rpc_spec(f, default=DEFAULT_RPC_SPEC):
+def get_rpc_spec(f, default=NULL_RPC_SPEC):
     """Gets an RPC spec from a method."""
     return getattr(f, RPC_SPEC_ATTR, default)
