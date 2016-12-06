@@ -546,12 +546,14 @@ class Collector(Background):
 
     socket = None
     topic = None
+    trace = None
     unpack = None
 
-    def __init__(self, socket, topic='', unpack=UNPACK):
+    def __init__(self, socket, topic='', trace=None, unpack=UNPACK):
         super(Collector, self).__init__()
         self.socket = socket
         self.topic = topic
+        self.trace = None
         self.unpack = unpack
         self.results = {}
         self.result_queues = {}
@@ -561,6 +563,7 @@ class Collector(Background):
             raise KeyError('call-{0} already prepared'.format(call_id))
         self.results[call_id] = {}
         self.result_queues[call_id] = Queue()
+        self.trace and self.trace(0, (call_id,))
 
     def establish(self, call_id, timeout, limit=None,
                   retry=None, max_retries=None):
@@ -613,8 +616,10 @@ class Collector(Background):
                 # TODO: warn MalformedMessage
                 continue
             method, call_id, reply_id = header
-            reply = Reply(ord(method), call_id, reply_id)
+            method = ord(method)
+            reply = Reply(method, call_id, reply_id)
             value = self.unpack(payload)
+            self.trace and self.trace(method, (call_id, reply_id, value))
             del header, payload, method, call_id, reply_id
             try:
                 self.dispatch_reply(reply, value)

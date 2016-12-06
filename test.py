@@ -1046,6 +1046,33 @@ def test_require_rpc_specs(worker, push, collector):
         customer.call('_zeronimo').wait()
 
 
+def test_trace(worker, push, collector):
+    # Log traced events.
+    traced = []
+    def trace(method, args):
+        traced.append((method,) + args)
+    collector.trace = trace
+    customer = zeronimo.Customer(push, collector, timeout=0.1)
+    customer.call('zeronimo').get()
+    assert traced[0][0] == 0
+    call_id = traced[0][1]
+    assert traced[1][:2] == (zeronimo.messaging.ACCEPT, call_id)
+    reply_id = traced[1][2]
+    assert traced[1][3] == worker.info
+    assert traced[2] == (zeronimo.messaging.RETURN,
+                         call_id, reply_id, 'zeronimo')
+    # Trace RPC execution time.
+    def trace_time(mem, method, args):
+        if method == 0:
+            mem.called_at = time.time()
+        elif method == zeronimo.messaging.RETURN:
+            mem.returned_at = time.time()
+    mem = type('', (), {})()
+    collector.trace = lambda *x: trace_time(mem, *x)
+    customer.call('sleep', 0.1).get()
+    assert 0.1 <= mem.returned_at - mem.called_at < 0.2
+
+
 # catch leaks
 
 
