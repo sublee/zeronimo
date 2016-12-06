@@ -615,12 +615,12 @@ class Collector(Background):
             except:
                 # TODO: warn MalformedMessage
                 continue
-            method, call_id, reply_id = header
+            method, call_id, task_id = header
             method = ord(method)
-            reply = Reply(method, call_id, reply_id)
+            reply = Reply(method, call_id, task_id)
             value = self.unpack(payload)
-            self.trace and self.trace(method, (call_id, reply_id, value))
-            del header, payload, method, call_id, reply_id
+            self.trace and self.trace(method, (call_id, task_id, value))
+            del header, payload, method, call_id, task_id
             try:
                 self.dispatch_reply(reply, value)
             except KeyError:
