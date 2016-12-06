@@ -442,7 +442,7 @@ class _Caller(object):
                 safe(send, self.socket, header, payload, topics, zmq.NOBLOCK)
             except zmq.Again:
                 raise Undelivered('emission was not delivered')
-        col.prepare(call_id)
+        col.prepare(call_id, name, args, kwargs)
         send_call()
         return col.establish(call_id, self.timeout, limit,
                              send_call if retry else None,
@@ -558,12 +558,12 @@ class Collector(Background):
         self.results = {}
         self.result_queues = {}
 
-    def prepare(self, call_id):
+    def prepare(self, call_id, name, args, kwargs):
         if call_id in self.results:
             raise KeyError('call-{0} already prepared'.format(call_id))
         self.results[call_id] = {}
         self.result_queues[call_id] = Queue()
-        self.trace and self.trace(0, (call_id,))
+        self.trace and self.trace(0, (call_id, name, args, kwargs))
 
     def establish(self, call_id, timeout, limit=None,
                   retry=None, max_retries=None):

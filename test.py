@@ -1054,8 +1054,9 @@ def test_trace(worker, push, collector):
     collector.trace = trace
     customer = zeronimo.Customer(push, collector, timeout=0.1)
     customer.call('zeronimo').get()
-    assert traced[0][0] == 0
+    assert len(traced) == 3
     call_id = traced[0][1]
+    assert traced[0] == (0, call_id, 'zeronimo', (), {})
     assert traced[1][:2] == (zeronimo.messaging.ACCEPT, call_id)
     reply_id = traced[1][2]
     assert traced[1][3] == worker.info
