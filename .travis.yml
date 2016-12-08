@@ -4,7 +4,7 @@ python:
 env:
   global:
   # Target versions:
-  - ZMQ_VERSION=4.1.5
+  - ZMQ_VERSION=4.2.0
   - PYZMQ_VERSION=15.4.0
   matrix:
   -
@@ -29,6 +29,8 @@ env:
   - PYZMQ_VERSION=14.0.1
   - PYZMQ_VERSION=14.0.0
   # Older ZeroMQ versions:
+  - ZMQ_VERSION=4.1.6
+  - ZMQ_VERSION=4.1.5
   - ZMQ_VERSION=4.1.4
   - ZMQ_VERSION=4.1.3
   - ZMQ_VERSION=4.1.2
