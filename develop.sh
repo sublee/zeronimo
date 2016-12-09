@@ -98,7 +98,7 @@ else
   pushd "$ZMQ_DIR"
 fi
 # Resolve dependencies.  It is required even though libzmq is already built.
-if [[ "$ZMQ_VERSION" == 4.1.* ]] || [[ -z "$ZMQ_VERSION" ]]
+if [[ "$ZMQ_VERSION" == 4.* ]] || [[ -z "$ZMQ_VERSION" ]]
 then
   sudo apt-get install -y libpgm-dev
   # ZeroMQ installation fails with libsodium-1.0.6:
