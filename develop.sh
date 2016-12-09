@@ -7,11 +7,11 @@ function help {
 }
 
 function info {
-  tput setf 2 && echo $@ && tput sgr0
+  tput setf 2 && echo "$@" && tput sgr0
 }
 
 [[ -z "$1" ]] && help
-BUILD_DIR=$(readlink -f $1)
+BUILD_DIR=$(readlink -f "$1")
 shift
 
 for arg in "$@"
@@ -42,8 +42,8 @@ else
 fi
 info "Installing ${ZMQ_STRING} and ${PYZMQ_STRING} under ${BUILD_DIR}..."
 
-mkdir -p $BUILD_DIR
-pushd $BUILD_DIR
+mkdir -p "$BUILD_DIR"
+pushd "$BUILD_DIR"
 
 ### ZeroMQ ####################################################################
 
@@ -67,7 +67,10 @@ else
   ZMQ_DIR="${BUILD_DIR}/zeromq-${ZMQ_RELEASE}"
   if [[ ! -d $ZMQ_DIR ]]
   then
-    if [[ "$ZMQ_VERSION" == 4.1.* ]]
+    if [[ "$ZMQ_VERSION" == 4.2.* ]]
+    then
+      ZMQ_REPO="libzmq"
+    elif [[ "$ZMQ_VERSION" == 4.1.* ]]
     then
       ZMQ_REPO="zeromq4-1"
     elif [[ "$ZMQ_VERSION" == 4.* ]]
@@ -84,15 +87,15 @@ else
     ZMQ_URL="$ZMQ_REPO_URL/releases/download"
     ZMQ_URL="$ZMQ_URL/v$ZMQ_RELEASE"
     ZMQ_URL="$ZMQ_URL/zeromq-$ZMQ_VERSION.tar.gz"
-    if ! curl -L $ZMQ_URL | tar xz
+    if ! curl -L "$ZMQ_URL" | tar xz
     then
       # There's no release.  Build from a commit archive.
       ZMQ_URL="$ZMQ_REPO_URL/archive/v$ZMQ_VERSION.tar.gz"
-      curl -L $ZMQ_URL | tar xz
+      curl -L "$ZMQ_URL" | tar xz
       ZMQ_DIR="${BUILD_DIR}/${ZMQ_REPO}-${ZMQ_VERSION}"
     fi
   fi
-  pushd $ZMQ_DIR
+  pushd "$ZMQ_DIR"
 fi
 # Resolve dependencies.  It is required even though libzmq is already built.
 if [[ "$ZMQ_VERSION" == 4.1.* ]] || [[ -z "$ZMQ_VERSION" ]]
@@ -105,14 +108,15 @@ then
   if [[ ! -f "$LIBSODIUM_BUILT" ]]
   then
     rm -rf "$LIBSODIUM_DIR"
-    git clone -b 1.0.5 https://github.com/jedisct1/libsodium.git $LIBSODIUM_DIR
-    pushd $LIBSODIUM_DIR
+    git clone -b 1.0.5 \
+      https://github.com/jedisct1/libsodium.git "$LIBSODIUM_DIR"
+    pushd "$LIBSODIUM_DIR"
     ./autogen.sh
     ./configure
     make check
     touch "$LIBSODIUM_BUILT"
   else
-    pushd $LIBSODIUM_DIR
+    pushd "$LIBSODIUM_DIR"
   fi
   sudo make install
   sudo ldconfig
@@ -129,12 +133,12 @@ else
   info "Building ${ZMQ_STRING}..."
   [[ -f autogen.sh ]] && ./autogen.sh
   sudo apt-get install -y autoconf libtool
-  ./configure --with-pgm --prefix=$BUILD_DIR/local
+  ./configure --with-pgm --prefix"=$BUILD_DIR"/local
   make
   # Mark as built.
   [[ -n "$ZMQ_BUILT" ]] && touch "$ZMQ_BUILT"
 fi
-rm -rf $BUILD_DIR/local
+rm -rf "$BUILD_DIR"/local
 make install
 popd
 
@@ -149,9 +153,10 @@ if [[ -d "$PYZMQ_DIR" ]]
 then
   pushd "$PYZMQ_DIR"
   git fetch origin
-  git checkout v$PYZMQ_VERSION
+  git checkout v"$PYZMQ_VERSION"
 else
-  git clone -b v$PYZMQ_VERSION https://github.com/zeromq/pyzmq.git "$PYZMQ_DIR"
+  git clone -b v"$PYZMQ_VERSION" \
+    https://github.com/zeromq/pyzmq.git "$PYZMQ_DIR"
   pushd "$PYZMQ_DIR"
 fi
 python setup.py clean
