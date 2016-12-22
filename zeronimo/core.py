@@ -553,7 +553,7 @@ class Collector(Background):
         super(Collector, self).__init__()
         self.socket = socket
         self.topic = topic
-        self.trace = None
+        self.trace = trace
         self.unpack = unpack
         self.results = {}
         self.result_queues = {}
