@@ -1074,6 +1074,19 @@ def test_trace(worker, push, collector):
     assert 0.1 <= mem.returned_at - mem.called_at < 0.2
 
 
+def test_raise_remote_exception(worker, push, collector):
+    customer = zeronimo.Customer(push, collector, timeout=0.1)
+    try:
+        customer.call('raise_remote_value_error', 'zeronimo').get()
+    except BaseException as exc:
+        pass
+    else:
+        assert False, 'not raised'
+    assert isinstance(exc, ValueError)
+    assert isinstance(exc, zeronimo.RemoteException)
+    assert exc.args[0] == 'zeronimo'
+
+
 # catch leaks
 
 

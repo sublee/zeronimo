@@ -33,7 +33,7 @@ from .helpers import class_name, eintr_retry_zmq as safe, FALSE_RETURNER
 from .messaging import (
     ACCEPT, ACK, BREAK, Call, PACK, RAISE, recv, REJECT, Reply, RETURN, send,
     UNPACK, YIELD)
-from .results import RemoteResult
+from .results import RemoteException, RemoteResult
 
 
 __all__ = ['Worker', 'Customer', 'Fanout', 'Collector']
@@ -344,6 +344,8 @@ class Worker(Background):
         exc_type, exc, tb = exc_info
         while tb.tb_next is not None:
             tb = tb.tb_next
+        if issubclass(exc_type, RemoteException):
+            exc_type = exc_type.exc_type
         filename, lineno = tb.tb_frame.f_code.co_filename, tb.tb_lineno
         val = (exc_type, str(exc), filename, lineno)
         try:

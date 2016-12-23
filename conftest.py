@@ -653,3 +653,6 @@ class Application(object):
         reject = self.odd
         self.odd = not self.odd
         return reject
+
+    def raise_remote_value_error(self, value='zeronimo'):
+        raise zeronimo.RemoteException.compose(ValueError)(value)

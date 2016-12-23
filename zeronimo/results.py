@@ -58,9 +58,9 @@ class RemoteResult(AsyncResult):
 
     def set_remote_exception(self, remote_exc_info):
         """Raises an exception as a :exc:`RemoteException`."""
-        exctype, excmsg, filename, lineno = remote_exc_info[:4]
-        exctype = RemoteException.compose(exctype)
-        exc = exctype(excmsg, filename, lineno, self.worker_info)
+        exc_type, exc_str, filename, lineno = remote_exc_info[:4]
+        exc_type = RemoteException.compose(exc_type)
+        exc = exc_type(exc_str, filename, lineno, self.worker_info)
         if len(remote_exc_info) > 4:
             state = remote_exc_info[4]
             exc.__setstate__(state)
@@ -113,18 +113,19 @@ class RemoteException(BaseException):
     _composed = {}
 
     @classmethod
-    def compose(cls, exctype):
+    def compose(cls, exc_type):
         try:
-            return cls._composed[exctype]
+            return cls._composed[exc_type]
         except KeyError:
-            class composed_exctype(exctype, cls):
+            class composed_exc_type(exc_type, cls):
                 __init__ = cls.__init__
-            composed_exctype.exctype = exctype
-            composed_exctype.__name__ = exctype.__name__ + '(Remote)'
-            # avoid to start with dot in traceback
-            composed_exctype.__module__ = 'exceptions'
-            cls._composed[exctype] = composed_exctype
-            return composed_exctype
+            composed_exc_type.exc_type = exc_type
+            composed_exc_type.exctype = exc_type  # For backward compatibility.
+            composed_exc_type.__name__ = exc_type.__name__ + '(Remote)'
+            # Avoid to start with dot in traceback.
+            composed_exc_type.__module__ = 'exceptions'
+            cls._composed[exc_type] = composed_exc_type
+            return composed_exc_type
 
     def __init__(self, message, filename=None, lineno=None, worker_info=None):
         super(RemoteException, self).__init__(message)
