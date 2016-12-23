@@ -15,7 +15,7 @@ try:
 except ImportError:
     import pickle
 
-from .helpers import eintr_retry_zmq, make_repr
+from zeronimo.helpers import eintr_retry_zmq, make_repr
 
 
 __all__ = ['ACK', 'DONE', 'ITER', 'ACCEPT', 'REJECT', 'RETURN', 'RAISE',

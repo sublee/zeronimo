@@ -25,15 +25,16 @@ except ImportError:
     uuid4_bytes = lambda: uuid.uuid4().get_bytes()
 import zmq.green as zmq
 
-from .application import NULL_RPC_SPEC, rpc_spec_table
-from .exceptions import (
+from zeronimo.application import NULL_RPC_SPEC, rpc_spec_table
+from zeronimo.exceptions import (
     EmissionError, MalformedMessage, Rejected, TaskClosed, Undelivered,
     WorkerNotFound)
-from .helpers import class_name, eintr_retry_zmq as safe, FALSE_RETURNER
-from .messaging import (
+from zeronimo.helpers import (
+    class_name, eintr_retry_zmq as safe, FALSE_RETURNER)
+from zeronimo.messaging import (
     ACCEPT, ACK, BREAK, Call, PACK, RAISE, recv, REJECT, Reply, RETURN, send,
     UNPACK, YIELD)
-from .results import RemoteException, RemoteResult
+from zeronimo.results import RemoteException, RemoteResult
 
 
 __all__ = ['Worker', 'Customer', 'Fanout', 'Collector']

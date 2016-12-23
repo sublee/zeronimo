@@ -14,7 +14,7 @@ from __future__ import absolute_import
 import functools
 import inspect
 
-from .helpers import FALSE_RETURNER
+from zeronimo.helpers import FALSE_RETURNER
 
 
 __all__ = ['NULL_RPC_SPEC', 'rpc', 'rpc_spec_table', 'get_rpc_spec']

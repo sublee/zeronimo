@@ -11,13 +11,13 @@
 """
 from __future__ import absolute_import
 
-from .__about__ import __version__  # noqa
-from .application import get_rpc_spec, rpc
-from .core import Collector, Customer, Fanout, Worker
-from .exceptions import (
+from zeronimo.__about__ import __version__  # noqa
+from zeronimo.application import get_rpc_spec, rpc
+from zeronimo.core import Collector, Customer, Fanout, Worker
+from zeronimo.exceptions import (
     EmissionError, MalformedMessage, Rejected, TaskClosed, TaskError,
     Undelivered, WorkerNotFound, ZeronimoException)
-from .results import RemoteException, RemoteResult
+from zeronimo.results import RemoteException, RemoteResult
 
 
 __all__ = [

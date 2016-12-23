@@ -14,9 +14,9 @@ from binascii import hexlify
 from gevent.event import AsyncResult
 from gevent.queue import Queue
 
-from .exceptions import TaskClosed
-from .helpers import make_repr
-from .messaging import BREAK, DONE, RAISE, RETURN, YIELD
+from zeronimo.exceptions import TaskClosed
+from zeronimo.helpers import make_repr
+from zeronimo.messaging import BREAK, DONE, RAISE, RETURN, YIELD
 
 
 __all__ = ['RemoteResult', 'RemoteException', 'RemoteIterator']
