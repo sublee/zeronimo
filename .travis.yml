@@ -84,7 +84,7 @@ cache:
   pip: true
   directories: [.develop]
 before_install:
-- sudo apt-get update -qq
+- sudo apt update -qq
 - ./develop.sh .develop --zmq="$ZMQ_VERSION" --pyzmq="$PYZMQ_VERSION"
 install:
 - pip install -e $TRAVIS_BUILD_DIR

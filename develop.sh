@@ -37,8 +37,10 @@ fi
 if [[ -z "$PYZMQ_VERSION" ]]
 then
   PYZMQ_STRING="the latest pyzmq"
+  PYZMQ_REF=master
 else
   PYZMQ_STRING="pyzmq-${PYZMQ_VERSION}"
+  PYZMQ_REF=v"$PYZMQ_VERSION"
 fi
 info "Installing ${ZMQ_STRING} and ${PYZMQ_STRING} under ${BUILD_DIR}..."
 
@@ -98,9 +100,10 @@ else
   pushd "$ZMQ_DIR"
 fi
 # Resolve dependencies.  It is required even though libzmq is already built.
+sudo apt install -y autoconf libtool pkg-config
 if [[ "$ZMQ_VERSION" == 4.* ]] || [[ -z "$ZMQ_VERSION" ]]
 then
-  sudo apt-get install -y libpgm-dev
+  sudo apt install -y libpgm-dev
   # ZeroMQ installation fails with libsodium-1.0.6:
   # https://github.com/zeromq/libzmq/issues/1632
   LIBSODIUM_DIR="${BUILD_DIR}/libsodium"
@@ -123,7 +126,7 @@ then
   popd
 elif [[ "$ZMQ_VERSION" == 2.* ]]
 then
-  sudo apt-get install -y uuid-dev
+  sudo apt install -y uuid-dev
 fi
 # Build libzmq.
 if [[ -n "$ZMQ_BUILT" ]] && [[ -f "$ZMQ_BUILT" ]]
@@ -132,7 +135,6 @@ then
 else
   info "Building ${ZMQ_STRING}..."
   [[ -f autogen.sh ]] && ./autogen.sh
-  sudo apt-get install -y autoconf libtool
   ./configure --with-pgm --prefix"=$BUILD_DIR"/local
   make
   # Mark as built.
@@ -153,9 +155,9 @@ if [[ -d "$PYZMQ_DIR" ]]
 then
   pushd "$PYZMQ_DIR"
   git fetch origin
-  git checkout v"$PYZMQ_VERSION"
+  git checkout "$PYZMQ_REF"
 else
-  git clone -b v"$PYZMQ_VERSION" \
+  git clone -b "$PYZMQ_REF" \
     https://github.com/zeromq/pyzmq.git "$PYZMQ_DIR"
   pushd "$PYZMQ_DIR"
 fi
