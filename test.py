@@ -1087,8 +1087,8 @@ def test_raise_remote_exception(worker, push, collector):
     assert exc.args[0] == 'zeronimo'
 
 
-def test_parse_msgs():
-    f = zeronimo.messaging.parse_msgs
+def test_parse():
+    f = zeronimo.messaging.parse
     header, payload, topics = f(['hello', 'world', '\xff', '1', '2', '3', '4'])
     assert header == ['1', '2', '3']
     assert payload == '4'
