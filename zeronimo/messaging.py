@@ -19,7 +19,8 @@ from zeronimo.helpers import eintr_retry_zmq, make_repr
 
 
 __all__ = ['ACK', 'DONE', 'ITER', 'ACCEPT', 'REJECT', 'RETURN', 'RAISE',
-           'YIELD', 'BREAK', 'PACK', 'UNPACK', 'Call', 'Reply', 'send', 'recv']
+           'YIELD', 'BREAK', 'PACK', 'UNPACK', 'Call', 'Reply', 'send', 'recv',
+           'parse_msgs']
 
 
 # Method masks:
@@ -96,6 +97,10 @@ def recv(socket, flags=0, capture=(lambda msgs: None)):
     """
     msgs = eintr_retry_zmq(socket.recv_multipart, flags)
     capture(msgs)
+    return parse_msgs(msgs)
+
+
+def parse_msgs(msgs):
     try:
         seam = msgs.index(SEAM)
     except ValueError:
