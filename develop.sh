@@ -7,7 +7,9 @@ function help {
 }
 
 function info {
-  tput setf 2 && echo "$@" && tput sgr0
+  tput setf 2 || true
+  echo "$@"
+  tput sgr0 || true
 }
 
 [[ -z "$1" ]] && help
