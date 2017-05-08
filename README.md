@@ -1,11 +1,11 @@
 Zeronimo!
 =========
 
-[![Build Status]
-(https://img.shields.io/travis/sublee/zeronimo.svg)
+[![Build Status](
+https://img.shields.io/travis/sublee/zeronimo.svg)
 ](https://travis-ci.org/sublee/zeronimo)
-[![Coverage Status]
-(https://img.shields.io/coveralls/sublee/zeronimo.svg)
+[![Coverage Status](
+https://img.shields.io/coveralls/sublee/zeronimo.svg)
 ](https://coveralls.io/r/sublee/zeronimo)
 
 RPC between distributed workers.
