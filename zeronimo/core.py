@@ -18,12 +18,12 @@ from warnings import warn
 from gevent import Greenlet, GreenletExit, Timeout
 from gevent.pool import Group
 from gevent.queue import Queue
-from six import reraise, StringIO
+from six import reraise, StringIO, string_types, viewvalues
 try:
     from libuuid import uuid4_bytes
 except ImportError:
     import uuid
-    uuid4_bytes = lambda: uuid.uuid4().get_bytes()
+    uuid4_bytes = lambda: uuid.uuid4().bytes
 import zmq.green as zmq
 
 from zeronimo.application import NULL_RPC_SPEC, rpc_spec_table
@@ -60,8 +60,8 @@ FANOUT_TIMEOUT = 0.1
 
 
 # Used for a value for `reply_to`:
-NO_REPLY = '\x00'
-DUPLEX = '\x01'
+NO_REPLY = b'\x00'
+DUPLEX = b'\x01'
 
 
 ENCODING = 'utf-8'
@@ -432,7 +432,7 @@ class _Caller(object):
             self.timeout = timeout
 
     def _call_nowait(self, hints, name, args, kwargs, topics=(), raw=False):
-        header = [name.encode(ENCODING), '', NO_REPLY]
+        header = [name.encode(ENCODING), b'', NO_REPLY]
         header.extend(self.hints)
         header.extend(hints)
         payload = self._pack(args, kwargs, raw)
@@ -491,7 +491,7 @@ class _Caller(object):
 
 
 def split_call_args(args, start=0):
-    if isinstance(args[start], basestring):
+    if isinstance(args[start], string_types):
         name, args = args[start], args[start + 1:]
         hints = ()
     else:
@@ -640,8 +640,8 @@ class Collector(Background):
                 break
             except zmq.ZMQError:
                 exc = TaskClosed('Collector socket closed')
-                for results in self.results.viewvalues():
-                    for result in results.viewvalues():
+                for results in viewvalues(self.results):
+                    for result in viewvalues(results):
                         result.set_exception(exc)
                 break
             except:

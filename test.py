@@ -12,6 +12,7 @@ from gevent.pool import Pool
 from psutil import Process
 import pytest
 from six import reraise
+from six.moves import range
 import zmq.green as zmq
 
 from conftest import Application, link_sockets, rand_str, running, sync_pubsub
@@ -68,9 +69,9 @@ def test_messaging(socket, addr, topic):
     push = socket(zmq.PUSH)
     pull = socket(zmq.PULL)
     link_sockets(addr, push, [pull])
-    for t in ['', topic]:
-        zeronimo.messaging.send(push, ['doctor'], 'who', (t,))
-        assert zeronimo.messaging.recv(pull) == (['doctor'], 'who', [t])
+    for t in [b'', topic]:
+        zeronimo.messaging.send(push, [b'doctor'], b'who', (t,))
+        assert zeronimo.messaging.recv(pull) == ([b'doctor'], b'who', [t])
     with pytest.raises(TypeError):
         zeronimo.messaging.send(push, 1)
 
@@ -108,7 +109,7 @@ def test_fixtures(worker, push, pub, collector, addr1, addr2):
 def test_nowait(worker, push):
     customer = zeronimo.Customer(push)
     assert worker.app.counter['zeronimo'] == 0
-    for x in xrange(5):
+    for x in range(5):
         assert customer.call('zeronimo') is None
     assert worker.app.counter['zeronimo'] == 0
     gevent.sleep(0.01)
@@ -157,9 +158,9 @@ def test_raise(worker, collector, push):
 
 def test_iterator(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
-    assert isinstance(customer.call('xrange', 1, 100, 10).get(), xrange)
+    assert isinstance(customer.call('range', 1, 100, 10).get(), range)
     assert \
-        list(customer.call('iter_xrange', 1, 100, 10).get()) == \
+        list(customer.call('iter_range', 1, 100, 10).get()) == \
         range(1, 100, 10)
     assert \
         set(customer.call('iter_dict_view', 1, 100, 10).get()) == \
@@ -232,7 +233,7 @@ def test_reject(worker1, worker2, collector, push, pub, topic, monkeypatch):
     fanout = zeronimo.Fanout(pub, collector)
     def count_workers(iteration=10):
         worker_infos = set()
-        for x in xrange(iteration):
+        for x in range(iteration):
             worker_infos.add(tuple(customer.call('zeronimo').worker_info))
         return len(worker_infos)
     # count accepted workers.
@@ -437,7 +438,7 @@ def test_concurrent_collector(worker, collector, push, pub, topic):
         assert get_results(fanout.emit(topic, 'zeronimo')) == ['zeronimo']
         done.append(True)
     times = 5
-    joinall([spawn(do_test) for x in xrange(times)], raise_error=True)
+    joinall([spawn(do_test) for x in range(times)], raise_error=True)
     assert len(done) == times
 
 
@@ -1145,7 +1146,7 @@ initial_conns = collect_conns()
 
 @pytest.mark.trylast
 def test_no_socket_leak():
-    for x in xrange(3):
+    for x in range(3):
         conns = collect_conns() - initial_conns
         if not conns:
             break

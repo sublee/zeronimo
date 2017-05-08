@@ -37,7 +37,7 @@ YIELD = ITER | 0b01
 BREAK = ITER | DONE | 0b10
 
 #: The seam between topics (prefixes) and header-payload.
-SEAM = '\xff'
+SEAM = b'\xff'
 
 
 #: The default function to pack message.

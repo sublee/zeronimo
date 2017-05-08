@@ -15,7 +15,8 @@ import gevent
 from gevent import socket
 import pytest
 from singledispatch import singledispatch
-from six import reraise
+from six import reraise, viewkeys
+from six.moves import range
 import zmq.green as zmq
 
 import zeronimo
@@ -66,7 +67,8 @@ fanout_fixtures = set([
 
 
 def rand_str(size=6):
-    return ''.join(random.choice(string.ascii_lowercase) for x in xrange(size))
+    return ''.join(random.choice(string.ascii_lowercase)
+                   for x in range(size)).encode('ascii')
 
 
 class AddressGenerator(object):
@@ -221,7 +223,7 @@ def incremental_patience(config):
         @functools.wraps(f)
         def patience_increased(**kwargs):
             patience = config.option.patience
-            for x in xrange(5):
+            for x in range(5):
                 kwargs['patience'] = patience
                 try:
                     return f(**kwargs)
@@ -347,7 +349,7 @@ def resolve_fixtures(f, request, protocol):
         def resolve_socket_fixtures(val, param):
             socket_params.add(param)
             return val
-        for param, val in kwargs.iteritems():
+        for param, val in kwargs.items():
             if issubclass(val.__class__, object):
                 kwargs[param] = resolve_fixture(val, param)
         # Resolve worker PUB fixtures.
@@ -553,14 +555,14 @@ class Application(object):
         """a + b."""
         return a + b
 
-    def xrange(self, *args):
-        return xrange(*args)
+    def range(self, *args):
+        return range(*args)
 
     def dict_view(self, *args):
-        return dict((x, x) for x in xrange(*args)).viewkeys()
+        return viewkeys(dict((x, x) for x in range(*args)))
 
-    def iter_xrange(self, *args):
-        return iter(self.xrange(*args))
+    def iter_range(self, *args):
+        return iter(self.range(*args))
 
     def iter_dict_view(self, *args):
         return iter(self.dict_view(*args))
@@ -587,7 +589,7 @@ class Application(object):
         return seconds
 
     def sleep_multiple(self, seconds, times=1):
-        for x in xrange(times):
+        for x in range(times):
             gevent.sleep(seconds)
             yield x
 
