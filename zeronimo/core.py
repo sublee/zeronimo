@@ -409,17 +409,21 @@ class _Caller(object):
 
     socket = None
     collector = None
+    hints = ()
     pack = None
 
-    def __init__(self, socket, collector=None, timeout=None, pack=PACK):
+    def __init__(self, socket, collector=None, timeout=None,
+                 hints=(), pack=PACK):
         self.socket = socket
         self.collector = collector
+        self.hints = hints
         self.pack = pack
         if timeout is not None:
             self.timeout = timeout
 
     def _call_nowait(self, hints, name, args, kwargs, topics=(), raw=False):
         header = [name.encode(ENCODING), '', NO_REPLY]
+        header.extend(self.hints)
         header.extend(hints)
         payload = self._pack(args, kwargs, raw)
         try:
@@ -437,6 +441,7 @@ class _Caller(object):
         reply_to = (DUPLEX if self.socket is col.socket else col.topic)
         # Normal tuple is faster than namedtuple.
         header = [name.encode(ENCODING), call_id, reply_to]
+        header.extend(self.hints)
         header.extend(hints)
         payload = self._pack(args, kwargs, raw)
         # Use short names.

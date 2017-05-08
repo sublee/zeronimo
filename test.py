@@ -982,9 +982,9 @@ def test_unicode(worker, push, collector):
 
 def test_hints(worker, pub, collector, topic):
     fanout = zeronimo.Fanout(pub, collector)
+    worker.reject_if = lambda call, topics: 'reject' in call.hints
     r = fanout.emit(topic, ['hello', 'world'], 'zeronimo')
     assert get_results(r) == ['zeronimo']
-    worker.reject_if = lambda call, topics: 'reject' in call.hints
     r = fanout.emit(topic, ['hello', 'world'], 'zeronimo')
     assert get_results(r) == ['zeronimo']
     r = fanout.emit(topic, ['reject'], 'zeronimo')
@@ -993,6 +993,15 @@ def test_hints(worker, pub, collector, topic):
     assert get_results(r) == []
     r = fanout.emit(topic, ['hello', 'world'], 'hints')
     assert get_results(r) == [('hello', 'world')]
+
+
+def test_bound_hints(worker, pub, collector, topic):
+    fanout = zeronimo.Fanout(pub, collector, hints=['reject'])
+    r = fanout.emit(topic, ['hello', 'world'], 'zeronimo')
+    assert get_results(r) == ['zeronimo']
+    worker.reject_if = lambda call, topics: 'reject' in call.hints
+    r = fanout.emit(topic, ['hello', 'world'], 'zeronimo')
+    assert get_results(r) == []
 
 
 def test_raw(worker, push, pub, collector, topic):
