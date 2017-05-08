@@ -80,8 +80,8 @@ class Background(object):
 
     def __call__(self):
         # should be implemented by subclass.
-        raise NotImplementedError('{0} has no __call__ implementation'
-                                  ''.format(class_name(self)))
+        raise NotImplementedError('%s has no __call__ implementation'
+                                  '' % class_name(self))
 
     def run(self):
         try:
@@ -95,7 +95,7 @@ class Background(object):
         if self.is_running():
             if silent:
                 return
-            raise RuntimeError('{0} already running'.format(class_name(self)))
+            raise RuntimeError('%s already running' % class_name(self))
         self.greenlet = self.greenlet_class.spawn(self.run)
         self.greenlet.join(0)
         return self.greenlet
@@ -104,12 +104,12 @@ class Background(object):
         if not self.is_running():
             if silent:
                 return
-            raise RuntimeError('{0} not running'.format(class_name(self)))
+            raise RuntimeError('%s not running' % class_name(self))
         self.greenlet.kill(block=True)
 
     def wait(self, timeout=None):
         if not self.is_running():
-            raise RuntimeError('{0} not running'.format(class_name(self)))
+            raise RuntimeError('%s not running' % class_name(self))
         self.greenlet.join(timeout)
 
     def is_running(self):
@@ -591,7 +591,7 @@ class Collector(Background):
 
     def prepare(self, call_id, caller, name, args, kwargs):
         if call_id in self.results:
-            raise KeyError('call-{0} already prepared'.format(call_id))
+            raise KeyError('call-%s already prepared' % call_id)
         self.results[call_id] = {}
         self.result_queues[call_id] = Queue()
         self.trace and self.trace(0, (call_id, caller, name, args, kwargs))
@@ -625,8 +625,9 @@ class Collector(Background):
             self.remove_result_queue(call_id)
         if not results:
             if rejected:
-                raise Rejected('{0} workers rejected'.format(rejected)
-                               if rejected != 1 else 'A worker rejected')
+                raise Rejected('%d workers rejected' % rejected
+                               if rejected != 1 else
+                               'A worker rejected')
             else:
                 raise WorkerNotFound('failed to find worker')
         return results

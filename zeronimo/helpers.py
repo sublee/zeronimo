@@ -64,11 +64,11 @@ def make_repr(obj, params=None, keywords=None, data=None, name=None,
             _repr_attr(obj, attr, data, reprs) for attr in params))
     if keywords is not None:
         opts.append(', '.join(
-            '{0}={1}'.format(attr, _repr_attr(obj, attr, data, reprs))
+            '%s=%s' % (attr, _repr_attr(obj, attr, data, reprs))
             for attr in keywords))
     if name is None:
         name = class_name(obj)
-    return '{0}({1})'.format(name, ', '.join(opts))
+    return '%s(%s)' % (name, ', '.join(opts))
 
 
 _socket_type_names = {}
