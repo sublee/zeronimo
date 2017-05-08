@@ -204,7 +204,7 @@ def get_testing_protocols(metafunc):
     elif 'pgm' in testing_protocols:
         # check CAP_NET_RAW
         try:
-            socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+            sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
         except socket.error as e:
             if e.errno in [1, 2]:
                 # [1] Operation not permitted
@@ -213,6 +213,8 @@ def get_testing_protocols(metafunc):
                 raise OSError('Enable the CAP_NET_RAW capability to use PGM:\n'
                               '$ sudo setcap CAP_NET_RAW=ep '
                               '$(readlink -f $(which python))')
+        finally:
+            sock.close()
     return testing_protocols
 
 
