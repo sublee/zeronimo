@@ -861,7 +861,7 @@ def test_xpub_sub(socket, addr, reply_sockets, topic):
     worker_sub.bind(addr)
     customer_xpub = socket(zmq.XPUB)
     customer_xpub.connect(addr)
-    assert customer_xpub.recv() == b'\x01%s' % topic
+    assert customer_xpub.recv() == b'\x01' + topic
     reply_sock, (collector_sock, reply_topic) = reply_sockets()
     worker = zeronimo.Worker(Application(), [worker_sub], reply_sock)
     collector = zeronimo.Collector(collector_sock, reply_topic)
