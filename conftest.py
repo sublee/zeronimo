@@ -68,7 +68,7 @@ fanout_fixtures = set([
 
 def rand_str(size=6):
     return ''.join(random.choice(string.ascii_lowercase)
-                   for x in range(size)).encode('ascii')
+                   for x in range(size)).encode()
 
 
 class AddressGenerator(object):
@@ -87,7 +87,7 @@ class AddressGenerator(object):
             pass
         pipe = None
         while pipe is None or os.path.exists(pipe):
-            pipe = os.path.join(FEED_DIR, rand_str())
+            pipe = os.path.join(FEED_DIR, rand_str().decode())
         return 'ipc://{0}'.format(pipe)
 
     @classmethod
