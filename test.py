@@ -796,6 +796,7 @@ def test_many_calls(request, monkeypatch):
     monkeypatch.setattr(zmq.Poller, 'poll', lambda *a, **k: infinite_events())
     # Emit many calls.
     signal.alarm(10)
+    request.addfinalizer(lambda: signal.alarm(0))
     worker.start()
     request.addfinalizer(worker.stop)
     gevent.sleep(1)
