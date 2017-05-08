@@ -11,6 +11,7 @@ from gevent import joinall, spawn
 from gevent.pool import Pool
 from psutil import Process
 import pytest
+from six import reraise
 import zmq.green as zmq
 
 from conftest import Application, link_sockets, rand_str, running, sync_pubsub
@@ -514,7 +515,7 @@ def test_malformed_message_handler(worker, push, capsys):
     messages = []
     def malformed_message_handler(worker, exc_info, msgs):
         messages.append(msgs)
-        raise exc_info[0], exc_info[1], exc_info[2]
+        reraise(*exc_info)
     worker.malformed_message_handler = malformed_message_handler
     push.send('Zeronimo!')
     worker.wait()

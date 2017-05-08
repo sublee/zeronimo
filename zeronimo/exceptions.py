@@ -10,6 +10,8 @@
 from contextlib import contextmanager
 import sys
 
+from six import reraise
+
 
 __all__ = [
     'ZeronimoException', 'EmissionError', 'TaskError', 'WorkerNotFound',
@@ -77,4 +79,4 @@ class MalformedMessage(ZeronimoException, RuntimeWarning):
             yield
         except BaseException as exception:
             __, __, tb = sys.exc_info()
-            raise cls, cls(exception, message_parts), tb
+            reraise(cls, cls(exception, message_parts), tb)

@@ -15,6 +15,7 @@ import gevent
 from gevent import socket
 import pytest
 from singledispatch import singledispatch
+from six import reraise
 import zmq.green as zmq
 
 import zeronimo
@@ -137,7 +138,7 @@ def pytest_addoption(parser):
 
 def pytest_report_header(config, startdir):
     versions = (zmq.zmq_version(), zmq.__version__)
-    print 'zmq: zmq-%s, pyzmq-%s' % versions
+    print('zmq: zmq-%s, pyzmq-%s' % versions)
 
 
 def pytest_unconfigure(config):
@@ -155,7 +156,7 @@ def pytest_generate_tests(metafunc):
         has_fanout_fixtures = False
         for param in metafunc.fixturenames:
             for pattern, fixture in sorted(fixtures.items(),
-                                           key=lambda (k, v): len(k),
+                                           key=lambda kv: len(kv[0]),
                                            reverse=True):
                 if fnmatch(param, pattern):
                     if fixture in fanout_fixtures:
@@ -230,7 +231,7 @@ def incremental_patience(config):
                     exctype, exc, traceback = sys.exc_info()
                     patience *= 2
                     warnings.warn('Patience increased to {0}'.format(patience))
-            raise exctype, exc, traceback
+            raise reraise(exctype, exc, traceback)
         return patience_increased
     return decorator
 
@@ -389,7 +390,7 @@ def resolve_fixtures(f, request, protocol):
             return f(**kwargs)
         except:
             exc_info = sys.exc_info()
-            raise exc_info[0], exc_info[1], exc_info[2].tb_next
+            reraise(exc_info[0], exc_info[1], exc_info[2].tb_next)
     return fixture_resolved
 
 

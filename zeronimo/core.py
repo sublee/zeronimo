@@ -11,7 +11,6 @@ from __future__ import absolute_import
 
 from collections import Iterator
 from contextlib import contextmanager
-from StringIO import StringIO
 import sys
 import traceback
 from warnings import warn
@@ -19,6 +18,7 @@ from warnings import warn
 from gevent import Greenlet, GreenletExit, Timeout
 from gevent.pool import Group
 from gevent.queue import Queue
+from six import reraise, StringIO
 try:
     from libuuid import uuid4_bytes
 except ImportError:
@@ -127,7 +127,7 @@ def default_exception_handler(worker, exc_info):
     """The default exception handler for :class:`Worker`.  It just raises
     the given ``exc_info``.
     """
-    raise exc_info[0], exc_info[1], exc_info[2]
+    reraise(*exc_info)
 
 
 def default_malformed_message_handler(worker, exc_info, message_parts):
@@ -288,7 +288,7 @@ class Worker(Background):
             except:
                 exc_info = sys.exc_info()
                 self.raise_(reply_socket, channel, exc_info)
-                raise exc_info[0], exc_info[1], exc_info[2]
+                reraise(*exc_info)
             success = True
         if not success:
             # catch_exceptions() hides exceptions.
@@ -309,7 +309,7 @@ class Worker(Background):
                 except:
                     exc_info = sys.exc_info()
                     self.raise_(reply_socket, channel, exc_info)
-                    raise exc_info[0], exc_info[1], exc_info[2]
+                    reraise(*exc_info)
         else:
             self.send_reply(reply_socket, RETURN, val, *channel)
 

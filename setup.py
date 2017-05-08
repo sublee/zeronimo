@@ -116,7 +116,7 @@ setup(
                  'Programming Language :: Python :: 2.7',
                  'Programming Language :: Python :: Implementation :: CPython',
                  'Topic :: Software Development'],
-    install_requires=['gevent>=1', 'pyzmq>=14'],
+    install_requires=['gevent>=1', 'pyzmq>=14', 'six'],
     test_suite='...',
     tests_require=['pytest', 'pytest-rerunfailures',
                    'psutil', 'pylru', 'singledispatch'],

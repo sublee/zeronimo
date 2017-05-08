@@ -171,8 +171,8 @@ while pip uninstall -y pyzmq 2>/dev/null; do sleep 0; done
 pip install -e .
 popd
 
-INSTALLED_ZMQ_VERSION=$(python -c "print __import__('zmq').zmq_version()")
-INSTALLED_PYZMQ_VERSION=$(python -c "print __import__('zmq').__version__")
+INSTALLED_ZMQ_VERSION=$(python -c "print(__import__('zmq').zmq_version())")
+INSTALLED_PYZMQ_VERSION=$(python -c "print(__import__('zmq').__version__)")
 if [[ -n "$ZMQ_VERSION" ]] &&
    [[ "$ZMQ_RELEASE" != "$INSTALLED_ZMQ_VERSION" ]]
 then

@@ -14,6 +14,8 @@ from __future__ import absolute_import
 import functools
 import inspect
 
+import six
+
 from zeronimo.helpers import FALSE_RETURNER
 
 
@@ -56,7 +58,7 @@ def _rpc(f, name=None, pass_call=False, reject_if=None):
 def rpc(f=None, **kwargs):
     """Marks a method as RPC."""
     if f is not None:
-        if isinstance(f, basestring):
+        if isinstance(f, six.string_types):
             if 'name' in kwargs:
                 raise ValueError('name option duplicated')
             kwargs['name'] = f
