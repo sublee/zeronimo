@@ -11,6 +11,8 @@ from gevent import joinall, spawn
 from gevent.pool import Pool
 from psutil import Process
 import pytest
+from six import reraise
+from six.moves import range
 import zmq.green as zmq
 
 from conftest import Application, link_sockets, rand_str, running, sync_pubsub
@@ -67,9 +69,9 @@ def test_messaging(socket, addr, topic):
     push = socket(zmq.PUSH)
     pull = socket(zmq.PULL)
     link_sockets(addr, push, [pull])
-    for t in ['', topic]:
-        zeronimo.messaging.send(push, ['doctor'], 'who', (t,))
-        assert zeronimo.messaging.recv(pull) == (['doctor'], 'who', [t])
+    for t in [b'', topic]:
+        zeronimo.messaging.send(push, [b'doctor'], b'who', (t,))
+        assert zeronimo.messaging.recv(pull) == ([b'doctor'], b'who', [t])
     with pytest.raises(TypeError):
         zeronimo.messaging.send(push, 1)
 
@@ -107,7 +109,7 @@ def test_fixtures(worker, push, pub, collector, addr1, addr2):
 def test_nowait(worker, push):
     customer = zeronimo.Customer(push)
     assert worker.app.counter['zeronimo'] == 0
-    for x in xrange(5):
+    for x in range(5):
         assert customer.call('zeronimo') is None
     assert worker.app.counter['zeronimo'] == 0
     gevent.sleep(0.01)
@@ -156,10 +158,10 @@ def test_raise(worker, collector, push):
 
 def test_iterator(worker, collector, push):
     customer = zeronimo.Customer(push, collector)
-    assert isinstance(customer.call('xrange', 1, 100, 10).get(), xrange)
+    assert isinstance(customer.call('range', 1, 100, 10).get(), range)
     assert \
-        list(customer.call('iter_xrange', 1, 100, 10).get()) == \
-        range(1, 100, 10)
+        list(customer.call('iter_range', 1, 100, 10).get()) == \
+        list(range(1, 100, 10))
     assert \
         set(customer.call('iter_dict_view', 1, 100, 10).get()) == \
         set(range(1, 100, 10))
@@ -231,7 +233,7 @@ def test_reject(worker1, worker2, collector, push, pub, topic, monkeypatch):
     fanout = zeronimo.Fanout(pub, collector)
     def count_workers(iteration=10):
         worker_infos = set()
-        for x in xrange(iteration):
+        for x in range(iteration):
             worker_infos.add(tuple(customer.call('zeronimo').worker_info))
         return len(worker_infos)
     # count accepted workers.
@@ -333,7 +335,7 @@ def test_device(collector, worker_pub, socket, device,
            streamer_in_addr, streamer_out_addr)
     # run forwarder
     sub = socket(zmq.SUB)
-    sub.set(zmq.SUBSCRIBE, '')
+    sub.set(zmq.SUBSCRIBE, b'')
     device(sub, socket(zmq.PUB), forwarder_in_addr, forwarder_out_addr)
     # connect to the devices
     worker_pull1 = socket(zmq.PULL)
@@ -436,7 +438,7 @@ def test_concurrent_collector(worker, collector, push, pub, topic):
         assert get_results(fanout.emit(topic, 'zeronimo')) == ['zeronimo']
         done.append(True)
     times = 5
-    joinall([spawn(do_test) for x in xrange(times)], raise_error=True)
+    joinall([spawn(do_test) for x in range(times)], raise_error=True)
     assert len(done) == times
 
 
@@ -465,7 +467,7 @@ def test_pgm_connect(socket, fanout_addr):
     if 'pgm' not in fanout_addr[:4]:
         pytest.skip()
     sub = socket(zmq.SUB)
-    sub.set(zmq.SUBSCRIBE, '')
+    sub.set(zmq.SUBSCRIBE, b'')
     sub.connect(fanout_addr)
     worker = zeronimo.Worker(None, [sub])
     worker.start()
@@ -484,24 +486,25 @@ def test_malformed_message(worker, push):
     expectations = []
     expect = expectations.append
     expect('EOFError: no seam after topics')
-    push.send('')
+    push.send(b'')
     expect('EOFError: no seam after topics')
-    push.send_multipart(['a', 'b', 'c', 'd'])
+    push.send_multipart([b'a', b'b', b'c', b'd'])
     expect('EOFError: neither header nor payload')
     push.send_multipart([zeronimo.messaging.SEAM])
-    expect('TypeError')
-    push.send_multipart([zeronimo.messaging.SEAM, 'x'])
-    expect('TypeError')
-    push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y'])
-    expect('TypeError')
-    push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y', 'z'])
+    expect('ValueError')
+    push.send_multipart([zeronimo.messaging.SEAM, b'x'])
+    expect('ValueError')
+    push.send_multipart([zeronimo.messaging.SEAM, b'x', b'y'])
+    expect('ValueError')
+    push.send_multipart([zeronimo.messaging.SEAM, b'x', b'y', b'z'])
     expect('AttributeError')
-    push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y', 'z', 'w'])
+    push.send_multipart([zeronimo.messaging.SEAM, b'x', b'y', b'z', b'w'])
     expect('AttributeError')
-    push.send_multipart([zeronimo.messaging.SEAM, 'x', 'y', 'z',
-                         'c__main__\nNOTEXIST\np0\n.'])
+    push.send_multipart([zeronimo.messaging.SEAM,
+                         b'x', b'y', b'z', b'c__main__\nNOTEXIST\np0\n.'])
     expect('UnpicklingError')
-    push.send_multipart([zeronimo.messaging.SEAM, 'zeronimo', 'y', 'z', 'w'])
+    push.send_multipart([zeronimo.messaging.SEAM,
+                         b'zeronimo', b'y', b'z', b'w'])
     with warnings.catch_warnings(record=True) as w:
         gevent.sleep(0.1)
     assert len(w) == len(expectations)
@@ -514,14 +517,14 @@ def test_malformed_message_handler(worker, push, capsys):
     messages = []
     def malformed_message_handler(worker, exc_info, msgs):
         messages.append(msgs)
-        raise exc_info[0], exc_info[1], exc_info[2]
+        reraise(*exc_info)
     worker.malformed_message_handler = malformed_message_handler
-    push.send('Zeronimo!')
+    push.send(b'Zeronimo!')
     worker.wait()
     out, err = capsys.readouterr()
     assert not worker.is_running()
     assert 'EOFError: no seam after topics' in err
-    assert ['Zeronimo!'] in messages
+    assert [b'Zeronimo!'] in messages
 
 
 @pytest.mark.flaky(reruns=3)
@@ -637,17 +640,18 @@ def test_direct_xpub_xsub(socket, addr, reply_sockets):
     with running([worker, collector]):
         assert fanout.emit('', 'zeronimo') == []
         # subscribe ''
-        worker_sock.send('\x01')
-        assert xpub.recv() == '\x01'
-        assert get_results(fanout.emit('', 'zeronimo')) == ['zeronimo']
+        worker_sock.send(b'\x01')
+        assert xpub.recv() == b'\x01'
+        assert get_results(fanout.emit(b'', 'zeronimo')) == ['zeronimo']
         # unsubscribe ''
-        worker_sock.send('\x00')
-        assert xpub.recv() == '\x00'
-        assert fanout.emit('', 'zeronimo') == []
+        worker_sock.send(b'\x00')
+        assert xpub.recv() == b'\x00'
+        assert fanout.emit(b'', 'zeronimo') == []
         # subscribe 'zeronimo'
-        worker_sock.send('\x01zeronimo')
-        assert xpub.recv() == '\x01zeronimo'
-        assert get_results(fanout.emit('zeronimo', 'zeronimo')) == ['zeronimo']
+        worker_sock.send(b'\x01zeronimo')
+        assert xpub.recv() == b'\x01zeronimo'
+        assert \
+            get_results(fanout.emit(b'zeronimo', 'zeronimo')) == ['zeronimo']
 
 
 def test_mixture(worker, collector, push):
@@ -758,8 +762,8 @@ def test_eintr_retry_zmq(itimer, signo, socket, addr):
     prev_handler = signal.signal(signo, handler)
     prev_itimer = signal.setitimer(itimer, 0.001, 0.001)
     for x in itertools.count():
-        eintr_retry_zmq(push.send, str(x))
-        assert eintr_retry_zmq(pull.recv) == str(x)
+        eintr_retry_zmq(push.send, bytes(x))
+        assert eintr_retry_zmq(pull.recv) == bytes(x)
         if len(interrupted_frames) > 100:
             break
     signal.setitimer(itimer, *prev_itimer)
@@ -769,7 +773,7 @@ def test_eintr_retry_zmq(itimer, signo, socket, addr):
 def test_many_calls(request, monkeypatch):
     worker = zeronimo.Worker(Application(), [])
     paylaod = zeronimo.messaging.PACK(((), {}))
-    parts = [zeronimo.messaging.SEAM, 'zeronimo', uuid4_bytes(), '', paylaod]
+    parts = [zeronimo.messaging.SEAM, b'zeronimo', uuid4_bytes(), b'', paylaod]
     class fake_socket(object):
         type = zmq.PULL
         x = 0
@@ -792,6 +796,7 @@ def test_many_calls(request, monkeypatch):
     monkeypatch.setattr(zmq.Poller, 'poll', lambda *a, **k: infinite_events())
     # Emit many calls.
     signal.alarm(10)
+    request.addfinalizer(lambda: signal.alarm(0))
     worker.start()
     request.addfinalizer(worker.stop)
     gevent.sleep(1)
@@ -856,7 +861,7 @@ def test_xpub_sub(socket, addr, reply_sockets, topic):
     worker_sub.bind(addr)
     customer_xpub = socket(zmq.XPUB)
     customer_xpub.connect(addr)
-    assert customer_xpub.recv() == '\x01%s' % topic
+    assert customer_xpub.recv() == b'\x01' + topic
     reply_sock, (collector_sock, reply_topic) = reply_sockets()
     worker = zeronimo.Worker(Application(), [worker_sub], reply_sock)
     collector = zeronimo.Collector(collector_sock, reply_topic)
@@ -960,13 +965,14 @@ def test_fanout_by_other_types(left_type, right_type, socket, addr1, addr2):
     worker_pub, collector_sub = socket(zmq.PUB), socket(zmq.SUB)
     worker_pub.bind(addr2)
     collector_sub.connect(addr2)
-    collector_sub.set(zmq.SUBSCRIBE, 'xxx')
-    sync_pubsub(worker_pub, [collector_sub], 'xxx')
+    collector_sub.set(zmq.SUBSCRIBE, b'xxx')
+    sync_pubsub(worker_pub, [collector_sub], b'xxx')
     worker = zeronimo.Worker(Application(), [worker_sock], worker_pub)
-    collector = zeronimo.Collector(collector_sub, 'xxx')
+    collector = zeronimo.Collector(collector_sub, b'xxx')
     fanout = zeronimo.Fanout(fanout_sock, collector)
     with running([worker]):
-        assert get_results(fanout.emit('anything', 'zeronimo')) == ['zeronimo']
+        assert \
+            get_results(fanout.emit(b'anything', 'zeronimo')) == ['zeronimo']
 
 
 def test_worker_releases_call(worker, push, collector):
@@ -982,25 +988,25 @@ def test_unicode(worker, push, collector):
 
 def test_hints(worker, pub, collector, topic):
     fanout = zeronimo.Fanout(pub, collector)
-    worker.reject_if = lambda call, topics: 'reject' in call.hints
-    r = fanout.emit(topic, ['hello', 'world'], 'zeronimo')
+    worker.reject_if = lambda call, topics: b'reject' in call.hints
+    r = fanout.emit(topic, [b'hello', b'world'], 'zeronimo')
     assert get_results(r) == ['zeronimo']
-    r = fanout.emit(topic, ['hello', 'world'], 'zeronimo')
+    r = fanout.emit(topic, [b'hello', b'world'], 'zeronimo')
     assert get_results(r) == ['zeronimo']
-    r = fanout.emit(topic, ['reject'], 'zeronimo')
+    r = fanout.emit(topic, [b'reject'], 'zeronimo')
     assert get_results(r) == []
-    r = fanout.emit(topic, ['foo', 'reject', 'bar'], 'zeronimo')
+    r = fanout.emit(topic, [b'foo', b'reject', b'bar'], 'zeronimo')
     assert get_results(r) == []
-    r = fanout.emit(topic, ['hello', 'world'], 'hints')
-    assert get_results(r) == [('hello', 'world')]
+    r = fanout.emit(topic, [b'hello', b'world'], 'hints')
+    assert get_results(r) == [(b'hello', b'world')]
 
 
 def test_bound_hints(worker, pub, collector, topic):
-    fanout = zeronimo.Fanout(pub, collector, hints=['reject'])
-    r = fanout.emit(topic, ['hello', 'world'], 'zeronimo')
+    fanout = zeronimo.Fanout(pub, collector, hints=[b'reject'])
+    r = fanout.emit(topic, [b'hello', b'world'], 'zeronimo')
     assert get_results(r) == ['zeronimo']
-    worker.reject_if = lambda call, topics: 'reject' in call.hints
-    r = fanout.emit(topic, ['hello', 'world'], 'zeronimo')
+    worker.reject_if = lambda call, topics: b'reject' in call.hints
+    r = fanout.emit(topic, [b'hello', b'world'], 'zeronimo')
     assert get_results(r) == []
 
 
@@ -1032,13 +1038,13 @@ def test_specific_reject_if(worker, push, collector):
     worker.unpack = unpack
     assert not unpack_called
     with pytest.raises(Rejected):
-        customer.call(['reject'], 'reject_by_hints').wait()
+        customer.call([b'reject'], 'reject_by_hints').wait()
     assert not unpack_called
     with pytest.raises(Rejected):
-        customer.call(['reject'], 'reject_by_hints_staticmethod').wait()
+        customer.call([b'reject'], 'reject_by_hints_staticmethod').wait()
     assert not unpack_called
     with pytest.raises(Rejected):
-        customer.call(['reject'], 'reject_by_hints_classmethod').wait()
+        customer.call([b'reject'], 'reject_by_hints_classmethod').wait()
     assert not unpack_called
     with pytest.raises(Rejected):
         customer.call('reject_by_odd_even').wait()
@@ -1087,8 +1093,8 @@ def test_raise_remote_exception(worker, push, collector):
     customer = zeronimo.Customer(push, collector, timeout=0.1)
     try:
         customer.call('raise_remote_value_error', 'zeronimo').get()
-    except BaseException as exc:
-        pass
+    except BaseException as _exc:
+        exc = _exc
     else:
         assert False, 'not raised'
     assert isinstance(exc, ValueError)
@@ -1098,10 +1104,11 @@ def test_raise_remote_exception(worker, push, collector):
 
 def test_parse():
     f = zeronimo.messaging.parse
-    header, payload, topics = f(['hello', 'world', '\xff', '1', '2', '3', '4'])
-    assert header == ['1', '2', '3']
-    assert payload == '4'
-    assert topics == ['hello', 'world']
+    header, payload, topics = f([b'hello', b'world', b'\xff',
+                                 b'1', b'2', b'3', b'4'])
+    assert header == [b'1', b'2', b'3']
+    assert payload == b'4'
+    assert topics == [b'hello', b'world']
 
 
 # catch leaks
@@ -1144,7 +1151,7 @@ initial_conns = collect_conns()
 
 @pytest.mark.trylast
 def test_no_socket_leak():
-    for x in xrange(3):
+    for x in range(3):
         conns = collect_conns() - initial_conns
         if not conns:
             break

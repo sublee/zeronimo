@@ -11,7 +11,6 @@ from __future__ import absolute_import
 
 from collections import Iterator
 from contextlib import contextmanager
-from StringIO import StringIO
 import sys
 import traceback
 from warnings import warn
@@ -19,11 +18,12 @@ from warnings import warn
 from gevent import Greenlet, GreenletExit, Timeout
 from gevent.pool import Group
 from gevent.queue import Queue
+from six import int2byte, reraise, StringIO, string_types, viewvalues
 try:
     from libuuid import uuid4_bytes
 except ImportError:
     import uuid
-    uuid4_bytes = lambda: uuid.uuid4().get_bytes()
+    uuid4_bytes = lambda: uuid.uuid4().bytes
 import zmq.green as zmq
 
 from zeronimo.application import NULL_RPC_SPEC, rpc_spec_table
@@ -60,8 +60,8 @@ FANOUT_TIMEOUT = 0.1
 
 
 # Used for a value for `reply_to`:
-NO_REPLY = '\x00'
-DUPLEX = '\x01'
+NO_REPLY = b'\x00'
+DUPLEX = b'\x01'
 
 
 ENCODING = 'utf-8'
@@ -127,7 +127,7 @@ def default_exception_handler(worker, exc_info):
     """The default exception handler for :class:`Worker`.  It just raises
     the given ``exc_info``.
     """
-    raise exc_info[0], exc_info[1], exc_info[2]
+    reraise(*exc_info)
 
 
 def default_malformed_message_handler(worker, exc_info, message_parts):
@@ -238,7 +238,13 @@ class Worker(Background):
                     del msgs[:]
                     try:
                         header, payload, topics = recv(socket, capture=capture)
-                        call = Call(*(header[:3] + [tuple(header[3:])]))
+                        try:
+                            name = header[0].decode('utf-8')
+                            call_id, reply_to = header[1:3]
+                        except (IndexError, ValueError):
+                            raise ValueError('too few fields in call header')
+                        hints = tuple(header[3:])
+                        call = Call(name, call_id, reply_to, hints)
                         if group.full() or reject_if(call, topics):
                             reject(socket, call, topics)
                             continue
@@ -288,7 +294,7 @@ class Worker(Background):
             except:
                 exc_info = sys.exc_info()
                 self.raise_(reply_socket, channel, exc_info)
-                raise exc_info[0], exc_info[1], exc_info[2]
+                reraise(*exc_info)
             success = True
         if not success:
             # catch_exceptions() hides exceptions.
@@ -309,7 +315,7 @@ class Worker(Background):
                 except:
                     exc_info = sys.exc_info()
                     self.raise_(reply_socket, channel, exc_info)
-                    raise exc_info[0], exc_info[1], exc_info[2]
+                    reraise(*exc_info)
         else:
             self.send_reply(reply_socket, RETURN, val, *channel)
 
@@ -335,7 +341,7 @@ class Worker(Background):
     def reject(self, reply_socket, call_id, topics=()):
         """Sends REJECT reply."""
         self.send_reply(reply_socket, REJECT, self.info,
-                        call_id, '', topics)
+                        call_id, b'', topics)
 
     def raise_(self, reply_socket, channel, exc_info=None):
         """Sends RAISE reply."""
@@ -379,7 +385,7 @@ class Worker(Background):
         if not socket:
             return
         # normal tuple is faster than namedtuple.
-        header = [chr(method), call_id, task_id]
+        header = [int2byte(method), call_id, task_id]
         payload = self.pack(value)
         try:
             safe(send, socket, header, payload, topics, zmq.NOBLOCK)
@@ -432,7 +438,7 @@ class _Caller(object):
             self.timeout = timeout
 
     def _call_nowait(self, hints, name, args, kwargs, topics=(), raw=False):
-        header = [name.encode(ENCODING), '', NO_REPLY]
+        header = [name.encode(ENCODING), b'', NO_REPLY]
         header.extend(self.hints)
         header.extend(hints)
         payload = self._pack(args, kwargs, raw)
@@ -491,7 +497,7 @@ class _Caller(object):
 
 
 def split_call_args(args, start=0):
-    if isinstance(args[start], basestring):
+    if isinstance(args[start], string_types):
         name, args = args[start], args[start + 1:]
         hints = ()
     else:
@@ -580,7 +586,7 @@ class Collector(Background):
     trace = None
     unpack = None
 
-    def __init__(self, socket, topic='', trace=None, unpack=UNPACK):
+    def __init__(self, socket, topic=b'', trace=None, unpack=UNPACK):
         super(Collector, self).__init__()
         self.socket = socket
         self.topic = topic
@@ -640,8 +646,8 @@ class Collector(Background):
                 break
             except zmq.ZMQError:
                 exc = TaskClosed('Collector socket closed')
-                for results in self.results.viewvalues():
-                    for result in results.viewvalues():
+                for results in viewvalues(self.results):
+                    for result in viewvalues(results):
                         result.set_exception(exc)
                 break
             except:

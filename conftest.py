@@ -15,6 +15,8 @@ import gevent
 from gevent import socket
 import pytest
 from singledispatch import singledispatch
+from six import reraise, viewkeys
+from six.moves import range
 import zmq.green as zmq
 
 import zeronimo
@@ -65,7 +67,8 @@ fanout_fixtures = set([
 
 
 def rand_str(size=6):
-    return ''.join(random.choice(string.ascii_lowercase) for x in xrange(size))
+    return ''.join(random.choice(string.ascii_lowercase)
+                   for x in range(size)).encode()
 
 
 class AddressGenerator(object):
@@ -84,7 +87,7 @@ class AddressGenerator(object):
             pass
         pipe = None
         while pipe is None or os.path.exists(pipe):
-            pipe = os.path.join(FEED_DIR, rand_str())
+            pipe = os.path.join(FEED_DIR, rand_str().decode())
         return 'ipc://{0}'.format(pipe)
 
     @classmethod
@@ -137,7 +140,7 @@ def pytest_addoption(parser):
 
 def pytest_report_header(config, startdir):
     versions = (zmq.zmq_version(), zmq.__version__)
-    print 'zmq: zmq-%s, pyzmq-%s' % versions
+    print('zmq: zmq-%s, pyzmq-%s' % versions)
 
 
 def pytest_unconfigure(config):
@@ -155,7 +158,7 @@ def pytest_generate_tests(metafunc):
         has_fanout_fixtures = False
         for param in metafunc.fixturenames:
             for pattern, fixture in sorted(fixtures.items(),
-                                           key=lambda (k, v): len(k),
+                                           key=lambda kv: len(kv[0]),
                                            reverse=True):
                 if fnmatch(param, pattern):
                     if fixture in fanout_fixtures:
@@ -201,15 +204,18 @@ def get_testing_protocols(metafunc):
     elif 'pgm' in testing_protocols:
         # check CAP_NET_RAW
         try:
-            socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
+            sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)
         except socket.error as e:
-            if e.errno in [1, 2]:
-                # [1] Operation not permitted
-                # or
-                # [2] No such file or directory (at the first time in PyPy)
-                raise OSError('Enable the CAP_NET_RAW capability to use PGM:\n'
-                              '$ sudo setcap CAP_NET_RAW=ep '
-                              '$(readlink -f $(which python))')
+            if e.errno not in [1, 2]:
+                raise
+            # [1] Operation not permitted
+            # or
+            # [2] No such file or directory (at the first time in PyPy)
+            raise OSError('Enable the CAP_NET_RAW capability to use PGM:\n'
+                          '$ sudo setcap CAP_NET_RAW=ep '
+                          '$(readlink -f $(which python))')
+        finally:
+            sock.close()
     return testing_protocols
 
 
@@ -220,7 +226,7 @@ def incremental_patience(config):
         @functools.wraps(f)
         def patience_increased(**kwargs):
             patience = config.option.patience
-            for x in xrange(5):
+            for x in range(5):
                 kwargs['patience'] = patience
                 try:
                     return f(**kwargs)
@@ -230,7 +236,7 @@ def incremental_patience(config):
                     exctype, exc, traceback = sys.exc_info()
                     patience *= 2
                     warnings.warn('Patience increased to {0}'.format(patience))
-            raise exctype, exc, traceback
+            raise reraise(exctype, exc, traceback)
         return patience_increased
     return decorator
 
@@ -346,7 +352,7 @@ def resolve_fixtures(f, request, protocol):
         def resolve_socket_fixtures(val, param):
             socket_params.add(param)
             return val
-        for param, val in kwargs.iteritems():
+        for param, val in kwargs.items():
             if issubclass(val.__class__, object):
                 kwargs[param] = resolve_fixture(val, param)
         # Resolve worker PUB fixtures.
@@ -389,7 +395,7 @@ def resolve_fixtures(f, request, protocol):
             return f(**kwargs)
         except:
             exc_info = sys.exc_info()
-            raise exc_info[0], exc_info[1], exc_info[2].tb_next
+            reraise(exc_info[0], exc_info[1], exc_info[2].tb_next)
     return fixture_resolved
 
 
@@ -552,14 +558,14 @@ class Application(object):
         """a + b."""
         return a + b
 
-    def xrange(self, *args):
-        return xrange(*args)
+    def range(self, *args):
+        return range(*args)
 
     def dict_view(self, *args):
-        return dict((x, x) for x in xrange(*args)).viewkeys()
+        return viewkeys(dict((x, x) for x in range(*args)))
 
-    def iter_xrange(self, *args):
-        return iter(self.xrange(*args))
+    def iter_range(self, *args):
+        return iter(self.range(*args))
 
     def iter_dict_view(self, *args):
         return iter(self.dict_view(*args))
@@ -586,7 +592,7 @@ class Application(object):
         return seconds
 
     def sleep_multiple(self, seconds, times=1):
-        for x in xrange(times):
+        for x in range(times):
             gevent.sleep(seconds)
             yield x
 
@@ -621,7 +627,7 @@ class Application(object):
     @reject_by_hints.reject_if
     def _reject_by_hints(self, call, topics):
         assert isinstance(self, Application)
-        return 'reject' in call.hints
+        return b'reject' in call.hints
 
     @zeronimo.rpc
     def reject_by_hints_staticmethod(self):
@@ -630,7 +636,7 @@ class Application(object):
     @reject_by_hints_staticmethod.reject_if
     @staticmethod
     def _reject_by_hints_staticmethod(call, topics):
-        return 'reject' in call.hints
+        return b'reject' in call.hints
 
     @zeronimo.rpc
     def reject_by_hints_classmethod(self):
@@ -640,7 +646,7 @@ class Application(object):
     @classmethod
     def _reject_by_hints_classmethod(cls, call, topics):
         assert isinstance(cls, type)
-        return 'reject' in call.hints
+        return b'reject' in call.hints
 
     odd = False
 
