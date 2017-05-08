@@ -23,7 +23,6 @@ env:
   - ZMQ_VERSION=4.2.1
   - ZMQ_VERSION=4.2.0
   - ZMQ_VERSION=4.1.6
-  - ZMQ_VERSION=3.2.5
   # Gave up to support:
   # - PYZMQ_VERSION=15.4.0
   # - PYZMQ_VERSION=15.3.0
@@ -55,6 +54,7 @@ env:
   # - ZMQ_VERSION=4.0.3
   # - ZMQ_VERSION=4.0.2
   # - ZMQ_VERSION=4.0.1
+  # - ZMQ_VERSION=3.2.5
   # - ZMQ_VERSION=3.2.4
   # - ZMQ_VERSION=3.2.3
   # - ZMQ_VERSION=3.2.2
