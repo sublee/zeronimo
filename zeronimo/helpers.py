@@ -15,7 +15,7 @@ import zmq
 
 
 __all__ = ['FALSE_RETURNER', 'class_name', 'make_repr', 'socket_type_name',
-           'eintr_retry', 'eintr_retry_zmq']
+           'repr_socket', 'eintr_retry', 'eintr_retry_zmq']
 
 
 #: A function which always returns ``False``.  It is used for default of
@@ -85,6 +85,10 @@ for name in ('PAIR PUB SUB REQ REP DEALER ROUTER PULL PUSH XPUB XSUB '
 def socket_type_name(socket_type):
     """Gets the ZeroMQ socket type name."""
     return _socket_type_names[socket_type]
+
+
+def repr_socket(socket):
+    return '%s[%d]' % (socket_type_name(socket.type), socket.fd)
 
 
 def eintr_retry(exc_type, f, *args, **kwargs):

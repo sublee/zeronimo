@@ -11,6 +11,7 @@ from __future__ import absolute_import
 
 from collections import Iterator
 from contextlib import contextmanager
+from StringIO import StringIO
 import sys
 import traceback
 from warnings import warn
@@ -30,7 +31,7 @@ from zeronimo.exceptions import (
     EmissionError, MalformedMessage, Rejected, TaskClosed, Undelivered,
     WorkerNotFound)
 from zeronimo.helpers import (
-    class_name, eintr_retry_zmq as safe, FALSE_RETURNER)
+    class_name, eintr_retry_zmq as safe, FALSE_RETURNER, repr_socket)
 from zeronimo.messaging import (
     ACCEPT, ACK, BREAK, Call, PACK, RAISE, recv, REJECT, Reply, RETURN, send,
     UNPACK, YIELD)
@@ -396,7 +397,16 @@ class Worker(Background):
         return self.greenlet_group.join(timeout, raise_error)
 
     def __repr__(self):
-        return '<{0} info={1!r}>'.format(class_name(self), self.info)
+        buf = StringIO()
+        buf.write('<%s' % class_name(self))
+        if self.info is not None:
+            buf.write(' info=%r' % self.info)
+        sockets = ', '.join(repr_socket(s) for s in self.sockets)
+        buf.write(' sockets=[%s]' % sockets)
+        if self.reply_socket is not None:
+            buf.write(' reply_socket=%s' % repr_socket(self.reply_socket))
+        buf.write('>')
+        return buf.getvalue()
 
 
 class _Caller(object):
@@ -465,6 +475,19 @@ class _Caller(object):
 
     def close(self):
         self.socket.close()
+
+    def __repr__(self):
+        buf = StringIO()
+        buf.write('<%s socket=%s' % (class_name(self),
+                                     repr_socket(self.socket)))
+        if self.collector is not None:
+            buf.write(' collector=%r' % self.collector)
+        if self.timeout is not None:
+            buf.write(' timeout=%.3f' % self.timeout)
+        if self.hints:
+            buf.write(' hints=%r' % (tuple(self.hints),))
+        buf.write('>')
+        return buf.getvalue()
 
 
 def split_call_args(args, start=0):
@@ -674,3 +697,12 @@ class Collector(Background):
     def close(self):
         super(Collector, self).close()
         self.socket.close()
+
+    def __repr__(self):
+        buf = StringIO()
+        buf.write('<%s socket=%s' % (class_name(self),
+                                     repr_socket(self.socket)))
+        if self.topic is not None:
+            buf.write(' topic=%r' % self.topic)
+        buf.write('>')
+        return buf.getvalue()
