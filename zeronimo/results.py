@@ -161,7 +161,7 @@ class RemoteIterator(object):
     def close(self):
         self.throw(StopIteration)
 
-    def next(self):
+    def __next__(self):
         if self.queue is None:
             raise StopIteration
         yields, value = self.queue.get()
@@ -170,3 +170,5 @@ class RemoteIterator(object):
         else:
             self.queue = None
             raise value
+
+    next = __next__  # for Python 2

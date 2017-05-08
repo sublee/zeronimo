@@ -18,7 +18,7 @@ from warnings import warn
 from gevent import Greenlet, GreenletExit, Timeout
 from gevent.pool import Group
 from gevent.queue import Queue
-from six import reraise, StringIO, string_types, viewvalues
+from six import int2byte, reraise, StringIO, string_types, viewvalues
 try:
     from libuuid import uuid4_bytes
 except ImportError:
@@ -238,7 +238,13 @@ class Worker(Background):
                     del msgs[:]
                     try:
                         header, payload, topics = recv(socket, capture=capture)
-                        call = Call(*(header[:3] + [tuple(header[3:])]))
+                        try:
+                            name = header[0].decode('utf-8')
+                            call_id, reply_to = header[1:3]
+                        except (IndexError, ValueError):
+                            raise ValueError('too few fields in call header')
+                        hints = tuple(header[3:])
+                        call = Call(name, call_id, reply_to, hints)
                         if group.full() or reject_if(call, topics):
                             reject(socket, call, topics)
                             continue
@@ -335,7 +341,7 @@ class Worker(Background):
     def reject(self, reply_socket, call_id, topics=()):
         """Sends REJECT reply."""
         self.send_reply(reply_socket, REJECT, self.info,
-                        call_id, '', topics)
+                        call_id, b'', topics)
 
     def raise_(self, reply_socket, channel, exc_info=None):
         """Sends RAISE reply."""
@@ -379,7 +385,7 @@ class Worker(Background):
         if not socket:
             return
         # normal tuple is faster than namedtuple.
-        header = [chr(method), call_id, task_id]
+        header = [int2byte(method), call_id, task_id]
         payload = self.pack(value)
         try:
             safe(send, socket, header, payload, topics, zmq.NOBLOCK)
@@ -580,7 +586,7 @@ class Collector(Background):
     trace = None
     unpack = None
 
-    def __init__(self, socket, topic='', trace=None, unpack=UNPACK):
+    def __init__(self, socket, topic=b'', trace=None, unpack=UNPACK):
         super(Collector, self).__init__()
         self.socket = socket
         self.topic = topic

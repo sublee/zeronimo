@@ -624,7 +624,7 @@ class Application(object):
     @reject_by_hints.reject_if
     def _reject_by_hints(self, call, topics):
         assert isinstance(self, Application)
-        return 'reject' in call.hints
+        return b'reject' in call.hints
 
     @zeronimo.rpc
     def reject_by_hints_staticmethod(self):
@@ -633,7 +633,7 @@ class Application(object):
     @reject_by_hints_staticmethod.reject_if
     @staticmethod
     def _reject_by_hints_staticmethod(call, topics):
-        return 'reject' in call.hints
+        return b'reject' in call.hints
 
     @zeronimo.rpc
     def reject_by_hints_classmethod(self):
@@ -643,7 +643,7 @@ class Application(object):
     @classmethod
     def _reject_by_hints_classmethod(cls, call, topics):
         assert isinstance(cls, type)
-        return 'reject' in call.hints
+        return b'reject' in call.hints
 
     odd = False
 
