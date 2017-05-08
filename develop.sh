@@ -135,7 +135,7 @@ then
 else
   info "Building ${ZMQ_STRING}..."
   [[ -f autogen.sh ]] && ./autogen.sh
-  ./configure --with-pgm --prefix"=$BUILD_DIR"/local
+  ./configure --with-pgm --prefix="$BUILD_DIR"/local
   make
   # Mark as built.
   [[ -n "$ZMQ_BUILT" ]] && touch "$ZMQ_BUILT"
