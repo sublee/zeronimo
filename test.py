@@ -970,7 +970,7 @@ def test_fanout_by_other_types(left_type, right_type, socket, addr1, addr2):
     worker = zeronimo.Worker(Application(), [worker_sock], worker_pub)
     collector = zeronimo.Collector(collector_sub, b'xxx')
     fanout = zeronimo.Fanout(fanout_sock, collector)
-    with running([worker]):
+    with running([worker, collector]):
         assert \
             get_results(fanout.emit(b'anything', 'zeronimo')) == ['zeronimo']
 
