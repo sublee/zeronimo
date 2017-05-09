@@ -100,12 +100,12 @@ class Background(object):
         self.greenlet.join(0)
         return self.greenlet
 
-    def stop(self, silent=False):
+    def stop(self, block=True, silent=False):
         if not self.is_running():
             if silent:
                 return
             raise RuntimeError('%s not running' % class_name(self))
-        self.greenlet.kill(block=True)
+        self.greenlet.kill(block=block)
 
     def wait(self, timeout=None):
         if not self.is_running():
@@ -119,8 +119,8 @@ class Background(object):
         warn(DeprecationWarning('use is_running() instead'))
         return self.is_running()
 
-    def close(self):
-        self.stop(silent=True)
+    def close(self, block=True):
+        self.stop(block, silent=True)
 
 
 def default_exception_handler(worker, exc_info):
@@ -404,7 +404,7 @@ class Worker(Background):
 
     def __repr__(self):
         buf = StringIO()
-        buf.write('<%s' % class_name(self))
+        buf.write('<%s app=%r' % (class_name(self), self.app))
         if self.info is not None:
             buf.write(' info=%r' % self.info)
         sockets = ', '.join(repr_socket(s) for s in self.sockets)
