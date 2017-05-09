@@ -88,7 +88,10 @@ def socket_type_name(socket_type):
 
 
 def repr_socket(socket):
-    return '%s[%d]' % (socket_type_name(socket.type), socket.fd)
+    try:
+        return '%s[%d]' % (socket_type_name(socket.type), socket.fd)
+    except zmq.ZMQError as exc:
+        return 'ERR[%d]' % exc.errno
 
 
 def eintr_retry(exc_type, f, *args, **kwargs):
