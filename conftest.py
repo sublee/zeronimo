@@ -214,7 +214,7 @@ def get_testing_protocols(metafunc):
             raise OSError('Enable the CAP_NET_RAW capability to use PGM:\n'
                           '$ sudo setcap CAP_NET_RAW=ep '
                           '$(readlink -f $(which python))')
-        finally:
+        else:
             sock.close()
     return testing_protocols
 
