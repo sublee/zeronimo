@@ -120,6 +120,7 @@ setup(
                  'Programming Language :: Python :: 3.5',
                  'Programming Language :: Python :: 3.6',
                  'Programming Language :: Python :: Implementation :: CPython',
+                 'Programming Language :: Python :: Implementation :: PyPy',
                  'Topic :: Software Development'],
     install_requires=['gevent>=1', 'pyzmq>=14', 'six'],
     test_suite='...',
