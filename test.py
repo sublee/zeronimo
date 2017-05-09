@@ -770,7 +770,11 @@ def test_eintr_retry_zmq(itimer, signo, socket, addr):
     signal.signal(signo, prev_handler)
 
 
-def test_many_calls(request, monkeypatch):
+def test_many_calls(fin, monkeypatch):
+    # NOTE: When testing in PyPy on Travis CI, this test case makes a worker
+    # leak.  It is weird but 0.1 seconds sleeping finalizer can fix it.
+    # https://travis-ci.org/sublee/zeronimo/builds/230435511
+    fin(lambda: gevent.sleep(0.1))
     worker = zeronimo.Worker(Application(), [])
     paylaod = zeronimo.messaging.PACK(((), {}))
     parts = [zeronimo.messaging.SEAM, b'zeronimo', uuid4_bytes(), b'', paylaod]
@@ -796,9 +800,9 @@ def test_many_calls(request, monkeypatch):
     monkeypatch.setattr(zmq.Poller, 'poll', lambda *a, **k: infinite_events())
     # Emit many calls.
     signal.alarm(10)
-    request.addfinalizer(lambda: signal.alarm(0))
+    fin(lambda: signal.alarm(0))
     worker.start()
-    request.addfinalizer(worker.stop)
+    fin(worker.stop)
     gevent.sleep(1)
     assert worker.app.counter['zeronimo'] > 0
 
