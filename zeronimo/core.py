@@ -404,7 +404,7 @@ class Worker(Background):
 
     def __repr__(self):
         buf = StringIO()
-        buf.write('<%s' % class_name(self))
+        buf.write('<%s app=%r' % (class_name(self), self.app))
         if self.info is not None:
             buf.write(' info=%r' % self.info)
         sockets = ', '.join(repr_socket(s) for s in self.sockets)
