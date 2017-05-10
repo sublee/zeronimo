@@ -20,7 +20,7 @@ from zeronimo.helpers import eintr_retry_zmq, make_repr
 
 __all__ = ['ACK', 'DONE', 'ITER', 'ACCEPT', 'REJECT', 'RETURN', 'RAISE',
            'YIELD', 'BREAK', 'PACK', 'UNPACK', 'Call', 'Reply', 'send', 'recv',
-           'parse']
+           'parse', 'parse_call']
 
 
 # Method masks:
@@ -111,3 +111,13 @@ def parse(msgs):
     header = msgs[seam + 1:-1]
     payload = msgs[-1]
     return header, payload, topics
+
+
+def parse_call(header):
+    try:
+        name = header[0].decode('utf-8')
+        call_id, reply_to = header[1:3]
+    except (IndexError, ValueError):
+        raise ValueError('too few fields in call header')
+    hints = tuple(header[3:])
+    return Call(name, call_id, reply_to, hints)

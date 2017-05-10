@@ -33,8 +33,8 @@ from zeronimo.exceptions import (
 from zeronimo.helpers import (
     class_name, eintr_retry_zmq as safe, FALSE_RETURNER, repr_socket)
 from zeronimo.messaging import (
-    ACCEPT, ACK, BREAK, Call, PACK, RAISE, recv, REJECT, Reply, RETURN, send,
-    UNPACK, YIELD)
+    ACCEPT, ACK, BREAK, Call, PACK, parse_call, RAISE, recv, REJECT, Reply,
+    RETURN, send, UNPACK, YIELD)
 from zeronimo.results import RemoteException, RemoteResult
 
 
@@ -238,13 +238,7 @@ class Worker(Background):
                     del msgs[:]
                     try:
                         header, payload, topics = recv(socket, capture=capture)
-                        try:
-                            name = header[0].decode('utf-8')
-                            call_id, reply_to = header[1:3]
-                        except (IndexError, ValueError):
-                            raise ValueError('too few fields in call header')
-                        hints = tuple(header[3:])
-                        call = Call(name, call_id, reply_to, hints)
+                        call = parse_call(header)
                         if group.full() or reject_if(call, topics):
                             reject(socket, call, topics)
                             continue
