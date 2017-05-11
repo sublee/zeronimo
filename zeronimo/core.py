@@ -220,7 +220,7 @@ class Worker(Background):
             group.spawn(self.work, socket, call, args, kwargs, topics)
             group.join(0)
         def reject(socket, call, topics):
-            __, call_id, reply_to, __ = call
+            __, call_id, reply_to, __, __ = call
             reply_socket, topics = self.replier(socket, topics, reply_to)
             self.reject(reply_socket, call_id, topics)
         def reject_if(call, topics):
