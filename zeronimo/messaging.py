@@ -47,7 +47,7 @@ PACK = lambda obj: pickle.dumps(obj, pickle.HIGHEST_PROTOCOL)
 UNPACK = pickle.loads
 
 
-class Call(namedtuple('Call', 'name call_id reply_to hints')):
+class Call(namedtuple('Call', 'name call_id reply_to hints caller_info')):
 
     __repr__ = lambda x: make_repr(x, keywords=x._fields)
 
@@ -119,5 +119,6 @@ def parse_call(header):
         call_id, reply_to = header[1:3]
     except (IndexError, ValueError):
         raise ValueError('too few fields in call header')
-    hints = tuple(header[3:])
-    return Call(name, call_id, reply_to, hints)
+    hints = tuple(header[3:-1])
+    caller_info = header[-1] or None
+    return Call(name, call_id, reply_to, hints, caller_info)

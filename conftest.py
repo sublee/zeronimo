@@ -620,6 +620,10 @@ class Application(object):
     def hints(self, call):
         return call.hints
 
+    @zeronimo.rpc(pass_call=True)
+    def caller_info(self, call):
+        return call.caller_info
+
     @zeronimo.rpc
     def reject_by_hints(self):
         return 'accepted'

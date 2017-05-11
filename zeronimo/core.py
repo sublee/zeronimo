@@ -425,22 +425,26 @@ class _Caller(object):
 
     socket = None
     collector = None
-    hints = ()
+    info = None
     pack = None
 
-    def __init__(self, socket, collector=None, timeout=None,
-                 hints=(), pack=PACK):
+    def __init__(self, socket, collector=None, info=None,
+                 timeout=None, pack=PACK):
         self.socket = socket
         self.collector = collector
-        self.hints = hints
+        self.info = info
         self.pack = pack
         if timeout is not None:
             self.timeout = timeout
 
-    def _call_nowait(self, hints, name, args, kwargs, topics=(), raw=False):
-        header = [name.encode(ENCODING), b'', NO_REPLY]
-        header.extend(self.hints)
+    def _make_header(self, name, call_id, reply_to, hints):
+        header = [name.encode(ENCODING), call_id, reply_to]
         header.extend(hints)
+        header.append(self.info or b'')
+        return header
+
+    def _call_nowait(self, hints, name, args, kwargs, topics=(), raw=False):
+        header = self._make_header(name, b'', NO_REPLY, hints)
         payload = self._pack(args, kwargs, raw)
         try:
             safe(send, self.socket, header, payload, topics, zmq.NOBLOCK)
@@ -456,9 +460,7 @@ class _Caller(object):
         call_id = uuid4_bytes()
         reply_to = (DUPLEX if self.socket is col.socket else col.topic)
         # Normal tuple is faster than namedtuple.
-        header = [name.encode(ENCODING), call_id, reply_to]
-        header.extend(self.hints)
-        header.extend(hints)
+        header = self._make_header(name, call_id, reply_to, hints)
         payload = self._pack(args, kwargs, raw)
         # Use short names.
         def send_call():
@@ -484,14 +486,14 @@ class _Caller(object):
 
     def __repr__(self):
         buf = StringIO()
-        buf.write('<%s socket=%s' % (class_name(self),
-                                     repr_socket(self.socket)))
+        buf.write('<%s' % class_name(self))
+        if self.info:
+            buf.write(' info=%r' % (self.info,))
+        buf.write(' socket=%s' % repr_socket(self.socket))
         if self.collector is not None:
             buf.write(' collector=%r' % self.collector)
         if self.timeout is not None:
             buf.write(' timeout=%.3f' % self.timeout)
-        if self.hints:
-            buf.write(' hints=%r' % (tuple(self.hints),))
         buf.write('>')
         return buf.getvalue()
 
