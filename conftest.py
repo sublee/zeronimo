@@ -299,6 +299,7 @@ def resolve_fixtures(f, request, protocol):
             worker_pub_socks.add(pub_sock)
             # Make a worker.
             worker_info = '%s[%s](%s)' % (f.__name__, protocol, param)
+            worker_info = worker_info.encode()
             worker = zeronimo.Worker(app, [pull_sock, sub_sock], pub_sock,
                                      info=worker_info)
             register_bg(worker)
