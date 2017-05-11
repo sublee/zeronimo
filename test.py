@@ -682,6 +682,29 @@ def test_marshal_message(socket, addr, reply_sockets):
         assert customer.call('zeronimo').get() == 'zeronimo'
 
 
+def test_worker_info(socket, addr, reply_sockets):
+    # sockets
+    worker_sock = socket(zmq.PULL)
+    worker_sock.bind(addr)
+    reply_sock, (collector_sock, reply_topic) = reply_sockets()
+    customer_sock = socket(zmq.PUSH)
+    customer_sock.connect(addr)
+    # logic
+    app = Application()
+    worker = zeronimo.Worker(app, [worker_sock], reply_sock)
+    collector = zeronimo.Collector(collector_sock, reply_topic)
+    customer = zeronimo.Customer(customer_sock, collector)
+    with running([worker, collector]):
+        r = customer.call('zeronimo')
+        assert r.get() == 'zeronimo'
+        assert r.worker_info is None
+        worker.info = b'zeronimo'
+        r = customer.call('zeronimo')
+        assert r.get() == 'zeronimo'
+        assert r.worker_info == b'zeronimo'
+        assert isinstance(r.worker_info, bytes)
+
+
 def test_exception_handler(worker, collector, push, capsys):
     customer = zeronimo.Customer(push, collector)
     # without exception handler

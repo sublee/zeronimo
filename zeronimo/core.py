@@ -657,7 +657,7 @@ class Collector(Background):
             method = ord(method)
             reply = Reply(method, call_id, task_id)
             if method & ACK:
-                value = payload
+                value = payload or None
             else:
                 value = self.unpack(payload)
             self.trace and self.trace(method, (call_id, task_id, value))
