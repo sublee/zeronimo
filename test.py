@@ -214,6 +214,8 @@ def test_1to2(worker1, worker2, collector, push):
     assert result1.get() == 2
     assert result2.get() == 4
     assert result1.worker_info != result2.worker_info
+    assert result1.worker_info in [worker1.info, worker2.info]
+    assert result2.worker_info in [worker1.info, worker2.info]
 
 
 def test_slow(worker, collector, push):

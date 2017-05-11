@@ -330,12 +330,13 @@ class Worker(Background):
 
     def accept(self, reply_socket, channel):
         """Sends ACCEPT reply."""
-        self.send_reply(reply_socket, ACCEPT, self.info, *channel)
+        info = self.info or b''
+        self.send_raw(reply_socket, ACCEPT, info, *channel)
 
     def reject(self, reply_socket, call_id, topics=()):
         """Sends REJECT reply."""
-        self.send_reply(reply_socket, REJECT, self.info,
-                        call_id, b'', topics)
+        info = self.info or b''
+        self.send_raw(reply_socket, REJECT, info, call_id, b'', topics)
 
     def raise_(self, reply_socket, channel, exc_info=None):
         """Sends RAISE reply."""
@@ -375,16 +376,21 @@ class Worker(Background):
         else:
             return self.reply_socket, (reply_to,)
 
-    def send_reply(self, socket, method, value, call_id, task_id, topics=()):
+    def send_raw(self, socket, method, payload, call_id, task_id, topics=()):
         if not socket:
             return
         # normal tuple is faster than namedtuple.
         header = [int2byte(method), call_id, task_id]
-        payload = self.pack(value)
         try:
             safe(send, socket, header, payload, topics, zmq.NOBLOCK)
         except (zmq.Again, zmq.ZMQError):
             pass  # ignore.
+
+    def send_reply(self, socket, method, value, call_id, task_id, topics=()):
+        if not socket:
+            return
+        payload = self.pack(value)
+        return self.send_raw(socket, method, payload, call_id, task_id, topics)
 
     def close(self):
         super(Worker, self).close()
@@ -650,7 +656,10 @@ class Collector(Background):
             method, call_id, task_id = header
             method = ord(method)
             reply = Reply(method, call_id, task_id)
-            value = self.unpack(payload)
+            if method & ACK:
+                value = payload
+            else:
+                value = self.unpack(payload)
             self.trace and self.trace(method, (call_id, task_id, value))
             del header, payload, method, call_id, task_id
             try:
