@@ -418,6 +418,66 @@ def test_proxied_collector(worker, push, socket, device, addr1, addr2, fin):
     assert customer.call('zeronimo').get() == 'zeronimo'
 
 
+def test_shared_client_port(socket, addr1, addr2, addr3, addr4,
+                            reply_sockets, fin):
+    if not addr1.startswith('tcp://'):
+        pytest.skip()
+
+    # sockets for workers
+    pull1 = socket(zmq.PULL)
+    pull2 = socket(zmq.PULL)
+    pull1.bind(addr1)
+    pull2.bind(addr2)
+    reply_sock = socket(zmq.PUB)
+    reply_sock.bind(addr3)
+
+    # spawn workers
+    app = Application()
+    worker1 = zeronimo.Worker(app, [pull1], reply_sock, info='worker1')
+    worker2 = zeronimo.Worker(app, [pull2], reply_sock, info='worker2')
+    worker1.start()
+    worker2.start()
+    fin(worker1.stop)
+    fin(worker2.stop)
+
+    # sockets for collectors
+    reply_topic1 = rand_str()
+    reply_topic2 = rand_str()
+    collector_sock1 = socket(zmq.SUB)
+    collector_sock2 = socket(zmq.SUB)
+    collector_sock1.set(zmq.SUBSCRIBE, reply_topic1)
+    collector_sock2.set(zmq.SUBSCRIBE, reply_topic2)
+    collector_sock1.connect(addr3)
+    collector_sock2.connect(addr3)
+    sync_pubsub(reply_sock, [collector_sock1], reply_topic1)
+    sync_pubsub(reply_sock, [collector_sock2], reply_topic2)
+
+    # make collectors
+    collector1 = zeronimo.Collector(collector_sock1, reply_topic1)
+    collector2 = zeronimo.Collector(collector_sock2, reply_topic2)
+
+    # sockets for customers
+    push1 = socket(zmq.PUSH)
+    push2 = socket(zmq.PUSH)
+    push1.connect(addr4 + ';' + addr1[len('tcp://'):])
+    push2.connect(addr4 + ';' + addr2[len('tcp://'):])
+    # e.g., 'tcp://127.0.0.1:44444;127.0.0.1:11111'
+
+    # make customers
+    customer1 = zeronimo.Customer(push1, collector1)
+    customer2 = zeronimo.Customer(push2, collector2)
+
+    # do test
+    for x in range(100):
+        r = customer1.call('add', 0, 1)
+        assert r.get() == 1
+        assert r.worker_info == worker1.info
+
+        r = customer2.call('add', 0, 2)
+        assert r.get() == 2
+        assert r.worker_info == worker2.info
+
+
 def test_2nd_start(worker, collector):
     assert worker.is_running()
     worker.stop()
