@@ -418,6 +418,9 @@ def test_proxied_collector(worker, push, socket, device, addr1, addr2, fin):
     assert customer.call('zeronimo').get() == 'zeronimo'
 
 
+# since libzmq-4.2, TCP address with specific source address
+# turns on the SO_REUSEADDR socket option.
+@require_libzmq((4, 2))
 def test_shared_client_port(socket, addr1, addr2, addr3, addr4,
                             reply_sockets, fin):
     if not addr1.startswith('tcp://'):
